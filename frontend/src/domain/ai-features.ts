@@ -3,14 +3,14 @@
 import type { Role } from '../types/api.ts';
 import type { AiStatus } from '../state/ai.ts';
 
-export type FeatureKey = 'chat' | 'hint' | 'explain' | 'summary' | 'generate' | 'import';
+export type FeatureKey = 'chat' | 'hint' | 'explain' | 'summary' | 'assess' | 'generate' | 'import';
 
-/** The six features in FP-1 order (the order of the checkboxes and of every list of names) */
-export const FEATURE_KEYS: readonly FeatureKey[] = ['chat', 'hint', 'explain', 'summary', 'generate', 'import'];
+/** The seven features in FP-1 order (the order of the checkboxes and of every list of names) */
+export const FEATURE_KEYS: readonly FeatureKey[] = ['chat', 'hint', 'explain', 'summary', 'assess', 'generate', 'import'];
 
 export type Features = Record<FeatureKey, boolean>;
 
-export const ALL_ON: Features = { chat: true, hint: true, explain: true, summary: true, generate: true, import: true };
+export const ALL_ON: Features = { chat: true, hint: true, explain: true, summary: true, assess: true, generate: true, import: true };
 
 /**
  * The two groups of the AI+ users table (P-12) and of the global switches: line 1 and the "AI 题库：" line. One entry is one
@@ -18,7 +18,7 @@ export const ALL_ON: Features = { chat: true, hint: true, explain: true, summary
  * (The global switches of AI settings are independent per feature since v1.9.)
  */
 export const FEATURE_GROUPS: { main: readonly FeatureKey[]; banks: readonly FeatureKey[] } = {
-  main: ['chat', 'hint', 'summary'],
+  main: ['chat', 'hint', 'summary', 'assess'],
   banks: ['generate', 'import'],
 };
 

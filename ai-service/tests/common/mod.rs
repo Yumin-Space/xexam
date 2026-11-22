@@ -1247,7 +1247,9 @@ fn study_openai(sh: StubShared, kind: Study, user: String, usage: bool) -> Respo
             ));
             return;
         }
-        if user.contains("[slow]") && !hold_with_pings(n, &tx).await {
+        // an assessment whose newest record is at 23:07 also waits (its time cannot carry a marker)
+        let slow = user.contains("[slow]") || user.contains("latest=2026-11-21 23:07 ");
+        if slow && !hold_with_pings(n, &tx).await {
             return;
         }
         let _ = tx.send(Bytes::from(format!(

@@ -18,13 +18,13 @@ import { shortLabel } from '../components/icon-button.ts';
 import { langSwitch } from '../components/lang-switch.ts';
 import { miniIcon, type MiniIcon } from '../components/mini-icons.ts';
 import { answerReview, explainBlocks } from '../components/review.ts';
-import { themeButton } from '../components/shell.ts';
+import { handButton, themeButton } from '../components/shell.ts';
 import { holdTip } from '../components/tooltip.ts';
 import { t, type MsgKey } from '../i18n/index.ts';
 import { S, type Session } from '../state/store.ts';
 import { sheetOpenKey } from '../state/storage-keys.ts';
 import {
-  checkAnswer, elapsed, examTick, go, leaveQuiz, onRefresh, pick, pickItem, resetRefreshers, runRefreshers, setQuestionLang, submit, toggleFlag,
+  checkAnswer, elapsed, examTick, go, leaveQuiz, onRefresh, pick, pickItem, resetRefreshers, runRefreshers, setSessionLang, submit, toggleFlag,
 } from '../state/actions.ts';
 import type { Question } from '../types/api.ts';
 import { h, paras, svgMark } from '../utils/dom.ts';
@@ -76,7 +76,7 @@ function practiceTarget(se: Session, q: Question): StudyTarget {
   const target: StudyTarget = {
     page: 'practice', mode: 'practice', key: se.key, startedAt: se.startedAt, recordId: null, questionId: q.id, no: se.idx + 1,
     // read when the ask starts: the card's language switch may have changed it since the popover opened
-    qlang: () => shown(q, S.settings.questionLang).lang,
+    qlang: () => shown(q, S.session?.lang ?? S.settings.questionLang).lang,
     // [查看] on a busy note: only the answer of the question on the page can be shown here
     resolve: (r) => (r.questionId === q.id && r.chatKind === 'practice' ? target : null),
   };
@@ -122,7 +122,7 @@ export function renderQuiz(): HTMLElement {
 
   // If the requested language is unavailable for this question (it does not line up with the base text), fall back to the
   // question's base language instead of showing misaligned content
-  const view = shown(q, S.settings.questionLang);
+  const view = shown(q, se.lang);
   const lang = htmlLang(view.lang);
 
   let body: HTMLElement;
@@ -226,7 +226,7 @@ export function renderQuiz(): HTMLElement {
       h('span', { class: 'badge' }, kindLabel(q)),
       h('span', { class: 'phead-sheet', title: q.sheet }, q.sheet),
       aiSetMark(q.bank),
-      langSwitch(q, view.lang, (l) => setQuestionLang(l), { focusKey: 'lang' })),
+      langSwitch(q, view.lang, (l) => setSessionLang(l), { focusKey: 'lang' })),
     h('div', { class: 'stem' }, paras(view.stem, undefined, lang)),
     body,
     feedback);
@@ -396,6 +396,7 @@ export function renderQuiz(): HTMLElement {
       topSubmit,
       h('span', { class: 'qtime' + (limit != null ? ' timed' : ''), title: limit != null ? t('quiz.timeLeftTip', { min: Math.round(limit / 60) }) : t('quiz.time') },
         miniIcon(limit != null ? 'hourglass' : 'clock', 'mi'), h('span', { class: 'sr-only' }, t(limit != null ? 'quiz.timeLeft' : 'quiz.time')), timerEl),
+      handButton(),
       themeButton('qtheme'),
       exit),
     h('div', { class: 'meter', 'aria-hidden': 'true' }, meterFill));
@@ -529,10 +530,10 @@ function syncTopH(): void {
   if (row && right && left) {
     // Steps (styles/quiz.css): short labels and count, then smaller gaps and no clock icon, then no tag / finish icon; each
     // only while something is still clipped or pushed onto a second line
-    row.classList.remove('tight', 'tighter', 'tightest');
+    row.classList.remove('tight', 'tighter', 'tightest', 'tightest2');
     const lastEnd = (): number => (left.lastElementChild?.getBoundingClientRect().right ?? 0) - left.getBoundingClientRect().right;
     const over = (): boolean => left.scrollWidth > left.clientWidth + 1 || lastEnd() > 0.5 || right.offsetTop > left.offsetTop + 4 || row.scrollWidth > row.clientWidth + 1;
-    for (const step of ['tight', 'tighter', 'tightest']) {
+    for (const step of ['tight', 'tighter', 'tightest', 'tightest2']) {
       if (!over()) break;
       row.classList.add(step);
     }

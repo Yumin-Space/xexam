@@ -112,8 +112,8 @@ class H(http.server.BaseHTTPRequestHandler):
                 ident = "id|%s|%s|%s" % (self.headers.get("X-Original-Method"), self.headers.get("X-Original-Host"),
                                          self.headers.get("X-Original-Origin") or "-")
                 return self._send(204, headers=[("X-Xexam-Identity", ident), ("Cache-Control", "no-store")])
-            if s in ("pw", "guard"):
-                deny = "password" if s == "pw" else "guard"
+            if s in ("pw", "guard", "name"):
+                deny = {"pw": "password", "guard": "guard", "name": "name"}[s]
                 return self._send(403, b'{"error": "x"}', [("X-Xexam-Deny", deny), ("Content-Type", "application/json")])
             if s == "down":
                 return self._send(502, b"down", [("Content-Type", "text/plain")])
@@ -360,6 +360,12 @@ try:
        'The three backend locations and /_ai_auth use $xexam_backend_upstream; no fixed service address is left in nginx.conf')
     ok('connections/enabled' not in ADMIN_SPEC and 'connections/enabled' not in own_conf,
        'The v1.9 route /api/ai/admin/connections/enabled has no location of its own: the /api/ai/ prefix location serves it')
+    # v2.6: GET /api/ai/assess/latest (the Home AI card) is a plain read under /api/ai/: it matches no streaming location and has
+    # none of its own; only POST /api/ai/assess/ask streams. The v2.5 route /api/ai/assess/saved is gone from the config too
+    stream_re = STREAM_SPEC[2:]
+    ok(re.fullmatch(stream_re, '/api/ai/assess/ask') and not re.fullmatch(stream_re, '/api/ai/assess/latest')
+       and 'assess/latest' not in own_conf and 'assess/saved' not in own_conf and 'assess/saved' not in STREAM_SPEC,
+       'v2.6: assess/ask streams, assess/latest is a plain GET served by the /api/ai/ prefix location (no location of its own), assess/saved is gone')
     # v1.1 (IX-7, SEC-1): the exact upload location copies every proxy / header / auth / error line of /api/ai/
     ai_upload = location_block(r.stdout, '= /api/ai/import/upload')
     ok(ai_upload is not None, 'nginx -T shows the exact location = /api/ai/import/upload')
@@ -529,6 +535,7 @@ try:
     ok(msg_signin and msg_password, 'MSG_SIGN_IN_REQUIRED and MSG_PASSWORD_CHANGE_REQUIRED found in backend/src/api/response.rs')
     for cookie, want_st, code, probe in ((None, 401, 'auth.signin', 'none'), ('xexam_session=bad', 401, 'auth.signin', 'bad'),
                                          ('xexam_session=pw', 403, 'auth.password', 'pw'),
+                                         ('xexam_session=name', 403, 'auth.name', 'name'),
                                          ('xexam_session=guard', 403, 'auth.guard', 'guard'),
                                          ('xexam_session=down', 503, 'ai.backendDown', 'down')):
         st, hh, b = req('GET', '/api/ai/chats?probe=' + probe, host=host, headers={'Cookie': cookie} if cookie else {})
@@ -540,6 +547,8 @@ try:
             ok(j.get('error') == msg_signin, 'auth.signin text equals MSG_SIGN_IN_REQUIRED')
         if code == 'auth.password':
             ok(j.get('error') == msg_password, 'auth.password text equals MSG_PASSWORD_CHANGE_REQUIRED')
+        if code == 'auth.name':
+            ok(j.get('error') == backend_constant('MSG_NAME_REQUIRED'), 'auth.name text equals MSG_NAME_REQUIRED')
         if code == 'auth.guard':
             ok('XEXAM_ALLOWED_HOSTS' in j.get('error', ''), 'auth.guard text names XEXAM_ALLOWED_HOSTS')
     st, hh, b = req('POST', '/api/ai/send', host=host, headers={'Cookie': 'xexam_session=pw', 'Content-Type': 'application/json'}, body=b'{}')

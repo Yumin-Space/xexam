@@ -386,7 +386,12 @@ export type Role = 'admin' | 'user';
 /** The signed-in user (`GET /api/auth/state`, `POST /api/auth/login`, `POST /api/auth/password`) */
 export interface AuthUser {
   id: number;
+  /** The login (an e-mail address; older installs may still have a plain name) */
   username: string;
+  /** v2.6: the name shown in the app (用户名); null until the user has set one */
+  displayName?: string | null;
+  /** v2.6: no display name yet: the user must set one before anything else works (like `mustChangePassword`) */
+  needsName?: boolean;
   role: Role;
   /** The default or initial password must be replaced before anything else works */
   mustChangePassword: boolean;
@@ -443,6 +448,8 @@ export interface LoginResponse extends AuthUserResponse {
 export interface UserRow {
   id: number;
   username: string;
+  /** v2.6: the display name the user chose; null while they have not set one */
+  displayName?: string | null;
   role: Role;
   disabled: boolean;
   createdAt: string;
@@ -638,7 +645,7 @@ export interface AiStatusJson {
   chatDefault?: { connectionId: number; connectionName: string; model: string } | null;
 }
 
-export type AiFeatureKey = 'chat' | 'hint' | 'explain' | 'summary' | 'generate' | 'import';
+export type AiFeatureKey = 'chat' | 'hint' | 'explain' | 'summary' | 'assess' | 'generate' | 'import';
 
 export type GenSource = 'bank' | 'scope' | 'wrong' | 'file';
 export type GenState = 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
@@ -831,7 +838,7 @@ export interface AiUsage {
   budget?: { limit: number; usedToday: number };
   byPeriod: Array<AiUsageCounts & { period: string }>;
   /** v0.9: chat, hint, explain, summary in server order */
-  byPurpose?: Array<AiUsageCounts & { purpose: 'chat' | 'hint' | 'explain' | 'summary' | 'generate' | 'import' }>;
+  byPurpose?: Array<AiUsageCounts & { purpose: 'chat' | 'hint' | 'explain' | 'summary' | 'assess' | 'generate' | 'import' }>;
 }
 
 /**
@@ -912,6 +919,9 @@ export interface AiLimits {
   paceOn?: number;
   paceRpm?: number;
   paceTpm?: number;
+  /** v2.6: AI study assessment: successful assessments per user and day (0 = none) and whether administrators are exempt (0 / 1) */
+  assessPerDay?: number;
+  assessAdminsExempt?: number;
 }
 
 /** `GET` / `POST /api/ai/admin/limits` */
@@ -986,13 +996,13 @@ export interface ActivityPage {
   facets?: { users: { id: number; username: string; deleted: boolean }[] };
   settings: ActivitySettings;
 }
-export type VisitPage = 'home' | 'study' | 'banks' | 'users' | 'logs' | 'records' | 'record' | 'wrong' | 'settings' | 'about'
+export type VisitPage = 'home' | 'study' | 'banks' | 'users' | 'logs' | 'records' | 'record' | 'wrong' | 'settings' | 'profile' | 'about'
   | 'quiz' | 'result' | 'ai' | 'aiSettings';
 
 export type AiSendMode = 'send' | 'regenerate' | 'edit';
 
 /** v1.9: the study slot is split into hint and explain */
-export type AiSlot = 'default' | 'chat' | 'hint' | 'explain' | 'summary' | 'generate' | 'import';
+export type AiSlot = 'default' | 'chat' | 'hint' | 'explain' | 'summary' | 'assess' | 'generate' | 'import';
 export type AiState = 'setup' | 'off' | 'on' | 'paused';
 export interface AiKeyState { set: boolean; hint: string; unreadable: boolean }
 export interface AiConnection {

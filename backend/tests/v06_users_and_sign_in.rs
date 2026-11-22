@@ -33,13 +33,13 @@ const ORIGIN: &str = "http://127.0.0.1:8765";
 
 const MSG_SIGN_IN_REQUIRED: &str = "请先登录。";
 const MSG_ADMIN_ONLY: &str = "只有管理员可以进行这个操作。";
-const MSG_BAD_LOGIN: &str = "用户名或密码不对。";
+const MSG_BAD_LOGIN: &str = "邮箱或密码不对。";
 const MSG_TOO_MANY_LOGINS: &str = "登录失败次数太多，请稍后再试。";
 const MSG_PASSWORD_CHANGE_REQUIRED: &str = "请先设置新密码。";
 const MSG_SAME_PASSWORD: &str = "新密码不能和原来的一样。";
-const MSG_BAD_USERNAME: &str = "用户名不对：1–40 个字符，只能用字母、数字和 . _ - @。";
+const MSG_BAD_USERNAME: &str = "邮箱不对：1–40 个字符，只能用字母、数字和 . _ - @。";
 const MSG_BAD_PASSWORD: &str = "密码需要 8–128 个字符。";
-const MSG_USERNAME_TAKEN: &str = "这个用户名已经有人用了。";
+const MSG_USERNAME_TAKEN: &str = "这个邮箱已经有人用了。";
 const MSG_USER_NOT_FOUND: &str = "这个用户不存在（可能已被删除），请刷新页面后再试。";
 const MSG_NOT_YOURSELF: &str = "不能对自己的账户做这个操作。";
 const MSG_WRONG_PASSWORD: &str = "当前密码不对。";
@@ -185,7 +185,7 @@ async fn admin(a: &App) -> String {
         a,
         "/api/auth/password",
         Some(&c),
-        &json!({ "password": ADMIN_PW }).to_string(),
+        &json!({ "password": ADMIN_PW, "displayName": "Admin" }).to_string(),
     )
     .await;
     assert_eq!(r.status, 200, "{}", r.text());
@@ -234,7 +234,7 @@ async fn user(a: &App, admin_cookie: &str, name: &str, role: &str) -> (i64, Stri
         a,
         "/api/auth/password",
         Some(&c),
-        &json!({ "password": format!("{name}-own-pass") }).to_string(),
+        &json!({ "password": format!("{name}-own-pass"), "displayName": format!("{name} display") }).to_string(),
     )
     .await;
     assert_eq!(r.status, 200, "{}", r.text());
@@ -545,7 +545,7 @@ async fn login_ok_wrong_password_unknown_and_disabled_users() {
     assert_eq!(r.status, 200, "{}", r.text());
     assert_eq!(
         r.json()["user"],
-        json!({"id": 1, "username": "admin", "role": "admin", "mustChangePassword": true, "canManageBanks": true, "canDownloadBanks": true, "aiAllowed": true})
+        json!({"id": 1, "username": "admin", "displayName": null, "needsName": true, "role": "admin", "mustChangePassword": true, "canManageBanks": true, "canDownloadBanks": true, "aiAllowed": true})
     );
     // v1.3: the answer also says which lifetime rule the session follows
     assert_eq!(r.json()["session"]["rule"], "admin");
@@ -930,7 +930,7 @@ async fn forced_password_change() {
         &a,
         "/api/auth/password",
         Some(&b1),
-        r#"{"password": "initial-pass"}"#,
+        r#"{"password": "initial-pass", "displayName": "Baker"}"#,
     )
     .await;
     assert_eq!(
@@ -941,7 +941,7 @@ async fn forced_password_change() {
         &a,
         "/api/auth/password",
         Some(&b1),
-        r#"{"password": "short"}"#,
+        r#"{"password": "short", "displayName": "Baker"}"#,
     )
     .await;
     assert_eq!(
@@ -953,7 +953,7 @@ async fn forced_password_change() {
         &a,
         "/api/auth/password",
         Some(&b1),
-        r#"{"password": "baker-new-pass"}"#,
+        r#"{"password": "baker-new-pass", "displayName": "Baker"}"#,
     )
     .await;
     assert_eq!(r.status, 200, "{}", r.text());
@@ -1016,6 +1016,8 @@ async fn users_crud_and_validation() {
         [
             "id",
             "username",
+            // v2.6
+            "displayName",
             "role",
             "disabled",
             "createdAt",
@@ -1260,7 +1262,7 @@ async fn users_crud_and_validation() {
             &a,
             "/api/auth/password",
             Some(&uc),
-            r#"{"password": "cook-own-pass"}"#,
+            r#"{"password": "cook-own-pass", "displayName": "Cook"}"#,
         )
         .await,
     );
@@ -2700,7 +2702,7 @@ async fn the_sign_in_page_learns_whether_the_default_admin_password_is_still_set
         &a,
         "/api/auth/password",
         Some(&cookie_of(&r)),
-        &json!({ "password": ADMIN_PW }).to_string(),
+        &json!({ "password": ADMIN_PW, "displayName": "Admin" }).to_string(),
     )
     .await;
     assert_eq!(r.status, 200);

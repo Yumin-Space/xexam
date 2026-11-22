@@ -16,5 +16,12 @@ export const logout = (): Promise<{ ok: boolean }> => postJson<{ ok: boolean }>(
  * Sets a new password for the signed-in user. `current` is required unless the user must change the password (then the
  * session proves who they are). The user's other sessions are signed out.
  */
-export const changePassword = async (password: string, current?: string): Promise<AuthUser> =>
-  (await postJson<AuthUserResponse>('/api/auth/password', current === undefined ? { password } : { current, password })).user;
+export const changePassword = async (password: string, current?: string, displayName?: string): Promise<AuthUser> => {
+  const body: Record<string, string> = current === undefined ? { password } : { current, password };
+  // v2.6: the first sign-in of a user without a display name sends the chosen one with the new password
+  if (displayName !== undefined) body.displayName = displayName;
+  return (await postJson<AuthUserResponse>('/api/auth/password', body)).user;
+};
+/** v2.6: sets or changes the signed-in user's display name (用户名); the answer is the user with the new name */
+export const setDisplayName = async (displayName: string): Promise<AuthUser> =>
+  (await postJson<AuthUserResponse>('/api/auth/name', { displayName })).user;

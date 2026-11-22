@@ -10,8 +10,6 @@ const tr: StudyTransport = {
   askStudy: async (b) => { bodies.push(b as unknown as Record<string, unknown>); },
   savedSummary: async () => ({ chatId: null, latest: null, lastGood: null }),
   askSummary: async () => {},
-  savedAssess: async () => ({ chatId: null, latest: null, lastGood: null }),
-  askAssess: async () => {},
   stopChat: async () => {},
 };
 const ac = new AbortController();

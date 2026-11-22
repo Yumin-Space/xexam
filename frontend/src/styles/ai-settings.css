@@ -5,7 +5,7 @@
    usage tables are cards up to 560 px (AS-3); the provider is a vertical list up to 480 px (AS-6); the viewer is a
    full-screen sheet under PHONE (AS-7). PHONE = (max-width: 600px), (orientation: landscape) and (max-height: 500px). */
 
-.page-ais { max-width: var(--page-narrow, 880px); }
+.page-ais { max-width: var(--page-narrow, 880px); margin-inline: auto; }
 .page-ais [hidden] { display: none !important; }
 .ais-sec h2 { margin-bottom: 14px; }
 
@@ -97,6 +97,11 @@
 .ais-tablewrap { position: relative; overflow-x: auto; margin: 0 -6px; padding: 0 6px; }
 .ais-table { width: 100%; border-collapse: collapse; font-size: 13.5px; line-height: 1.45; }
 .ais-table th, .ais-table td { padding: 7px 8px; border-top: 1px solid var(--line-soft); text-align: left; vertical-align: middle; white-space: nowrap; }
+@media (min-width: 561px) and (max-width: 900px) {
+  /* tablet: the usage table (with the assessment column) fits its card; a narrower box still scrolls inside itself */
+  .ais-table.ais-mini { font-size: 12.5px; }
+  .ais-table.ais-mini th, .ais-table.ais-mini td { padding: 6px 4px; }
+}
 .ais-table thead th { border-top: 0; font-size: 12.5px; font-weight: 600; color: var(--ink3); }
 .ais-table tbody th { font-weight: 600; }
 .ais-table .n { text-align: right; font-variant-numeric: tabular-nums; }
@@ -347,7 +352,7 @@ td.ais-usum { display: none; }
 .ais-users tr:has(+ .ais-featrow) > * { border-bottom: 0; }
 .ais-feats { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; font-size: 13px; }
 .ais-feat-t { flex: none; font-size: 12.5px; font-weight: 600; color: var(--ink3); }
-.ais-fg { display: flex; flex-wrap: nowrap; align-items: center; gap: 0 10px; min-width: 0; }
+.ais-fg { display: flex; flex-wrap: wrap; /* v2.6: four boxes in the first group may wrap on a 320 px phone */ align-items: center; gap: 0 10px; min-width: 0; }
 .ais-fg-l { flex: none; font-size: 12.5px; font-weight: 600; color: var(--ink3); }
 .ais-fl { display: inline-flex; align-items: center; gap: 4px; min-height: 36px; white-space: nowrap; cursor: pointer; }
 .ais-fl:has(input:disabled) { cursor: default; color: var(--ink3); }
@@ -610,7 +615,7 @@ td.ais-usum { display: none; }
 .ais-subtabs button:focus-visible { outline-offset: -2px; }
 @media (max-width: 600px), (orientation: landscape) and (max-height: 500px) { /* PHONE */
   .ais-subtabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); width: 100%; margin-bottom: 12px; }
-  .ais-subtabs button { min-height: var(--tab-h, 44px); padding: 4px 4px; white-space: normal; line-height: 1.2; text-align: center; }
+  .ais-subtabs button { min-height: var(--tab-h, 44px); padding: 4px 4px; min-width: 0; overflow-wrap: anywhere; white-space: normal; line-height: 1.2; text-align: center; }
 }
 
 .ais-shared, .ais-budget { margin: 2px 0 8px; }

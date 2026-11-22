@@ -114,7 +114,7 @@ DR_JS = """const side = sidebar(); const b = drawerBtn(); if (!side || !b) retur
   return {open, shown: vis(side) && sb.r > 1, l: sb.l, r: sb.r, w: sb.w, t: sb.t, b: sb.b, vw: innerWidth, vh: innerHeight,
     role: side.getAttribute('role'), modal: side.getAttribute('aria-modal'), label: side.getAttribute('aria-label') || '',
     focusInside: side.contains(document.activeElement), focusOnDrawer: document.activeElement === side,
-    focusOnSearch: document.activeElement && document.activeElement.id === 'ai-search', btnFocus: document.activeElement === b,
+    focusOnSearch: document.activeElement && document.activeElement.id === 'ai-search', btnFocus: document.activeElement === b, focusOut: !side.contains(document.activeElement),
     backdrop: backs.length, edgeIsDrawer: !!hit && side.contains(hit), hash: location.hash, sideways: document.documentElement.scrollWidth - innerWidth};"""
 
 
@@ -155,14 +155,16 @@ def dr_case(rc, lang, theme, size):
     c2 = jv(d, DR_JS)
     if c2['open'] or c2['shown']:
         p.append('a backdrop tap did not close the drawer')
-    elif not c2['btnFocus']:
-        p.append('the focus did not return to the menu button')
+    elif not c2['focusOut']:
+        p.append('after a tap close the focus is left inside the hidden drawer')
     # 2. Esc closes it
     tap(d, '#ai-drawer-btn', 0.8)
     d.key('Escape', 'Escape', 27)
     time.sleep(0.7)
     if jv(d, DR_JS)['open']:
         p.append('Esc did not close the drawer')
+    elif not jv(d, DR_JS)['btnFocus']:
+        p.append('after an Escape close the focus is not on the menu button')
     # 3. the back button closes it and stays on AI Chat
     tap(d, '#ai-drawer-btn', 0.8)
     d.js('history.back(); 1')

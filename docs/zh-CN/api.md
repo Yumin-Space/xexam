@@ -24,11 +24,12 @@
 | GET | `/api/auth/state` | 公开 | 谁登录着，以及题库印记 *(v0.6)* | 否 |
 | POST | `/api/auth/login` | 公开 | 登录 *(v0.6)* | 是（新会话） |
 | POST | `/api/auth/logout` | 登录 | 退出登录 *(v0.6)* | 是（删除会话） |
-| POST | `/api/auth/password` | 登录 | 修改自己的密码 *(v0.6)* | 是 |
+| POST | `/api/auth/password` | 登录 | 修改自己的密码 *(v0.6)*；*(v2.6)* 还没有用户名时一起设置用户名 | 是 |
+| POST | `/api/auth/name` | 登录 | 设置或修改自己的用户名（显示名）*(v2.6)* | 是 |
 | GET | `/api/bank` | 登录 | 用户能看到的所有题库的题目（只含上架的题） | 否 |
 | GET | `/api/banks` | 登录 | 用户能看到的题库，带工作表和数量 *(v0.5)* | 否 |
 | GET | `/api/progress` | 登录 | 用户的学习记录 | 否 |
-| GET | `/api/dashboard` | 登录 | 主页仪表盘：排行和最常练的题 *(v2.5)* | 否 |
+| GET | `/api/dashboard` | 登录 | 主页仪表盘：排行 *(v2.5)* 和调用者自己最常错的题 *(v2.6)* | 否 |
 | GET | `/api/records` | 登录 | 用户保留的全部学习记录，最新的在前 *(v0.5)* | 否 |
 | GET | `/api/record?id=<int>` | 登录 | 一条学习记录和每道题的详情 *(v0.5)* | 否 |
 | GET | `/api/settings` | 登录 | 用户的界面设置 *(v0.5)* | 否 |
@@ -103,7 +104,8 @@ flowchart LR
 |---|---|
 | **公开**路由 | 放行。`GET /api/auth/state` 有会话时会读取它；其他公开路由根本不看会话 |
 | 没有有效的会话（没有 `xexam_session` Cookie、未知或过期的会话，或者账户已被停用） | **401** `请先登录。` |
-| 账户需要设置新密码 | 除了公开路由（`GET /api/info`、`GET /api/auth/state`、`POST /api/auth/login`）以及 `POST /api/auth/password` 和 `POST /api/auth/logout`，其他路由都回 **403** `请先设置新密码。` |
+| 账户需要设置新密码 | 除了公开路由（`GET /api/info`、`GET /api/auth/state`、`POST /api/auth/login`）以及 `POST /api/auth/password`、`POST /api/auth/name`（这时它自己也回这个 403）和 `POST /api/auth/logout`，其他路由都回 **403** `请先设置新密码。` |
+| *(v2.6)* 账户还没有用户名（`needsName`），并且不需要修改密码 | 同样这些路由回 **403** `请先设置用户名。`；`POST /api/auth/name`、`POST /api/auth/password` 和 `POST /api/auth/logout` 仍然可以用 |
 | 普通用户调用**管理员**路由 | **403** `只有管理员可以进行这个操作。` |
 | 没有这个权限的普通用户调用**可管理题库**路由 *(v0.7)* | **403** `你没有管理题库的权限，请联系管理员。` |
 
@@ -151,9 +153,10 @@ flowchart LR
 已经登录时（账户需要设置新密码时也一样）：
 
 ```json
-{"user": {"id": 1, "username": "admin", "role": "admin", "mustChangePassword": false, "canManageBanks": true, "aiAllowed": true}, "library": "3f0c9a7d5e21b4c88a9d0e6f17b2c453", "aiAvailable": true, "aiService": {"connected": true, "stopped": false, "lastSeen": 1789900000, "version": "0.9", "enabled": true, "link": true}}
+{"user": {"id": 1, "username": "admin", "displayName": "Ann", "needsName": false, "role": "admin", "mustChangePassword": false, "canManageBanks": true, "canDownloadBanks": true, "aiAllowed": true}, "library": "3f0c9a7d5e21b4c88a9d0e6f17b2c453", "aiAvailable": true, "aiService": {"connected": true, "stopped": false, "lastSeen": 1789900000, "version": "0.9", "enabled": true, "link": true}}
 ```
 
+- *(v2.6)* `username` 是**登录名**（从 v2.6 起，界面创建的每个账户都是邮箱地址；`admin` 这样的旧登录名仍然有效）。`displayName` 是用户自己的**用户名**，也就是界面上给所有人看的名字（学习排行、问候、顶栏、菜单），还没设置时是 `null`；正好在这时 `needsName` 是 `true`。带 `needsName`（或 `mustChangePassword`）的会话会被留在设置页面：见第 3 节的「会话和访问级别」。
 - `role` 是 `admin` 或 `user`。`canManageBanks` *(v0.7)* 对所有管理员都是 `true`，对有 **可管理题库** 权限的普通用户也是 `true`。`canDownloadBanks` *(v1.6)* 同理：对所有管理员都是 `true`，对有 **下载题库** 权限的普通用户也是 `true`。`aiAllowed` *(v0.8)* 对所有管理员都是 `true`，对开通了 **AI+** 的普通用户也是 `true`；AI 到底开没开，看 `GET /api/ai/status`。登录和修改密码的回答里也是同样的 `user` 对象。
 - `library` 是用户能看到的题库的一个不透明印记：32 位十六进制数字，是一个摘要，不公开构成它的任何数字。只要其中某个题库被导入、替换或删除（也包括别的进程里的 `import` 命令），它就会变；*(v0.7)* 用户能看到或管理的题库变了（管理员分配了题库或改了权限，某个题库换了所有者），它也会变。打开着的页面会比较它，变了就重新读取题库。对于只能看到部分题库的用户，印记只由这些题库构成：它既不透露、也不跟随他看不到的题库的大小、题数或更新时间。
 
@@ -170,13 +173,13 @@ flowchart LR
 | `link` | `true`：后端加载了内部令牌（AI 链接是开着的） |
 
 ### `POST /api/auth/login` *(v0.6)*
-公开。请求体：`{"username": "…", "password": "…"}`（都必须是字符串，否则 **400** `请求的格式不对。`）。用户名去掉首尾空格，比较时不区分大小写。
+公开。请求体：`{"username": "…", "password": "…"}`（都必须是字符串，否则 **400** `请求的格式不对。`）。用户名去掉首尾空格，比较时不区分大小写。`username` 是登录名（*v2.6*：邮箱地址）；这里从不接受显示名，因为任何登录名都不能和别的账户的显示名相同。登录页自己会拒绝不像邮箱地址的输入（`admin` 除外）；服务器和以前一样接受任何登录名。
 
 - **200** `{"user": {…}}`（和 `GET /api/auth/state` 里的对象一样），带两个 Cookie：
   - `xexam_session=<43 个字符>; HttpOnly; SameSite=Strict; Path=/; Max-Age=2592000`（30 天）。每次登录都得到一个新的随机令牌；数据库里只存它的 SHA-256。一个用户最多有 20 个会话；超过时，新的登录会结束最先到期的那些。
   - `xexam_device=<43 个字符>; HttpOnly; SameSite=Strict; Path=/api/auth; Max-Age=34560000`（400 天）：标记这个账户以前登录过的浏览器。它是账户当前密码哈希的带密钥哈希，所以换了密码它就作废；服务器上不为它存任何东西。
   - 只有请求的 `Origin` 是 `https://…` 或设了 `XEXAM_COOKIE_SECURE=1` 时，两者才加 `Secure`，所以在局域网里用纯 HTTP 也能登录。
-- **401** `用户名或密码不对。`：密码错误、用户名不存在、账户已停用，都是这个回答，而且花的工夫一样，所以回答从不透露某个用户名是否存在。
+- **401** `邮箱或密码不对。`（v2.6 之前是 `用户名或密码不对。`）：密码错误、用户名不存在、账户已停用，都是这个回答，而且花的工夫一样，所以回答从不透露某个用户名是否存在。
 - **429** `{"error": "登录失败次数太多，请稍后再试。", "retryAfter": <秒>}`，带 `Retry-After` 头，在登录被锁定期间返回。锁定期间每次尝试都得到 429，即使密码是对的；429 的回答不算失败次数。
 
 锁定按轮次逐级加长：15 分钟内失败 5 次，登录锁 1 分钟；之后每一轮允许失败 3 次，锁定时间依次是 5 分钟、15 分钟、30 分钟、1 小时，然后是 1 天。这个状态属于账户（按用户 id，所以改名后还在）；没有账户的名字也按同样的轮次处理。带着这个账户的 `xexam_device` Cookie 的浏览器上的尝试，和其他所有浏览器分开计数，所以猜用户名的人锁不住主人以前用过的浏览器。登录成功、管理员重置密码或点 **解锁**、重启后端，或者安静 24 小时，都会让这个账户从头开始。细节和原因见 [security.md](security.md)。
@@ -185,20 +188,33 @@ flowchart LR
 登录（需要设置新密码时也可以）。请求体 `{}` 或空。删除这个会话，回答 `{"ok": true}`，并带一个过期的 Cookie（`xexam_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0`）。
 
 ### `POST /api/auth/password` *(v0.6)*
-登录（需要设置新密码时也可以）。请求体：`{"current": "…", "password": "…"}`。除非账户需要设置新密码（这时会话本身就证明了身份），否则必须有 `current`。
+登录（需要设置新密码时也可以）。请求体：`{"current": "…", "password": "…", "displayName"?: "…"}`。除非账户需要设置新密码（这时会话本身就证明了身份），否则必须有 `current`。*(v2.6)* `displayName` 是用户名，和 `POST /api/auth/name` 一样清理和检查；**账户还没有用户名时必须带**（`needsName`；缺少或为空：**400** `请输入用户名。`），否则可以不带（`null` = 没有）。密码和名字在一个事务里写入：名字不合规则或已被占用时，整个请求被拒绝，什么都不写入。
 
-- **200** `{"user": {…}}`，其中 `mustChangePassword: false`。这个账户的所有会话都结束，包括这一个：这个浏览器得到一个**新的** `xexam_session` Cookie（以及新密码对应的 `xexam_device` Cookie），所以这个账户的其他浏览器都会退出登录，复制走的 Cookie 也失效。
+- **200** `{"user": {…}}`，其中 `mustChangePassword: false`（带了名字时还有 `needsName: false`）。这个账户的所有会话都结束，包括这一个：这个浏览器得到一个**新的** `xexam_session` Cookie（以及新密码对应的 `xexam_device` Cookie），所以这个账户的其他浏览器都会退出登录，复制走的 Cookie 也失效。
 - **400** `请求的格式不对。`：缺少 `password`（或必需的 `current`），或者不是字符串；`密码需要 8–128 个字符。`；`新密码不能和原来的一样。`。
 - **403** `当前密码不对。`。当前密码输错，和登录失败计在同样的登录计数里，所以锁定（**429**，同上）在这里也适用。
 - **401** `请先登录。`：账户在请求进行期间被停用或删除，或者它的密码在别处被修改或重置（什么都不写入）。
+- *(v2.6)* `displayName` 的 **400** `请输入用户名。` / `用户名最多 20 个字，不能包含 @ 或控制字符。` 和 **409** `这个用户名已经有人用了。`，同下；`displayName` 既不是字符串也不是 `null` 时是 **400** `请求的格式不对。`。和密码一起发来的名字会给 `auth.password` 那一行活动记录加上备注 `{"oldName", "newName"}`。
+
+### `POST /api/auth/name` *(v2.6)*
+登录；只差用户名时也可以用。账户还必须设置新密码时，它回 **403** `请先设置新密码。`（先设密码，`POST /api/auth/password` 会把名字一起带上）。请求体：`{"displayName": "…"}`。设置或修改调用者自己的用户名（显示名）；会话保持不变。管理员从不设置别人的名字：用户路由里没有这个字段。
+
+- **规则**（`auth::clean_display_name`，前端 `frontend/src/domain/user-name.ts` 里有同样的规则）：去掉首尾空白，每一串空白（包括制表符和换行）变成一个空格；然后必须是 1 到 20 个字符（Unicode 标量值，任何文字），不能有 `@`（这样名字永远不像邮箱登录名），不能有控制字符，也不能有看不见的格式字符（零宽字符、双向控制符、软连字符、字节顺序标记等，它们可能让两个名字看起来一样，或者把文字倒过来）。保存和返回的都是清理后的文字。
+- **互不重复**：名字不能是别的账户的显示名**或登录名**，比较时 ASCII 字母不区分大小写（SQLite `NOCASE`；其他文字逐字比较）。自己的名字换一种大小写是可以的（会改大小写）。在写入事务里检查，并有唯一索引 `idx_users_display_name` 兜底。
+- **200** `{"user": {…}}`（`GET /api/auth/state` 里的对象，现在带名字和 `needsName: false`）。
+- **400** `请输入用户名。`：`displayName` 缺少、为 `null` 或为空；`用户名最多 20 个字，不能包含 @ 或控制字符。`：不合规则；`请求的格式不对。`：不是字符串。
+- **409** `这个用户名已经有人用了。`：别的账户把它用作名字或登录名。
+- **401** `请先登录。`：账户在请求进行期间被停用或删除。
+- 活动记录：`auth.name`，备注 `{"oldName": <以前的名字或 null>, "newName": "…"}`；运行日志里写一行，带登录名和以前的名字。
 
 ### `GET /api/users` *(v0.6)*
 管理员。所有账户，按 id 排序：
 
 ```json
-{"users": [{"id": 2, "username": "cook", "role": "user", "disabled": false, "createdAt": "2026-11-10 14:00", "lastLoginAt": "2026-11-10 15:02", "mustChangePassword": false, "records": 12, "banks": [1, 3], "newBanks": true, "canManageBanks": true, "ai": true, "ownedBanks": [3], "lock": null, "aiSuspended": false}], "aiAvailable": true}
+{"users": [{"id": 2, "username": "cook@example.com", "displayName": "Cook", "role": "user", "disabled": false, "createdAt": "2026-11-10 14:00", "lastLoginAt": "2026-11-10 15:02", "mustChangePassword": false, "records": 12, "banks": [1, 3], "newBanks": true, "canManageBanks": true, "canDownloadBanks": false, "ai": true, "ownedBanks": [3], "lock": null, "aiSuspended": false}], "aiAvailable": true}
 ```
 
+- `displayName` *(v2.6)*，在 `username`（登录名）之后：用户自己选的用户名，还没设置时是 `null`。这里只能读；只有用户自己能设置（`POST /api/auth/name`）。
 - `createdAt` / `lastLoginAt` 是本地时间 `YYYY-MM-DD HH:MM`；第一次登录之前 `lastLoginAt` 是 `null`。
 - `records` 是这个用户的学习记录条数（考试和练习）。
 - `banks` *(v0.7)*：这个用户能看到的题库的 id，升序（只含还存在的题库；`[]` = 一个都没有）。它总是一个列表：`"all"` 只是写入时的简写（见下文）。
@@ -227,15 +243,15 @@ flowchart LR
 ### `POST /api/users/create` *(v0.6)*
 管理员。请求体：`{"username": "…", "password": "…", "role": "admin" | "user", "banks": "all" | [<题库 id>, …], "newBanks": <bool>, "canManageBanks": <bool>, "ai": <bool>}`。*(v0.7)* `banks` 默认是 `[]`（管理员选好之前，新用户看不到任何题库），`newBanks` 默认是 `false`，`canManageBanks` 默认是 `false`；*(v0.8)* `ai`（**AI+**）默认是 `false`。用 `ai: true` 创建用户时，也会记录 `user "<admin>" turned AI+ on for user "<name>"`；*(v0.8，第二轮)* AI+ 不可用时（见上面的 `aiAvailable`）它会被拒绝，回答 **409** `ai.serviceOff`，并且不创建用户。`ai: false` 或者不带 `ai` 照常工作。`"banks": "all"` 是一种简写：现在存在的所有题库，并且在没有给出 `newBanks` 时同时设置 `newBanks: true`。重复的 id 会被忽略。新账户是启用的，第一次登录时必须设置新密码。回答：和 `GET /api/users` 一样的 `{"users": [...]}`。
 
-用户名 1–40 个字符（ASCII 字母、数字和 `. _ - @`，去掉首尾空格），不区分大小写地唯一；密码 8–128 个字符。
+用户名（登录名）1–40 个字符（ASCII 字母、数字和 `. _ - @`，去掉首尾空格），不区分大小写地唯一；密码 8–128 个字符。*(v2.6)* 服务器的规则不变；**用户管理** 页面对新的登录名和改过的登录名要求填邮箱地址（`x@y.z`，没有空格）。登录名也不能是别的账户的显示名（不区分大小写）。新账户没有显示名：它在第一次登录时自己选。
 
 | 回答 | 什么时候 |
 |---|---|
-| **400** `用户名不对：1–40 个字符，只能用字母、数字和 . _ - @。` | 缺少 `username`、不是字符串，或不符合规则 |
+| **400** `邮箱不对：1–40 个字符，只能用字母、数字和 . _ - @。`（v2.6 之前是 `用户名不对：…`） | 缺少 `username`、不是字符串，或不符合规则 |
 | **400** `密码需要 8–128 个字符。` | `password` 太短或太长 |
 | **400** `请求的格式不对。` | 缺少 `password` 或不是字符串；缺少 `role` 或不是 `admin` / `user`；`banks` 既不是 `"all"` 也不是整数列表；`newBanks`、`canManageBanks` 或 `ai` 不是布尔值 |
 | **400** `选择的题库中有不存在的（可能已被删除），请刷新页面后再试。` *(v0.7)* | `banks` 里有一个 id 不是现存的题库（或者不是正整数）；什么都不创建 |
-| **409** `这个用户名已经有人用了。` | 另一个账户用了这个名字（不区分大小写） |
+| **409** `这个邮箱已经有人用了。`（v2.6 之前是 `这个用户名已经有人用了。`，它现在指显示名被占用） | 另一个账户用了这个登录名，或者 *(v2.6)* 把它用作显示名（不区分大小写） |
 | **409** `{"error": "请先在 AI 设置里开启 AI+ 功能。", "code": "ai.serviceOff"}` *(v0.8，第二轮)* | AI+ 不可用时给了 `ai: true`。它在请求体通过验证之后（格式不对的 `ai` 仍然是 400）、写入任何东西或给密码做哈希之前检查 |
 
 ### `POST /api/users/update` *(v0.6)*
@@ -247,7 +263,7 @@ flowchart LR
 - `banks` 替换所选的题库（一个 id 列表，`[]` = 一个都没有；或者 `"all"`，现在存在的所有题库，在没有给出 `newBanks` 时还会设置 `newBanks: true`）。只给 `newBanks` 时只改这个标记：取消它不会拿走这个用户已有的题库。
 - **400**：和创建时一样（`username`、`role`、`banks`、`newBanks`、`canManageBanks`、`ai`；`disabled` 不是布尔值 → `请求的格式不对。`；缺少 `id` 或不是整数（布尔值不算） → `请求的格式不对。`）。
 - **404** `这个用户不存在（可能已被删除），请刷新页面后再试。`。
-- **409** `不能对自己的账户做这个操作。`：停用自己或改自己的角色时；`至少要保留一个启用的管理员。`：修改后就没有启用的管理员时；`这个用户名已经有人用了。`。
+- **409** `不能对自己的账户做这个操作。`：停用自己或改自己的角色时；`至少要保留一个启用的管理员。`：修改后就没有启用的管理员时；`这个邮箱已经有人用了。` *(v2.6；以前是 `这个用户名已经有人用了。`)*：别的账户把新的登录名用作登录名或显示名时。
 
 所有检查都和写入在同一个事务里，所以两个请求不可能同时通过检查。
 
@@ -287,16 +303,16 @@ flowchart LR
 - `manageable` *(v0.7)*：这个用户能不能更新和删除这个题库（管理员：总是能；可管理题库的用户：自己的题库；其他人：从不）。
 
 ### `GET /api/dashboard`
-*(v2.5)* 已登录；只读（不写任何东西，也没有请求体）。主页仪表盘的两个块，来自两条汇总查询：
+*(v2.5；v2.6)* 已登录；只读（不写任何东西，也没有请求体）。主页仪表盘的两个块，来自两条查询：
 
 ```json
-{"ranking": {"users": 12, "top": [{"rank": 1, "name": "a***e", "answered": 320, "correct": 290, "self": false}], "me": {"rank": 2, "answered": 300, "correct": 251}}, "popular": {"days": 30, "since": "2026-10-23 14:05", "items": [{"questionId": "1a2b3c4d5e6f", "bankId": 3, "times": 42, "correct": 30}]}}
+{"ranking": {"users": 12, "top": [{"rank": 1, "name": "Ann", "answered": 320, "correct": 290, "self": false}], "me": {"rank": 2, "answered": 300, "correct": 251}}, "wrongTop": {"items": [{"questionId": "1a2b3c4d5e6f", "bankId": 3, "wrong": 4, "attempts": 6}]}}
 ```
 
 - **`ranking`**：来自逐题统计的累计数字（旧学习记录被清理后它仍然保留），范围是至少答过一题的未停用用户，包括管理员，所有题库。顺序：`correct` 降序，再 `answered` 升序，再用户 id。`users` 是上榜的用户数，`top` 有 0 到 3 项。`me` 一定存在：没有答题的用户 `rank` 为 `null`，两个数都是 0。
-- **名字** 对每个查看者（管理员也一样）都由服务器决定：查看者自己那一行的 `name` 是完整用户名（带 `self: true`）；别人的名字完整显示，但如果是邮箱，只发出隐去中间的本地部分（第一个字符、`***`、最后一个字符；一两个字符是第一个字符加 `***`，空的是 `***`）。域名、用户 id 和邮箱地址从不发出。
-- **`popular`**：截至现在的最近 `days`（30）天，`since` 是起点。查看者能看到的题库里**有效**题目被所有用户答过的项目（`answer` 为 null 且答错的未作答项目不计），最多 3 项，按 `times` 降序，再 `correct`，再题库和位置。只发 `questionId`、`bankId` 和次数，题干由页面从 `GET /api/bank` 取。已停用和失去归属的题目不计入。
-- 需要先改密码的用户和其他路由一样得到 403；这个调用是一条普通的活动记录。
+- **名字** 对每个查看者（管理员也一样）都由服务器决定。*(v2.6)* 设置了显示名的用户，以这个名字原样发给所有人。没有显示名的用户（`users.display_name` 为 NULL）：在查看者自己那一行（`self: true`）发完整的登录名，对别人按 v2.5 的规则：普通登录名完整显示，邮箱登录名只发出隐去中间的本地部分（第一个字符、`***`、最后一个字符；一两个字符是第一个字符加 `***`，空的是 `***`）。域名、用户 id 和邮箱地址从不发出。
+- **`wrongTop`** *(v2.6，取代 `popular`)*：**调用者自己**至少答错过一次的题，只来自调用者自己的逐题统计（累计；别的用户的统计从不计入，没有作答的考试项目在那里也不计），限于调用者能看到的题库里的**有效**题目。最多 5 项，按 `wrong` 降序，再按答对次数少的在前，再 `attempts` 降序，再题库和位置。只发 `questionId`、`bankId`、`wrong` 和 `attempts`：题干和答案由页面从 `GET /api/bank` 取。已停用和失去归属的题目不计入。
+- 需要先改密码或先设置用户名的用户和其他路由一样得到 403；这个调用是一条普通的活动记录。
 
 ### `GET /api/progress`
 登录。`questions` 是用户每道题的累计统计（答过几次、答对几次、答错几次、当前连续答对几次），只限于他能看到的题库；`history` 是他最近 60 条学习记录（数据库保留 500 条，见 `GET /api/records`），每条最后是 `kind` *(v0.7)*；`masterStreak` 是连续答对几次后移出错题本（2）。
@@ -420,7 +436,7 @@ flowchart LR
 登录。设置按用户保存在数据库里（重启和更新容器、清除浏览器缓存、换浏览器之后都还在）：
 
 ```json
-{"theme": "system", "uiLang": "en", "autoAdvance": false, "questionLang": "ja"}
+{"theme": "system", "uiLang": "en", "autoAdvance": false, "questionLang": "en"}
 ```
 
 | 键 | 取值 | 默认 |
@@ -428,7 +444,9 @@ flowchart LR
 | `theme` | `system` · `light` · `dark` | `system` |
 | `uiLang` | `en` · `zh` · `ja` | `en` |
 | `autoAdvance` | `true` · `false` | `false` |
-| `questionLang` | `ja` · `zh` · `en` | `ja` |
+| `questionLang` | `ja` · `zh` · `en` | `en`（*v2.6*；以前是 `ja`） |
+
+*(v2.6)* `questionLang` 是**题目默认语言**：每次考试或练习都从它开始，答题页上的语言切换只改变那一次（和保存在浏览器里的这次答题一起保存，从不发到这里）。从没保存过 `questionLang` 的用户得到新的默认值 `en`；已保存的值保持不变。
 
 `GET` 返回默认值合并上保存的值（保存的值无效时忽略它）。`POST /api/settings` 接受这些键的任意子集，返回完整的设置；未知的键忽略；已知的键取值无效 → **400** `设置的值不对。`，什么都不写入。`POST /api/settings/reset`（请求体 `{}` 或空）把 `theme`、`uiLang` 和 `autoAdvance` 恢复成默认值，保留 `questionLang`，返回完整的设置。
 
@@ -466,15 +484,18 @@ flowchart LR
 | 400 | `设置的值不对。` | A setting has an invalid value. | `POST /api/settings` |
 | 400 | `成绩的格式不对` | The exam result is not in the expected format. | `POST /api/attempt`：`results` 不是列表，或 `kind` 不对 |
 | 400 | `没有成绩可保存` | There is no result to save. | `POST /api/attempt`：没有有效的结果 |
-| 400 | `用户名不对：1–40 个字符，只能用字母、数字和 . _ - @。` | The username is not valid: it needs 1–40 characters, using only letters, digits and . _ - @. | 用户：创建、修改 |
+| 400 | `邮箱不对：1–40 个字符，只能用字母、数字和 . _ - @。` | The e-mail is not valid: it needs 1–40 characters, using only letters, digits and . _ - @. | 用户：创建、修改（v2.6 之前这句以 `用户名不对` 开头） |
+| 400 | `请输入用户名。` | Enter a username. | `POST /api/auth/name`；账户还没有名字时的 `POST /api/auth/password` *(v2.6)* |
+| 400 | `用户名最多 20 个字，不能包含 @ 或控制字符。` | The username can have up to 20 characters and no @ or control characters. | 同样这两个路由 *(v2.6)* |
 | 400 | `密码需要 8–128 个字符。` | The password needs 8 to 128 characters. | 密码相关的路由、创建用户 |
 | 400 | `新密码不能和原来的一样。` | The new password must be different from the old one. | `POST /api/auth/password` |
 | 400 | `选择的题库中有不存在的（可能已被删除），请刷新页面后再试。` | One of the chosen question banks does not exist (it may have been deleted). Refresh the page and try again. | 用户：创建、修改 *(v0.7)* |
 | 400 | `这份文件里没有读到任何可用的题，没有导入。` | No usable questions were found in this file, so nothing was imported. | 确认导入 |
 | 400 | `只能导入六列格式（A–C 列：英文、中文、日文题目；D–F 列：英文、中文、日文答案）。这个文件是旧的三列或四列格式，请改成六列格式后再导入。` | Only the six-column layout can be imported (columns A–C: the question in English, Chinese and Japanese; columns D–F: the answer in English, Chinese and Japanese). This file uses the old three- or four-column layout. Rewrite it in the six-column layout and import it again. | 上传、确认导入 *(v0.7)* |
 | 401 | `请先登录。` | Please sign in first. | 没有有效的会话 |
-| 401 | `用户名或密码不对。` | The username or password is not correct. | 登录 |
+| 401 | `邮箱或密码不对。` | The e-mail or password is not correct. | 登录（v2.6 之前是 `用户名或密码不对。`） |
 | 403 | `请先设置新密码。` | Please choose a new password first. | 账户需要设置新密码 |
+| 403 | `请先设置用户名。` | Please set a username first. | 账户还没有用户名 *(v2.6)* |
 | 403 | `只有管理员可以进行这个操作。` | Only an administrator can do this. | 管理员路由 |
 | 403 | `你没有管理题库的权限，请联系管理员。` | You do not have permission to manage question banks. Ask an administrator. | 可管理题库的路由 *(v0.7)* |
 | 403 | `这个题库不是你上传的，只能更新或删除你自己上传的题库。` | You did not upload this question bank. You can only update or delete question banks you uploaded yourself. | 上传、确认导入、删除题库 *(v0.7)* |
@@ -484,7 +505,8 @@ flowchart LR
 | 404 | `这个用户不存在（可能已被删除），请刷新页面后再试。` | This user does not exist (it may have been deleted). Reload the page and try again. | 用户相关的路由 |
 | 409 | `这次上传的预览已经过期或已被处理，请重新上传。` | The preview of this upload has expired or has already been handled. Please upload the file again. | 确认导入 |
 | 409 | `这场考试的题目已经被删除，成绩没有保存。` | The questions of this exam have been deleted, so the result was not saved. | `POST /api/attempt` *(v0.7)* |
-| 409 | `这个用户名已经有人用了。` | This username is already taken. | 用户：创建、修改 |
+| 409 | `这个邮箱已经有人用了。` | This e-mail is already in use. | 用户：创建、修改（登录名是别的账户的登录名或显示名）*(v2.6)* |
+| 409 | `这个用户名已经有人用了。` | This username is already taken. | *(v2.6)* `POST /api/auth/name`、`POST /api/auth/password`（显示名是别的账户的显示名或登录名）。v2.6 之前这是用户路由在登录名被占用时的回答 |
 | 409 | `不能对自己的账户做这个操作。` | You cannot do this to your own account. | 用户：修改、密码、删除 |
 | 409 | `至少要保留一个启用的管理员。` | At least one enabled administrator must remain. | 用户：修改、删除 |
 | 409 | `请先在 AI 设置里开启 AI+ 功能。`（带 `"code": "ai.serviceOff"`） | Turn on the AI+ feature in AI settings first. | 用户：带 `ai` 的修改、`ai: true` 的创建，在 AI+ 不可用时 *(v0.8)* |
@@ -503,8 +525,9 @@ flowchart LR
 - *(v1.4)* **最后活动和所在地来源。** 用户应答多两个顶层键：`geoSource`（`"cloudflare"` 或 `"api"`）和 `aiServiceUp`（ai-service 已连接时为 `true`，与 AI+ 是否开启无关）；每个用户有 `lastActiveIp`（字符串或 `null`）和 `lastActiveLocation`（`{"country", "region", "city"}`，不知道的为 `null`；三者都不知道时整个值才是 `null`），两者在眼睛关闭时都是 `null`；还有 `lastActiveUa`（最后一次活动清理后的 User-Agent，最多 256 个字符；眼睛关闭时也有）。它们与 `lastActiveAt` 一起写入，最多每分钟一次，IP 和所在地只在眼睛打开时写（User-Agent 总是写），匿名请求从不写。`lastLoginLocation` 和 `lastActiveLocation` 的 `country` 是两位国家代码或国家名称，`country` 本身也可能是 `null`。所在地由来源决定：Cloudflare 模式存请求里的 `X-Geo-*`，`api` 模式存该 IP 已记住的查询结果（5.9 节）。**`POST /api/users/signin-info/clear`** 还会清除 `users.last_active_ip` / `_country` / `_region` / `_city`（不含 `last_active_ua`），以及查询的记忆和队列；关闭眼睛（`POST /api/users/signin-info`）会丢弃等待中的查询。
 - **`POST /api/users/geo-source`** *(v1.4，管理员)* 只接受 `{"source": "cloudflare"}`（`"api"` 或其他键是 400：切换到外部来源要经过 ai-service 的 `/api/ai/admin/geo/enable`，保证只有测试通过的配置才能启用）。写入 `system_settings` 的 `geo.source`，清空队列，返回用户应答。活动记录 `users.geoSource`，带 `{"source": "cloudflare"}`。
 - **`GET /api/activity`**（管理员）`?before=<id>&after=<id>&limit=<1..200>&user=<id|system|anon>&group=<auth|users|banks|study|settings|visit|ai|system>&action=<code>&result=<ok|fail>&facets=<0|1>` 返回 `{"entries": [...], "next", "newest", "facets", "settings"}`；最新的在前，按键集分页。`GET /api/activity/settings` 和 `POST /api/activity/settings`（`{"retentionDays": 7..3650, "userVisits": bool}`，两个键都可省略）。登录信息关闭时，`ip` 和 `location` 为 `null`。这些读取不会让会话续命，也不记录。
-- **`POST /api/activity/visit`** `{"page": "home"}`（已登录；`page` 是 `home`、`study`、`banks`、`users`、`logs`、`records`、`record`、`wrong`、`settings`、`about`、`quiz`、`result`、`ai`、`aiSettings` 之一，否则 400）：管理员会被记录，用户只在设置打开时记录；每个用户每分钟最多写 30 次。
+- **`POST /api/activity/visit`** `{"page": "home"}`（已登录；`page` 是 `home`、`study`、`banks`、`users`、`logs`、`records`、`record`、`wrong`、`settings`、`profile`、`about`、`quiz`、`result`、`ai`、`aiSettings` 之一，否则 400）：管理员会被记录，用户只在设置打开时记录；每个用户每分钟最多写 30 次。
   - *(v2.5)* `study` 是 **考试&练习** 页面；`home` 现在指仪表盘。以前用 `home` 写下的记录仍显示为 **主页**。
+  - *(v2.6)* `profile` 是 **个人资料** 页面。活动记录还多了操作 `auth.name`（**设置用户名**，`POST /api/auth/name`；详情 `{"oldName", "newName"}`）。
 - **`POST /api/attempt`**：同一次保存的重复（相同的 `key`、`startedAt` 和种类）什么都不写，回答第一次的结果再加 `"duplicate": true`。
 - **`GET /api/bank`**、**`GET /api/banks`**：响应带 `ETag` 和 `Cache-Control: private, no-cache`；`If-None-Match` 匹配时回答不带正文的 `304`。
 
@@ -531,6 +554,7 @@ flowchart LR
   |---|---|---|
   | 401 | `auth.signin` | 没有有效的会话。`error` 文字是后端的 `请先登录。`。认证步骤只接受正好一个、原样写出的 `xexam_session` Cookie：第二个（不论大小写）、空的、带引号的或带空白的，都和没有会话一样被拒绝 |
   | 403 | `auth.password` | 账户必须先设置新密码（`请先设置新密码。`） |
+  | 403 | `auth.name` | *(v2.6)* 账户必须先设置用户名（`请先设置用户名。`） |
   | 403 | `auth.guard` | Host 不被允许，或者（GET 以外的方法）Origin 不被允许（和第 3 节同样的守卫） |
   | 503 | `ai.backendDown` | 后端无法回答，或者 AI 连接已关闭（没有内部令牌） |
   | 502 | `ai.unavailable` | ai-service不存在、已停止或没有回应 |
@@ -571,7 +595,7 @@ flowchart LR
 | POST | `/api/ai/summary/ask` | AI 用户 | `{"recordId": <id>, "lang"?: "en" \| "zh" \| "ja"}` | **事件流**（5.3、5.5）*(v0.9)* |
 | GET | `/api/ai/summary/saved` | 已签名 | `?record=<id>&at=<12 位数字>`（5.5） | `SummaryAnswer` 的 `Saved` *(v0.9)* |
 | POST | `/api/ai/assess/ask` | AI 用户 | `{"lang"?: "en" \| "zh" \| "ja"}` | **事件流**（5.3、5.5）*(v2.5)* |
-| GET | `/api/ai/assess/saved` | 已签名 | `?at=<12 位数字>`（5.5） | `SummaryAnswer` 的 `Saved`，另有 `date` 和 `basis` *(v2.5)* |
+| GET | `/api/ai/assess/latest` | 已签名 | | `{"assess", "today", "running", "perDay", "remaining"}`（5.5）*(v2.6；取代 v2.5 的 `/api/ai/assess/saved`)* |
 | GET | `/api/ai/memories` | 已签名 | | `{"memories": [Memory], "limit": 30, "maxTokens": 200}`（当前的上限；`maxTokens` 是 `memoryTokens`，v1.3 起默认 200（估算的 Token 数）） |
 | POST | `/api/ai/memories/add` | AI 用户 | `{"content": "…", "source"?: "manual" \| "chat"}` | `{"memory": Memory}` |
 | POST | `/api/ai/memories/update` | AI 用户 | `{"id": <id>, "content": "…"}` | `{"memory": Memory}` |
@@ -598,7 +622,7 @@ flowchart LR
 | GET | `/api/ai/admin/chat` | 管理员 | `?user=<用户 id>&id=<对话 id>` | `{"chat": ChatSummary, "messages": [Message]}`，**记入审计**；对话必须属于那个用户（否则 404，不写审计日志） |
 | POST | `/api/ai/admin/clear` | 管理员 | `{"userId": <id>, "what": "chat", "chatId": <id>}`，或 `{"userId": <id>, "what": "chats" \| "memories"}`，或只有 `{"what": "shared"}`（v1.3：共享的提示 / 解析） | `{"deleted": <n>}`，**记入审计** |
 | GET | `/api/ai/admin/limits` | 管理员 | | `{"limits": {…}, "defaults": {…}, "ranges": {"<键>": [min, max], …}}` |
-| POST | `/api/ai/admin/limits` | 管理员 | 36 个上限键（见下面的 `admin/limits` 和 **功能键与上限**）中的任意几个，整数 | 和 GET 一样 |
+| POST | `/api/ai/admin/limits` | 管理员 | 38 个上限键（v2.6 之前是 36 个）（见下面的 `admin/limits` 和 **功能键与上限**）中的任意几个，整数 | 和 GET 一样 |
 | GET | `/api/ai/admin/geo` | Admin | | 外部所在地查询的设置（*v1.4*，5.9 节） |
 | POST | `/api/ai/admin/geo/test` · `/save` · `/enable` · `/delete` | Admin | 草稿，或 `{}` | 5.9 节 |
 
@@ -683,7 +707,7 @@ RunningInfo   {"chatId": n, "messageId": n, "chatKind": str, "kind": str, "quest
 - **连接格式（v1.8）。** `format` 是 `openai`、`anthropic` 或 `responses`（**OpenAI Responses**，只用于网关连接，只能手动选择，从不按地址推断；服务商类型 `openai` 和 `anthropic` 保持各自的格式）。Responses 连接用 `POST {address}/responses` 对话，用 `GET {address}/models` 列出模型（读取方式与 OpenAI 格式相同）；服务商密钥放在 `Authorization: Bearer` 里，所以和 OpenAI 格式一样会发生请求头冲突（`ai.headerClash`）。请求体包含 `instructions`（系统提示词）、`input`（各个回合）、`stream: true`、`store: false` 和 `max_output_tokens`（回答上限为不限时，以及作为最后一步重试时不带；从不发送 `max_tokens` 和 `max_completion_tokens`）。结构化输出是 `text.format`（`json_schema`，`strict: true`）；思考强度的 **Responses API** 系列原生发送 `reasoning.effort`（一如既往，不在系列之间转换）。**缓存**：不发缓存标记，OpenAI 自动缓存；缓存命中的 token 来自 `usage.input_tokens_details.cached_tokens`，与其他格式一样是 `tokensIn` 的一部分。保存的连接在数据库里是 `format: "openai"` 加 `responses = 1`（见 [database.md](database.md) 的 8.2e 节），API 里始终显示 `"responses"`。
 - **`admin/enable`** `{"enabled": true}` 需要密钥可读（409 `ai.keyProblem`）并且有默认模型：默认槽为空时必须给 `default`（一个 ModelRef）（422 `ai.modelMissing`），并像 `models/pick` 一样被测试（测试失败时答复 200 `{"ok": false, "enabled": false, "code", …}`，AI+ 保持关闭）；没有任何槽能解析出可用模型时为 409 `ai.notVerified`；`false` 停止每个正在生成的回答（`ai.disabled`）。这是整个安装的 **AI+ 功能** 开关（AI 设置里用「AI+ 功能已开启」/「AI+ 功能已关闭」标签显示它）。回答之前，ai-service 会把新状态报告给后端，所以 `aiAvailable` 马上跟着变。`suspend` 和 `resume` 也一样。
 - **`admin/suspend`** 和 **`admin/resume`** *(v0.8，第二轮)* **暂停**和**恢复**一个普通用户的 **AI+ 功能**（AI 设置里显示为按钮 **暂停** / **恢复** 和状态 **已暂停**；路由名、`suspended` 键和错误码 `ai.suspended` 仍沿用旧的词）。请求体：`{"userId": <id>}`，不能有别的键（400 `ai.badRequest`）。回答是 `{"user": AdminUserRow}`，带新的 `suspended`。用户通过后端查找（后端无法回答时 503 `ai.backendDown`；用户不存在时 404 `ai.notFound`）；管理员不能被暂停：409 `ai.adminAlways`。AI+ 功能已关闭的用户也可以通过 API 被暂停（AI 设置页面只列出有这个功能的用户）。**暂停**会马上停止这个用户正在生成的回答或记忆建议（已有的文字保留；流以 `error` 事件 `ai.suspended` 结束），从那以后这个用户的 AI 用户路由回答 403 `ai.suspended`；查看和删除他的对话和记忆仍然可以，用户也仍然保留在列表里，带着他的数据。页面不要求确认。两个路由都可以安全地重复调用：标记和它的审计行在同一个事务里写入，没有任何改变的重复调用回答 200，不产生新的行。**记入审计**：系统日志里的行是 `AI function turned off for user "<name>" by admin "<admin>"`（暂停）和 `AI function turned on for user "<name>" by admin "<admin>"`（恢复），带前缀 `AI: `；这些英文日志行的措辞没有改。这个标记保存在 ai-service 自己的数据库里（schema 2，[database.md](database.md)）；schema 2 文件里缺少的列（来自这个版本更早的构建）会在下次启动时自动添加。
-- **`admin/usage`**：*(v1.4)* `period=12h` 和 `period=today` 统计 `at` 在最近 12 小时内 / 今天 0:00（服务器时区）之后的调用；所有统计用同一个时间窗，`days` 为 `null`，`unit` 为 `hour`，`byPeriod` 按本地小时（`HH:00`，从旧到新，包含零）每小时一行；`shared` 和 `budget` 不变。7 天和 30 天按天，90 天和 365 天按月；`byPeriod` 列出范围内的每个时段，包括为零的，最早的在前；服务商没有报告的 Token 计为 0。`tokensCached` 是 `tokensIn` 中服务商从它的提示缓存里提供的那一部分（见 **提示词缓存**）；AI 设置的用量标签页把它显示为 **缓存命中** 列。在它出现之前记录的调用计为 0。`byUser` 按调用次数排序；已删除的用户合成一行，`userId: null`。在 `byModel` 里，不为任何功能选用模型的调用（模型列表和连接测试）合成一行，`model: ""` 且 `other: true`；其余各行 `other: false`，所以各行相加等于调用总数。*(v1.1)* `byPurpose` 正好有**七行**，顺序固定为 `chat`、`hint`、`explain`、`summary`、`generate`、`import`、`other`，为零的也保留，相加等于调用总数：`generate` = AI 出题的调用，`import` = AI 文件导入的调用（识别和写题），`other` = 模型列表和连接测试。用量标签页图表的切换（调用次数 | Token 数）只改变绘制的内容，应答不变。*(v1.0)* 有用户 id 的 `byUser` 行带有 `today`：该用户从服务器时区今天 0 点起计入的调用数，即日上限比较的数字（见第 5.6 节）。*(v0.9)* `byPurpose` 跟在 `byPeriod` 后面，把同一范围内的**对话调用**（不含获取模型列表的调用）正好分成四行，顺序固定，为零的也保留：`chat`（AI 对话，以及 v0.9 之前记录的每一次调用）、`hint`、`explain`、`summary`；AI 设置的用量标签页把它显示成「按功能」表。
+- **`admin/usage`**：*(v1.4)* `period=12h` 和 `period=today` 统计 `at` 在最近 12 小时内 / 今天 0:00（服务器时区）之后的调用；所有统计用同一个时间窗，`days` 为 `null`，`unit` 为 `hour`，`byPeriod` 按本地小时（`HH:00`，从旧到新，包含零）每小时一行；`shared` 和 `budget` 不变。7 天和 30 天按天，90 天和 365 天按月；`byPeriod` 列出范围内的每个时段，包括为零的，最早的在前；服务商没有报告的 Token 计为 0。`tokensCached` 是 `tokensIn` 中服务商从它的提示缓存里提供的那一部分（见 **提示词缓存**）；AI 设置的用量标签页把它显示为 **缓存命中** 列。在它出现之前记录的调用计为 0。`byUser` 按调用次数排序；已删除的用户合成一行，`userId: null`。在 `byModel` 里，不为任何功能选用模型的调用（模型列表和连接测试）合成一行，`model: ""` 且 `other: true`；其余各行 `other: false`，所以各行相加等于调用总数。*(v1.1)* `byPurpose` 正好有**七行**（v2.6 起是**八行**，`assess` 在 `summary` 之后，见 5.11），顺序固定为 `chat`、`hint`、`explain`、`summary`、`generate`、`import`、`other`，为零的也保留，相加等于调用总数：`generate` = AI 出题的调用，`import` = AI 文件导入的调用（识别和写题），`other` = 模型列表和连接测试。用量标签页图表的切换（调用次数 | Token 数）只改变绘制的内容，应答不变。*(v1.0)* 有用户 id 的 `byUser` 行带有 `today`：该用户从服务器时区今天 0 点起计入的调用数，即日上限比较的数字（见第 5.6 节）。*(v0.9)* `byPurpose` 跟在 `byPeriod` 后面，把同一范围内的**对话调用**（不含获取模型列表的调用）正好分成四行，顺序固定，为零的也保留：`chat`（AI 对话，以及 v0.9 之前记录的每一次调用）、`hint`、`explain`、`summary`；AI 设置的用量标签页把它显示成「按功能」表。
 - **`admin/users`** 先和后端对账（删除已删除用户的 AI 数据），然后列出**有 AI+ 功能的用户**：每个管理员和每个开通了 AI+ 的用户（被暂停的也在，带 `suspended: true`），按用户名排序；Token 是全部时间的合计。*(第二轮)* AI+ 功能被关闭的用户不再列出，即使他还有 AI 数据；这些数据保留（他可以查看和删除，保留期限照常适用，`admin/user` 仍然显示它，并记入审计）。所以这里的 `exists` 始终是 `true`（保留这个键是为了让结构不变）。
 - **`admin/user`** 也会对账，只有在这个用户在主程序里已经不存在时才回答 404（没有 AI 数据的用户得到空列表）。**查看会记入审计**：`user "<admin>" viewed the AI chats and memories of user "<name>"` 这一行（对 `admin/chat` 是 `… viewed an AI chat of user "<name>" (<n> messages)`）在返回数据之前送到系统日志；后端取不了它时，回答是 503 `ai.backendDown`，不给数据。
 - **`admin/clear`**：`what: "chat"` 需要 `chatId`；`chats` 和 `memories` 不能带它（400）。被清除的对话里正在生成的回答会先被停止。审计日志（`cleared one AI chat of user …`、`cleared all <n> AI chats of user …`、`cleared all <n> AI memories of user …`）在删除的同一个事务里写入，并一直投递，直到后端取走。
@@ -762,6 +786,7 @@ data: {"status":"done","tokensIn":38,"tokensOut":112,"truncated":false}
 | `ai.hintLeak` | （流里） | *(v0.9)* 这个提示会透露答案，已被拦下（文字 `这个提示透露了答案，已被隐藏。请重新生成。`；带 `withdraw: true`）。 |
 | `ai.noWrong` | 409 | *(v0.9)* 这条记录没有可总结的答错的题（文字 `这次没有答错的题（未作答的题不计入 AI 总结）。`）。 |
 | `ai.assessFew` | 409 | *(v2.5)* 已保存的学习记录不足 3 条，没有可评估的内容（文字 `学习记录太少，至少需要 3 条。`）。 |
+| `ai.assessDaily` | 409 | *(v2.6)* 用户今天的 AI 学习评估次数已用完（`assessPerDay`；文字 `今天的 AI 学习评估次数已用完，明天再来吧。`）。 |
 | `ai.noUsable` | 409 | *(v0.9)* 这条记录里每道答错的题，要么已被删除，要么用户已经看不到它（文字 `这些答错的题已经不可用（题库已删除或没有访问权限），无法总结。`）。 |
 | `ai.noDetail` | 409 | *(v0.9)* 这条记录没有逐题详情（在 v0.5 之前保存；文字 `这条记录没有逐题记录，无法总结。`）。 |
 | `ai.badRequest` | 400 / 405 / 413 / 415 | 请求无效。 |
@@ -868,13 +893,26 @@ data: {"chatId":12,"chatTitle":"2026-11-12 09:30","userMessageId":41,"assistantM
 
 查询参数 `record=<正的 id>&at=<12 位数字>`：`at` 是记录的 `at` 去掉标点（`2026-11-10 15:10` 是 `202611101510`）；其他一律是 400 `ai.badRequest`。回答：`SummaryAnswer` 的 `Saved`，`latest` / `lastGood` 的规则相同。它不调用后端，也不需要 AI+ 功能。对话是按记录 id **和**它的时间找到的，所以一条记录被删除后，被一条 id 相同的新记录取代时，不会被误认成它。
 
-#### `POST /api/ai/assess/ask` *(v2.5)*
+#### `POST /api/ai/assess/ask` *(v2.5；v2.6)*
 
-主页仪表盘上的学习状态评估。请求体只有 `{"lang"?: "en" | "zh" | "ja"}`（别的都是 400 `ai.badRequest`）。ai-service 向后端要调用者自己的数字（`/internal/ai/assess`，第 6 章），再据此写建议；模型只拿到这些数字，拿不到题目、题库、工作表、用户名或记忆。它整个沿用总结功能：同样的 AI+ 检查（`Summary`）、同样的每日上限和匀速发送、同样的思考强度、Nginx 里同样的开始次数限制。拒绝的情况：和 `send` 相同，另加 409 `ai.assessFew`（已保存的记录不足 3 条）。对话以引用 `assess@<本地日期>`、以该日期为标题存成 `summary` 对话，每天一个（同一天再问一次，会在里面追加一对）；所有列表里它的类型都是 `assess`，保存的用户消息是机器行 `[AI assessment] latest=<YYYY-MM-DD HH:MM> 30d <records>r <answered>q`，界面上用标签代替它。`start` 事件里 `chatKind` 和 `kind` 是 `assess`，`questionId`、`questionNo`、`source`、`recordId`、`sample` 是 `null`，另有 `lang` 和 `basis`（`{"days", "records", "answered", "latestAt"}`）。
+主页仪表盘上的学习状态评估。请求体只有 `{"lang"?: "en" | "zh" | "ja"}`（别的都是 400 `ai.badRequest`）。ai-service 向后端要调用者自己的数字（`/internal/ai/assess`，第 6 章），再据此写一段简短而鼓励人的纯文字（先用一两句以自然或宇宙意象写成的散文诗，再根据数字给两三句建议）（*v2.6*；以前是约 300 词、带标题和 7 天计划）；模型只拿到这些数字，拿不到题目、题库、工作表、用户名或记忆。
 
-#### `GET /api/ai/assess/saved` *(v2.5)*
+*(v2.6)* 它是**独立的功能** `assess`：AI+ 检查和每个用户、全局的功能开关都用键 `assess`（关闭时 403 `ai.featureOff`），模型和思考强度来自模型槽位 `assess`，它的调用在按功能的用量里显示为 `assess`。它和每个 AI 调用一样，仍计入每个用户的请求上限，Nginx 里的开始次数限制也一样。**每天的限制**：每个用户在 ai-service 的每个本地日（`TZ`）最多 `assessPerDay`（默认 3）次**成功的**评估；`assessAdminsExempt` 为 1（默认）时管理员不受限制。次数记在 `assess_latest` 里，只有回答以 `done` 结束并且有文字时才加一，所以失败或停止的不占次数。`assessPerDay` 为 0 时，对它限制的所有人关闭评估（403 `ai.featureOff`）。
 
-查询 `at=<12 位数字>`：最新一条学习记录的时间（`2026-11-22 09:10` 是 `202611220910`），别的都是 400 `ai.badRequest`。不需要 AI+ 功能。它返回用户最新的 `assess@` 对话的 `SummaryAnswer` 的 `Saved`，但只在这份评估是针对「最新记录就是这个时间」的那组记录写的时才返回；否则 `latest` 和 `lastGood` 是 `null`。两种情况都多带两个键：`date`（评估的日期，或 `null`）和 `basis`（同 `start` 事件，或 `null`）。非管理员永远收不到模型相关的键（第 7 章）。
+检查的顺序：验证请求、`send` 的 AI 用户检查、从后端取数字（已保存的记录不足 3 条时 409 `ai.assessFew`），然后是每天的限制（409 `ai.assessDaily`，在占用任何位置或保存任何东西之前），然后像 `send` 一样处理对话和位置。对话以引用 `assess@<本地日期>`（接受请求的那一天）、以该日期为标题存成 `summary` 对话，每天一个（同一天再问一次，会在里面追加一对）；所有列表里它的类型都是 `assess`，保存的用户消息是机器行 `[AI assessment] latest=<YYYY-MM-DD HH:MM> 30d <records>r <answered>q`，界面上用标签代替它。`start` 事件里 `chatKind` 和 `kind` 是 `assess`，`questionId`、`questionNo`、`source`、`recordId`、`sample` 是 `null`，另有 `lang` 和 `basis`（`{"days", "records", "answered", "latestAt"}`）。回答以 `done` 结束并且有文字时，它也成为用户的**最新评估**（`GET /api/ai/assess/latest`），和对话分开保存：删除对话、**删除全部对话**、管理员清除和保留期都不会删掉它；删除用户会删掉它。
+
+#### `GET /api/ai/assess/latest` *(v2.6)*
+
+取代 v2.5 的 `GET /api/ai/assess/saved`（已删除；现在回答 404 `ai.notFound`）。没有查询参数。只需要**已签名**：读已保存的文字不需要 AI+ 功能，也不调用后端。
+
+```json
+{"assess":{"text":"You answered 120 questions in 9 days …","day":"2026-11-22","createdAt":1795339200,"latestAt":"2026-11-22 09:10","records":12,"answered":120,"model":"demo-chat-small"},"today":"2026-11-22","running":false,"perDay":3,"remaining":2}
+```
+
+- `assess`：用户最新一份完成的评估，或 `null`。`text` 是回答，`day` 是提问那天 ai-service 的本地日期，`createdAt` 是完成时的 Unix 秒数，`latestAt`、`records` 和 `answered` 是写它时依据的数据。`model` 只发给管理员。
+- `today`：ai-service 的本地日期（`YYYY-MM-DD`）。
+- `running`：今天还有一份评估正在生成时是 `true`（例如在另一个标签页里）。
+- `perDay` 和 `remaining`：调用者的限额和今天还剩的成功次数；调用者不受限制时（`assessAdminsExempt` 为 1 时的管理员）两者都是 `null`。
 
 #### 忙碌的回答
 
@@ -914,12 +952,12 @@ data: {"chatId":12,"chatTitle":"2026-11-12 09:30","userMessageId":41,"assistantM
 | `POST /api/ai/import/upload` | 有 AI+ 且拥有导入功能与题库管理权限的用户 | 原始正文，`Content-Type: application/octet-stream`（其他类型返回 415 `ai.badRequest`），文件名以 URL 编码放在 `X-Filename` 中。不超过 AI 设置中的文件上限。返回带预览的任务。文件识别期间，任务的 `read` 为 `{"done": n, "total": m}`（已读部分数/全部部分数；部分数确定之前为 `{0, 0}`），卡片上显示为 **正在识别 n/m 段**。失败 `ai.import.tooMuchText` 带有 `errorArg`：问题文件的最大字数（300 000 与 10 000 × (`recognizeMaxCalls` − 2) 中较小者），显示在提示中。至少有 3 行像题目的文件不再单独做分类调用，由最前面 2 段判断它是否是题目。 |
 | `POST /api/ai/import/confirm` | 任务所有者 | 确认预览。请求体 `{"id", "name"}`：`name` 是确认步骤里填写的题库名称（必填，去掉首尾空白；为空返回 400 `ai.import.nameEmpty`，太长或含控制字符返回 400 `ai.gen.badName`，已有同名题库返回 409 `ai.import.nameTaken`；任务继续等待，不创建任何内容）。再次检查权限；题库由后端创建；每日配额在此计入。 |
 | `POST /api/ai/admin/free` | 管理员 | 管理员账户的自由模式。对象不是管理员时：409 `ai.freeAdminOnly`。 |
-| `POST /api/ai/admin/features` | 管理员 | 设置用户的六项功能权限（`chat`、`hint`、`explain`、`summary`、`generate`、`import`）。管理员从不因功能权限被拒绝。 |
+| `POST /api/ai/admin/features` | 管理员 | 设置用户的功能权限：v2.5 及以前是六个键（`chat`、`hint`、`explain`、`summary`、`generate`、`import`），v2.6 起是**七个**（`assess` 在 `summary` 之后；对象必须正好包含这七个布尔值，否则 400 `ai.badRequest`）。管理员从不因每个用户的功能权限被拒绝。 |
 | `POST /api/banks/sheets/delete` | 题库管理（主应用） | 请求体 `{"id": <题库 ID>, "sheets": ["…"], "withRecords": true 或 false}`。删除可管理题库中的部分工作表。404 `MSG_BANK_NOT_FOUND`；列出全部工作表时 400 `MSG_SHEETS_ALL`（应改为删除整个题库）；AI 题库为 400 `MSG_AI_BANK_SHEETS`。 |
 
 可能遇到的状态码：`ai.gen.quota`（429，当日生成配额已用完，附带 `Retry-After`）、`ai.gen.busy`（409，该用户的另一个任务正在运行；`job` 可能为 `null`）、`ai.gen.aiSource`（422，AI 题库永远不能作为来源）、`ai.featureOff`（403，该用户关闭了此功能）、`ai.gen.forbidden`（403，任务等待期间权限已被移除）、`ai.suspended`（403，该用户的 AI 已暂停）。
 
-**功能键与上限。** `GET /api/ai/status` 与 `POST /api/ai/admin/features` 携带六个 `features` 键：`chat`、`hint`、`explain`、`summary`、`generate`、`import`。从 v1.3 到 v1.8 期间 `hint` 和 `explain` 是同一个开关；**从 v1.9 起六个全局开关互相独立**（只改其中一个的请求只改那一个；“用户管理”里每个用户的位仍然成对）。`GET` 与 `POST /api/ai/admin/limits` 携带 36 个键（v1.9 增加了 `paceOn`、`paceRpm` 和 `paceTpm`，见 5.11 节）：v1.0 的十个，生成相关的键（`genPerDay`、`genAdminsExempt`、`genMinSource`、`genMinWrong`、`genBankSingle`、`genBankMulti`、`genWrongSingle`、`genWrongMulti`、默认 20000 的 `genCallTokens`（1000 到 250000 个 Token）、默认 15 的 `genMaxCalls`），默认 25 的 `importMaxCalls`、默认 20 的 `recognizeMaxCalls`（一个文件的识别步骤最多调用 AI 的次数）、`genRunning`、默认 20 的 `importMaxMb`，以及默认 100（1 到 300）的 `importMaxQuestions`。两个调用上限都是 8 到 40，对所有人生效，包括管理员。v1.3 的六个键：`callsAdminsExempt`（0 或 1，默认 1：管理员不受每用户调用上限限制，调用仍会记录）、`studyShare`（0 或 1，默认 1）、`studyShareDays`（7 到 3650，默认 180）、`genMaxChunks`（1 到 50，默认 8）、`summaryMaxItems`（10 到 70，默认 40）和 `dailyTokenBudget`（0 到 100000000，默认 0 = 关）。
+**功能键与上限。** `GET /api/ai/status` 与 `POST /api/ai/admin/features` 携带六个 `features` 键：`chat`、`hint`、`explain`、`summary`、`generate`、`import`。从 v1.3 到 v1.8 期间 `hint` 和 `explain` 是同一个开关；**从 v1.9 起六个全局开关互相独立**（只改其中一个的请求只改那一个；“用户管理”里每个用户的位仍然成对）。`GET` 与 `POST /api/ai/admin/limits` 携带 36 个键（v1.9 增加了 `paceOn`、`paceRpm` 和 `paceTpm`，见 5.11 节）：v1.0 的十个，生成相关的键（`genPerDay`、`genAdminsExempt`、`genMinSource`、`genMinWrong`、`genBankSingle`、`genBankMulti`、`genWrongSingle`、`genWrongMulti`、默认 20000 的 `genCallTokens`（1000 到 250000 个 Token）、默认 15 的 `genMaxCalls`），默认 25 的 `importMaxCalls`、默认 20 的 `recognizeMaxCalls`（一个文件的识别步骤最多调用 AI 的次数）、`genRunning`、默认 20 的 `importMaxMb`，以及默认 100（1 到 300）的 `importMaxQuestions`。两个调用上限都是 8 到 40，对所有人生效，包括管理员。v1.3 的六个键：`callsAdminsExempt`（0 或 1，默认 1：管理员不受每用户调用上限限制，调用仍会记录）、`studyShare`（0 或 1，默认 1）、`studyShareDays`（7 到 3650，默认 180）、`genMaxChunks`（1 到 50，默认 8）、`summaryMaxItems`（10 到 70，默认 40）和 `dailyTokenBudget`（0 到 100000000，默认 0 = 关）。*(v2.6)* `features` 对象多了第七个键 `assess`（AI 学习评估，在 `summary` 之后；保存的 `features_off` 的第 64 位，所以每个已有用户和全局开关一开始都是开的），`admin/limits` 有 38 个键：v1.9 的 36 个，外加追加在末尾的 `assessPerDay`（0 到 50，默认 3）和 `assessAdminsExempt`（0 或 1，默认 1）。
 
 **内部路由**（`/internal/*`，后端与 ai-service 之间，需要令牌）：`/internal/ai/gen/source`、`/internal/ai/gen/seeds`、`/internal/ai/gen/create`（唯一接受 10 MiB 正文的路由；其他内部路由仍为 64 KiB）、`/internal/ai/gen/lookup`、`/internal/ai/import/check`。
 
@@ -1023,10 +1061,11 @@ data: {"chatId":12,"chatTitle":"2026-11-12 09:30","userMessageId":41,"assistantM
 - **`POST /api/ai/admin/connections/enabled`**（管理员）。请求体恰好是 `{"id": <正整数>, "enabled": <布尔值>}`；缺键、类型不对或有多余的键是 400 `ai.badRequest`，id 不存在是 404 `ai.notFound`。返回 200 `{"settings": Settings}`，没有变化时也一样。停用后，连接的所有设置、密钥和池里的模型都保留，但它不再出现在任何选择器里，也不参与路由。它不会增加连接的 `rev`，不会取消正在进行的调用，并会立即触发一次心跳。活动事件是 `ai.settings.connectionOn` 或 `ai.settings.connectionOff`（对象：连接名；详情 `{"provider", "host"}`）。停用的连接仍然可以做 `connections/test`。
 - **`enabled`** 是 Settings 对象里 `connections[]` 每一项的布尔字段，也在 `GET /api/ai/admin/models` 的每个连接里。停用的连接在那里是 `{"id", "name", "provider", "status", "enabled": false, "listed": false, "error": null, "models": []}`，不调用服务商，也不读缓存。
 - **`ai.connectionOff`（409）** 取代任何回退：对已停用连接的选择（`models/pick`、带默认模型选择的 `admin/enable`、`chat/model`）会被它拒绝；已保存或给出的选择落在停用连接上的发送、重新生成、编辑、重试，以及槽位（或它跟随的默认）落在停用连接上的学习、总结、出题、导入调用，都会以它失败。已保存的选择保持不变（`chats.pick_conn` 不变）。
-- **槽位**：Settings 对象里的 `slots` 有七个键，顺序是 `default`、`chat`、`hint`、`explain`、`summary`、`generate`、`import`（`study` 没有了，在 `models/pick` 和 `models/effort` 里是 400）。`explain` 也用于成绩和记录的分析。`effortLevels` 有四个键：`anthropic`、`openai`、`google`、`responses`。
+- **槽位**：Settings 对象里的 `slots` 有七个键，顺序是 `default`、`chat`、`hint`、`explain`、`summary`、`generate`、`import`（`study` 没有了，在 `models/pick` 和 `models/effort` 里是 400）。*(v2.6)* 八个：`assess` 在 `summary` 之后（AI 学习评估；升级时复制 `summary` 的模型和强度）；`models/pick` 和 `models/effort` 接受它。`explain` 也用于成绩和记录的分析。`effortLevels` 有四个键：`anthropic`、`openai`、`google`、`responses`。
 - **思考强度（v2.2）**：`POST /api/ai/admin/models/effort` 接收 `{slot, level}`；`level: null` 是 **默认**，不发送强度参数（v2.2 之前它表示模型的默认强度）。设置的回答里，什么都不发送时 `slots.<slot>.effortEffective` 为 `null`，新增的 `slots.<slot>.effortFamily` 是该槽位所用连接的家族（该连接已停用时也一样）。对话的 `effort` 字段可以是一个强度、字面量 `"default"`（任何家族都不发送）或 `null`（清除：跟随 AI 设置里的对话行）；`pickEffort` 可能是 `"default"`。
-- **功能开关**：`POST feature-switches` 的请求体不变（六个键的任意子集），但每个键现在单独变化，关闭的功能对**所有人（包括管理员）**都不可用：正在进行的调用对所有人取消，新的请求返回 403 `ai.featureOff`。管理员的 `GET /api/ai/status` 里的 `features` 反映全局开关（每个用户的位仍然从不作用于管理员；每个用户的位仍然把 `hint` 和 `explain` 绑在一起）。
-- **限额**：`admin/limits` 有 36 个键，即 v1.8 的 33 个，外加追加在末尾的 `paceOn`（0 或 1，默认 1）、`paceRpm`（1 到 10 000，默认 13）和 `paceTpm`（1 000 到 100 000 000，默认 230 000）；超出范围是 400 `ai.limitRange`（带 `field`）。改 `genUnlimited` 或 `importUnlimited` 从不触及它们。数值按填写的原样使用（没有余量；v2.1 之前约用 90%）：调用在 60 秒滑动窗口里均匀发出（60 / rpm 秒，13 对应约 4.6 秒一次），每次调用发出前先估算 tokens，并行宽度会缩小到刚好够用。它只控制 AI 出题和 AI 导入，它们会等待、不会失败；对话、提示、解析和总结不受此限速。
+- **功能开关**：`POST feature-switches` 的请求体不变（六个键的任意子集；v2.6 起加上 `assess` 是七个），但每个键现在单独变化，关闭的功能对**所有人（包括管理员）**都不可用：正在进行的调用对所有人取消，新的请求返回 403 `ai.featureOff`。管理员的 `GET /api/ai/status` 里的 `features` 反映全局开关（每个用户的位仍然从不作用于管理员；每个用户的位仍然把 `hint` 和 `explain` 绑在一起）。
+- **限额**：`admin/limits` 有 36 个键，即 v1.8 的 33 个，外加追加在末尾的 `paceOn`（0 或 1，默认 1）、`paceRpm`（1 到 10 000，默认 13）和 `paceTpm`（1 000 到 100 000 000，默认 230 000）；超出范围是 400 `ai.limitRange`（带 `field`）。改 `genUnlimited` 或 `importUnlimited` 从不触及它们。数值按填写的原样使用（没有余量；v2.1 之前约用 90%）：调用在 60 秒滑动窗口里均匀发出（60 / rpm 秒，13 对应约 4.6 秒一次），每次调用发出前先估算 tokens，并行宽度会缩小到刚好够用。它只控制 AI 出题和 AI 导入，它们会等待、不会失败；对话、提示、解析、总结和（v2.6）学习评估不受此限速。*(v2.6)* 38 个键：追加了 `assessPerDay` 和 `assessAdminsExempt`（5.5）。
+- **按功能的用量** *(v2.6)*：`admin/usage` 的 `byPurpose` 有八行：`chat`、`hint`、`explain`、`summary`、`assess`、`generate`、`import`、`other`。评估的调用以用途 `summary` 和标记 `usage.assess = 1` 保存，报告为 `assess`；v2.5 的评估调用没有这个标记，仍计在 `summary` 下。
 - **服务商返回 429**：限速的回答会按服务商给出的时间等待后重试（每次调用最多 10 次，不算错误，始终有效，`paceOn` 为 0 时也一样）。当天额度用完时，任务以任务错误 `ai.gen.providerDaily` 停止（不计费），显示为 **AI 服务商今天的额度已用完，任务已停止。请明天再试，或请管理员更换模型。**
 - **任务的 `waiting`**：每个任务对象（`/api/ai/gen/job`、`/api/ai/admin/gen`、导入的返回）都有 `"waiting": bool`，只有任务排队或运行中、并且在等服务商额度时才为 true。页面在 8 秒后显示 **等待额度…**。
 - **新文案**（`error`，中文；页面按语言显示自己的文案）：`ai.connectionOff` 这个功能使用的 AI 连接未启用，请联系管理员。 `ai.gen.providerDaily` AI 服务商今天的额度已用完，任务已停止。请明天再试，或请管理员更换模型。
@@ -1049,16 +1088,16 @@ data: {"chatId":12,"chatTitle":"2026-11-12 09:30","userMessageId":41,"assistantM
 
 `/internal/` 下的其他任何路径、错误的方法，或者令牌缺失或错误（或者还没有加载令牌）时带令牌的路由，都回答 404 `text/plain` `not found`，和未知路径完全一样，所以不会暴露这些路由；被拒绝的令牌最多大约每分钟记一次日志。带令牌的路由需要 `Content-Type: application/json` 和一个 JSON 对象；它们的回答是后端通常的 JSON。
 
-- **`GET /internal/ai/auth`** 只从 `X-Original-Host`、`X-Original-Origin` 和 `X-Original-Method`（由 Nginx 设置）读取 Host、Origin 和方法，只从正好一个原样的 `xexam_session` Cookie 读取会话。它从不刷新会话。回答：204，带 `X-Xexam-Identity` 和 `Cache-Control: no-store`（允许）；401 `{"error": "请先登录。", "code": "auth.signin"}`，带 `X-Xexam-Deny: signin`；403，带 `X-Xexam-Deny: password`（`auth.password`）或 `guard`（`auth.guard`，守卫自己的提示）；AI 连接已关闭时 503，没有正文；数据库出错时 500。
+- **`GET /internal/ai/auth`** 只从 `X-Original-Host`、`X-Original-Origin` 和 `X-Original-Method`（由 Nginx 设置）读取 Host、Origin 和方法，只从正好一个原样的 `xexam_session` Cookie 读取会话。它从不刷新会话。回答：204，带 `X-Xexam-Identity` 和 `Cache-Control: no-store`（允许）；401 `{"error": "请先登录。", "code": "auth.signin"}`，带 `X-Xexam-Deny: signin`；403，带 `X-Xexam-Deny: password`（`auth.password`）、*(v2.6)* `name`（`auth.name`，`请先设置用户名。`，用于只差用户名的会话）或 `guard`（`auth.guard`，守卫自己的提示）；Nginx 给每一种都回答它自己的 JSON 正文（`map $ai_deny $ai_forbidden_body`）；AI 连接已关闭时 503，没有正文；数据库出错时 500。
 - `X-Xexam-Identity` 里的**身份声明**：`base64url(payload) + "." + base64url(HMAC-SHA-256(内部令牌, "xexam-identity-v1." + base64url(payload)))`，不带填充。payload 是按这个顺序的紧凑 JSON：`{"v":1,"id":<users.id>,"stamp":"<users.uid>","username":"…","role":"admin"|"user","aiAllowed":<bool>,"sid":"<会话的令牌哈希，64 位十六进制>","exp":<now + 60>}`。ai-service检查签名、`now ≤ exp ≤ now + 120` 和每个字段（未知的字段会被拒绝）；它从不记录这个声明。
-- **`POST /internal/ai/introspect`** `{"sid": "<64 位十六进制>", "id": <用户 id>}` → `{"ok": true, "user": {"id", "stamp", "username", "role", "aiAllowed"}}`；会话已经不在、属于另一个用户或者必须修改密码时是 `{"ok": false}`。生成回答期间每 2 秒用一次。不是 64 位小写十六进制数字的 `sid`：400。
+- **`POST /internal/ai/introspect`** `{"sid": "<64 位十六进制>", "id": <用户 id>}` → `{"ok": true, "user": {"id", "stamp", "username", "role", "aiAllowed"}}`；会话已经不在、属于另一个用户、必须修改密码或者 *(v2.6)* 还没有用户名时是 `{"ok": false}`。生成回答期间每 2 秒用一次。不是 64 位小写十六进制数字的 `sid`：400。
 - **`POST /internal/ai/users`** `{"ids": [<id>, …], "holders": <bool>}`（两者都可选；最多 10 000 个 id；ai-service每次最多发 3000 个）→ `{"users": [{"id", "stamp", "username", "role", "disabled", "ai", "aiAllowed"}]}`：请求的每个存在的用户，`holders: true` 时再加上每个管理员和每个开通了 AI+ 的用户；不重复，按 id 排序。缺少的 id 表示这个用户已被删除。
 - **`POST /internal/ai/log`** `{"lines": [{"level": "INFO" | "WARN" | "ERROR", "message": "…"}]}` → `{"ok": true}`：最多 50 行；超过 2000 个字符的消息会被截断（以 `…` 结尾），去掉控制字符；每一行以目标 `xexam_ai_service` 和前缀 `AI: ` 进入系统日志。有一行无效（别的级别、缺少消息、多于 50 行）就以 400 拒绝整批。请求体最多大约 590 KiB（即使带转义字符，也放得下满满一批）；另外几个带令牌的路由接受 64 KiB。
 - **`POST /internal/ai/heartbeat`** *(v0.8，第二轮)* `{"version": "0.9", "enabled": <bool>, "suspended": [<id>, …], "stopping": <bool>}` → `{"ok": true}`。ai-service 对自己状态的报告；后端靠它知道 AI+ 是否可用，也只有靠它才知道 ai-service 的存在（后端从不调用 ai-service）。四个键都是必需的，不允许有别的键。`version` 是版本字符串（`0-9 A-Z a-z . + -`，最多 20 个字符），`enabled` 是 ai-service 使用的 AI+ 功能开关（已开启、当前设置的测试已通过、密钥可读），`suspended` 列出被暂停的用户的 id，最多 3000 个（正整数，重复的忽略），`stopping` 只在 ai-service 关闭时发送的最后一份报告里是 `true`。别的任何情况都是 400，已保存的报告保持原样。一份有效的报告替换上一份。它遵循其他带令牌路由的规则（令牌、`Content-Type: application/json`、最多 64 KiB，令牌、方法或路径错误时 404），无论报告被接受还是无效，都不写日志行。
   - **ai-service 什么时候报告**：启动时（令牌可读之后）、管理员开启或关闭 AI+ 功能、修改会把它关闭的设置、运行会把它关闭的测试、暂停或恢复某个用户之后马上（那个请求的回答会等这份报告）、每 25 秒一次、报告失败后 5 秒，以及关闭时带 `stopping: true` 的最后一次（限时 2 秒）。报告一次只发一份，所以旧状态不可能赶在新状态前面。ai-service 自己的日志会显示这条连接：`AI link: connected to the main service` 每次连接**只写一次**（第一份被接受的报告时，之后只在断开后重新连上时再写），`AI link: lost the main service` 在一个原本连着的连接失败时写一次；中间的其他失败和成功都不写。这两行都在系统日志里，带前缀 `AI: `。
   - **后端怎么处理它**：只在内存里保存最后一份报告。这份报告不到 60 秒、并且不是停止报告时，ai-service 算作**已连接**；已连接并且 `enabled` 时，**AI+ 可用**。后端在 `aiAvailable` 和 `aiService`（`GET /api/auth/state`）里显示这个状态，用 `suspended` 生成 `aiSuspended`（`GET /api/users`），并在 AI+ 不可用时拒绝用户的 AI+ 开关（`ai.serviceOff`）。后端重启后，在下一份报告到达之前（最多 25 秒）没有报告。从外面看，`/internal/ai/heartbeat` 是 404（已登录的用户访问 `/api/internal/ai/heartbeat` 是 404，登录之前是 401）。
 - **三个数据路由** *(v0.9)* `question`、`record` 和 `record-info` 让 ai-service 为学习路由（5.5）读取一道题或一条记录。它从不打开主数据库，也从不会看到用户看不到的题。它们遵守其他带令牌路由的规则（令牌、`Content-Type: application/json`、最多 64 KiB 的 JSON 对象、令牌、方法或路径错误时 404 `not found`），而且只读：什么都不写，也不记日志。请求体逐个键检查：未知或缺少的键、类型不对或超出范围的值，都是 400 `请求的格式不对。`。其他每一种回答都是 **HTTP 200**，拒绝也一样，因为 ai-service 会把 `/internal/` 的 404 读作「令牌被拒绝了」。键用 camelCase。
-  - **会话绑定**：`sid`（64 个小写十六进制数字）必须是用户 `id` 的一个有效会话，并且这个用户不在等待修改密码，否则是 `{"ok": false, "reason": "session"}`。会话不会被刷新。没有 AI+ 功能的用户（管理员始终有）从 `question` 和 `record` 得到 `{"ok": false, "reason": "notAllowed"}`；`record-info` 只说出调用者自己的记录，从不回答 `notAllowed`，所以 AI 关闭时已保存的回答仍然读得到。题目不存在、题目属于用户不能看到的题库、记录不是这个用户的、记录是另一种类型、或记录里没有那道题：它们都是同一个回答，`{"ok": false, "reason": "notFound"}`。
+  - **会话绑定**：`sid`（64 个小写十六进制数字）必须是用户 `id` 的一个有效会话，并且这个用户不在等待修改密码（*v2.6*：也不在等待设置用户名），否则是 `{"ok": false, "reason": "session"}`。会话不会被刷新。没有 AI+ 功能的用户（管理员始终有）从 `question` 和 `record` 得到 `{"ok": false, "reason": "notAllowed"}`；`record-info` 只说出调用者自己的记录，从不回答 `notAllowed`，所以 AI 关闭时已保存的回答仍然读得到。题目不存在、题目属于用户不能看到的题库、记录不是这个用户的、记录是另一种类型、或记录里没有那道题：它们都是同一个回答，`{"ok": false, "reason": "notFound"}`。
   - **`POST /internal/ai/question`** `{"sid", "id", "questionId": "<^[0-9A-Za-z_-]{1,64}$>", "qlang": "en"|"zh"|"ja", "elang": "en"|"zh"|"ja", "record"?: {"id": <n>, "kind": "practice"|"exam"} | null}` → `{"ok": true, "uiLang": "en"|"zh"|"ja", "question": StudyQuestion, "solution": Solution, "item": {"seq": n, "answer": [str|n|null] | null, "correct": bool} | null, "record": {"id", "at", "kind", "key": str|null, "startedAt": n|null} | null}`。只有发送了 `record` 时才会填 `item` 和 `record`（这道题在记录里出现两次时取最小的 `seq`；没有作答时 `answer` 是 `null`；和这道题现在的样子对不上的条目是 `null`）。`uiLang` 是用户的设置语言。已下架的题也找得到（`active: false`）。
   - **`POST /internal/ai/record`** `{"sid", "id", "recordId", "max": 1..70, "elang"}` → `{"ok": true, "uiLang", "record": {"id", "at", "kind", "mode", "total", "correct", "answered": n|null, "detail": bool, "key": str|null, "startedAt": n|null}, "wrong": n, "usable": n, "items": [{"seq": n, "answer": [str|n|null], "question": StudyQuestion, "solution": Solution}], "budgetCut": bool}`。`wrong` 是答错的条目数；`usable` 是其中题目仍然存在并且看得到的条目数；`items` 最多放 `max` 道可用的，随机选取、不重复，按 `seq` 顺序返回，每段文字的上限比单题路由更短，文字合计最多 120 000 个字符（`budgetCut` 说明这是否截掉了什么）。没有详情的记录给出 `detail: false`、`wrong: 0`、`usable: 0`，没有条目。
   - **`POST /internal/ai/record-info`** `{"sid", "id", "recordId"}` → `{"ok": true, "uiLang", "record": {"id", "at", "kind", "key": str|null, "startedAt": n|null}}`，或者 `reason` 为 `session` / `notFound`。
@@ -1254,18 +1293,29 @@ data: {"chatId":12,"chatTitle":"2026-11-12 09:30","userMessageId":41,"assistantM
 - **版本**：`GET /api/info` 报告 `"version": "2.0"`，AI 服务的 `/healthz` 也一样。主数据库是 schema 11。
 - **数据库**：AI 数据库是 schema 10（启动时先做备份副本再升级，见 [database.md](database.md) 的 8.2g 节；主数据库也一样，见 6.17 节）。
 
+### v2.6 的变化（相对 v2.5）
+
+- **新增**：`POST /api/auth/name`；`GET /api/ai/assess/latest`；`user` 对象里的 `displayName` 和 `needsName`（登录、`GET /api/auth/state`、改密码、改名字）；`GET /api/users` 每一行的 `displayName`；`POST /api/auth/password` 可选的 `displayName`；`GET /api/dashboard` 的 `wrongTop`；功能键 `assess`、模型槽位 `assess`、限额 `assessPerDay` 和 `assessAdminsExempt`、用量行 `assess`；AI 代码 `ai.assessDaily`（409）和认证步骤代码 `auth.name`（403，`X-Xexam-Deny: name`）；访问页面 `profile` 和活动记录操作 `auth.name`；提示 `请先设置用户名。`、`请输入用户名。`、`用户名最多 20 个字，不能包含 @ 或控制字符。`。
+- **变化**：没有用户名的会话和必须改密码的会话一样被拦住（403 `请先设置用户名。`，AI 认证步骤和内部数据路由也拒绝它）。登录相关的提示改说 邮箱：`邮箱或密码不对。`、`邮箱不对：…`，登录名被占用是 `这个邮箱已经有人用了。`；`这个用户名已经有人用了。` 现在指显示名被占用。登录名和显示名在所有账户之间互不重复。`questionLang` 的默认值是 `en`（以前是 `ja`）。`POST /api/ai/assess/ask` 有每天的限制，用自己的功能和槽位；`POST /api/ai/admin/features` 需要七个键。
+- **删除**：`GET /api/dashboard` 的 `popular`；`GET /api/ai/assess/saved`。
+- **版本**：`GET /api/info` 报告 `"version": "2.6"`，AI 服务的 `/healthz` 也一样。主数据库是 schema 12（[database.md](database.md) 第 6.19 节）；AI 数据库仍是 schema 11，只做了增加（第 8.2k 节）。
+
 ## 8. 调用示例
 
 ```bash
 # 看版本和架构（公开）
 curl -s http://localhost:8765/api/info
 
-# 登录，把会话 Cookie 存进一个文件（用你自己的用户名和密码）
+# 登录，把会话 Cookie 存进一个文件（用你自己的登录名，也就是邮箱，和密码）
 curl -s -c cookies.txt -X POST http://localhost:8765/api/auth/login \
-  -H 'Content-Type: application/json' -d '{"username": "admin", "password": "…"}'
+  -H 'Content-Type: application/json' -d '{"username": "ann@example.com", "password": "…"}'
 
-# 我是谁？
+# 我是谁？（v2.6："needsName": true 表示要先设置用户名）
 curl -s -b cookies.txt http://localhost:8765/api/auth/state
+
+# 设置或修改你的用户名（v2.6）
+curl -s -b cookies.txt -X POST http://localhost:8765/api/auth/name \
+  -H 'Content-Type: application/json' -d '{"displayName": "Ann"}'
 
 # 把一份六列格式的工作簿上传为新题库（只得到预览，不写库）
 curl -s -b cookies.txt -X POST http://localhost:8765/api/upload \
@@ -1286,10 +1336,10 @@ curl -s -b cookies.txt http://localhost:8765/api/banks
 curl -s -b cookies.txt -X POST http://localhost:8765/api/banks/delete \
   -H 'Content-Type: application/json' -d '{"id": 2, "withRecords": true}'
 
-# 添加一个能看到 1 号题库和以后导入的每个题库的可管理题库的用户（他第一次登录时必须设置新密码）
+# 添加一个能看到 1 号题库和以后导入的每个题库的可管理题库的用户（他第一次登录时设置新密码和自己的用户名）
 curl -s -b cookies.txt -X POST http://localhost:8765/api/users/create \
   -H 'Content-Type: application/json' \
-  -d '{"username": "cook", "password": "initial-pass-1", "role": "user", "banks": [1], "newBanks": true, "canManageBanks": true}'
+  -d '{"username": "cook@example.com", "password": "initial-pass-1", "role": "user", "banks": [1], "newBanks": true, "canManageBanks": true}'
 
 # 把界面切换成深色模式和日语
 curl -s -b cookies.txt -X POST http://localhost:8765/api/settings \

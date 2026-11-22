@@ -133,3 +133,18 @@
 @media (prefers-reduced-motion: reduce) {
   .strip-chev { transition: none; }
 }
+
+/* v2.6 hand-written mode: the result page reads like a marked paper — its texts, the questions, options and answers in
+   the hand-written face (the [lang] rules reach texts that carry their own language, which the per-language font rules
+   would otherwise set back to the page font); the marks become red pen circles and crosses (main.css) */
+html[data-hand] .page-result,
+html[data-hand] .page-result [lang] { font-family: 'Xexam Hand', var(--en); }
+html[data-hand]:lang(zh-CN) .page-result,
+html[data-hand] .page-result [lang|="zh"] { font-family: 'Xexam Hand', var(--zh); }
+html[data-hand]:lang(ja) .page-result,
+html[data-hand] .page-result [lang="ja"] { font-family: 'Xexam Hand', var(--jp); }
+/* the bank / sheet source line stays in the page font, like in the record details */
+html[data-hand] .page-result .rv-src { font-family: var(--en); }
+html[data-hand]:lang(zh-CN) .page-result .rv-src { font-family: var(--zh); }
+html[data-hand]:lang(ja) .page-result .rv-src { font-family: var(--jp); }
+html[data-hand] .page-result .ico { filter: url(#xexam-hand) drop-shadow(.6px -.5px 0 currentColor); }

@@ -6,7 +6,7 @@ use common::genkit::*;
 use common::*;
 use serde_json::{json, Value};
 
-const ALL_ON: fn() -> Value = || json!({"chat": true, "hint": true, "explain": true, "summary": true, "generate": true, "import": true});
+const ALL_ON: fn() -> Value = || json!({"chat": true, "hint": true, "explain": true, "summary": true, "assess": true, "generate": true, "import": true});
 
 /// Everything on except `key`; AI hint and AI analysis (`explain`) are one switch (v1.3), so the two go off together.
 fn only_off(key: &str) -> Value {
@@ -80,14 +80,14 @@ async fn refused_stream(t: &TestApp, who: &Who, path: &str, body: Value) -> (u16
 }
 
 #[tokio::test]
-async fn the_status_has_the_six_keys_for_ai_plus_users_only() {
+async fn the_status_has_the_seven_keys_for_ai_plus_users_only() {
     let e = env().await;
     let (_, v) = e.t.get("/api/ai/status", &e.user).await;
     assert_eq!(v["features"], ALL_ON());
     let keys: Vec<&String> = v["features"].as_object().expect("obj").keys().collect();
     assert_eq!(
         keys,
-        ["chat", "hint", "explain", "summary", "generate", "import"]
+        ["chat", "hint", "explain", "summary", "assess", "generate", "import"]
     );
     let (s, _) = set_features(&e, &e.user, only_off("hint")).await;
     assert_eq!(s, 200);
@@ -301,7 +301,7 @@ async fn ungated_routes_pass_with_every_feature_off_and_administrators_are_never
     set_features(
         &e,
         &e.user,
-        json!({"chat": false, "hint": false, "explain": false, "summary": false, "generate": false, "import": false}),
+        json!({"chat": false, "hint": false, "explain": false, "summary": false, "assess": false, "generate": false, "import": false}),
     )
     .await;
     for path in ["/api/ai/chats", "/api/ai/memories", "/api/ai/status"] {
@@ -426,8 +426,7 @@ async fn the_admin_route_audits_creates_rows_and_refuses_bad_requests() {
         )
         .await;
     assert_eq!((s, &v["code"]), (400, &json!("ai.badRequest")));
-    let five =
-        json!({"chat": true, "hint": true, "explain": true, "summary": true, "generate": true});
+    let five = json!({"chat": true, "hint": true, "explain": true, "summary": true, "assess": true, "generate": true});
     let (s, v) =
         e.t.post(
             "/api/ai/admin/features",

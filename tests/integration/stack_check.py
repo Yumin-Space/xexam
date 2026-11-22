@@ -102,7 +102,9 @@ MSG_AI_SERVICE_OFF = '请先在 AI 设置里开启 AI+ 功能。'
 # The SSE error text of an answer stopped because an administrator paused the user's AI+ feature
 MSG_AI_SUSPENDED = '管理员已暂停你的 AI+ 功能。'
 # Key orders of the JSON answers checked here (contracts of v0.8)
-USER_ROW_KEYS = ['id', 'username', 'role', 'disabled', 'createdAt', 'lastLoginAt', 'mustChangePassword', 'records',
+USER_ROW_KEYS = ['id', 'username',
+                 # v2.6: the display name (null until the user chose one), right after the login
+                 'displayName', 'role', 'disabled', 'createdAt', 'lastLoginAt', 'mustChangePassword', 'records',
                  'banks', 'newBanks', 'canManageBanks',
                  # v1.6: the per-user bank download right, right after canManageBanks
                  'canDownloadBanks', 'ai', 'ownedBanks', 'lastActiveAt', 'lastLoginIp', 'lastLoginLocation',
@@ -144,14 +146,17 @@ LIMIT_KEYS = ['perUserRunning', 'globalRunning', 'chatsPerUser', 'messagesPerCha
               # v1.3: six more (33 keys); memoriesPerUser 30, memoryTokens 200 and importMaxQuestions 100 are the new defaults
               'callsAdminsExempt', 'studyShare', 'studyShareDays', 'genMaxChunks', 'summaryMaxItems', 'dailyTokenBudget',
               # v1.9: three more (36 keys), appended at the end: the provider pacing of AI generation and import
-              'paceOn', 'paceRpm', 'paceTpm']
+              'paceOn', 'paceRpm', 'paceTpm',
+              # v2.6: two more (38 keys): the study assessment per-day limit and the administrators' exemption
+              'assessPerDay', 'assessAdminsExempt']
 LIMIT_DEFAULTS = {'perUserRunning': 1, 'globalRunning': 16, 'chatsPerUser': 1000, 'messagesPerChat': 400, 'memoriesPerUser': 30,
                   'memoryTokens': 200, 'callsPerMinute': 5, 'callsPerHour': 20, 'callsPerDay': 100, 'replyMaxTokens': 3000,
                   'genPerDay': 3, 'genAdminsExempt': 1, 'genMinSource': 30, 'genMinWrong': 10, 'genBankSingle': 14, 'genBankMulti': 6,
                   'genWrongSingle': 14, 'genWrongMulti': 6, 'genCallTokens': 20000, 'genMaxCalls': 15, 'importMaxCalls': 25,
                   'recognizeMaxCalls': 20, 'genUnlimited': 1, 'importUnlimited': 1, 'genRunning': 2, 'importMaxMb': 20,
                   'importMaxQuestions': 100, 'callsAdminsExempt': 1, 'studyShare': 1, 'studyShareDays': 180, 'genMaxChunks': 8,
-                  'summaryMaxItems': 40, 'dailyTokenBudget': 0, 'paceOn': 1, 'paceRpm': 13, 'paceTpm': 230000}
+                  'summaryMaxItems': 40, 'dailyTokenBudget': 0, 'paceOn': 1, 'paceRpm': 13, 'paceTpm': 230000,
+                  'assessPerDay': 3, 'assessAdminsExempt': 1}
 # v1.9: right after the defaults are checked the pacing is switched off, so the end-to-end AI jobs below are not spread over
 # minutes; from then on the stored limits equal the defaults except paceOn
 LIMIT_NOW = dict(LIMIT_DEFAULTS, paceOn=0)
@@ -367,14 +372,29 @@ def session_cookie(h):
     return next((c for c in h.get('set-cookie', []) if c.startswith('xexam_session=')), '').split(';')[0]
 
 
+def EM(handle):
+    """v2.6: the e-mail login of a handle (sam -> sam@example.com); 'admin' stays the default login of a fresh install."""
+    return handle if handle == 'admin' or '@' in handle else handle + '@example.com'
+
+
+def handle_of(username):
+    """The short handle of a login (the part before the @), the key of the user tables below."""
+    return username.split('@', 1)[0]
+
+
 def sign_in_new_user(username, initial, password):
-    """First sign-in of a user the administrator created: chooses a new password; returns the rotated session cookie."""
+    """First sign-in of a user the administrator created: chooses a new password and (v2.6) a display name, both in one
+    request; returns the rotated session cookie. `username` is a handle or a login."""
+    name = handle_of(username).capitalize()
+    username = EM(username)
     st, h, j = jreq('POST', '/api/auth/login', {'username': username, 'password': initial},
                     headers={'Origin': 'http://localhost:%d' % PORT, 'Cookie': ''})
-    ok(st == 200 and j['user']['mustChangePassword'] is True, '%s signs in and must choose a password. Actual %d' % (username, st))
+    ok(st == 200 and j['user']['mustChangePassword'] is True and j['user']['needsName'] is True and j['user']['displayName'] is None,
+       '%s signs in and must choose a password and a display name. Actual %d %r' % (username, st, j))
     first = session_cookie(h)
-    st, h, j = jreq('POST', '/api/auth/password', {'password': password}, headers={'Origin': 'http://localhost:%d' % PORT, 'Cookie': first})
-    ok(st == 200 and session_cookie(h), '%s chose a new password and got a new session cookie. Actual %d' % (username, st))
+    st, h, j = jreq('POST', '/api/auth/password', {'password': password, 'displayName': name}, headers={'Origin': 'http://localhost:%d' % PORT, 'Cookie': first})
+    ok(st == 200 and session_cookie(h) and j['user']['displayName'] == name and j['user']['needsName'] is False,
+       '%s chose a new password and the display name %s and got a new session cookie. Actual %d %r' % (username, name, st, j))
     return session_cookie(h)
 
 
@@ -516,7 +536,7 @@ try:
     st, _, e = jreq('GET', '/api/ai/status')
     ok(st == 401 and isinstance(e, dict) and e.get('code') == 'auth.signin', 'Without a session /api/ai/status is 401 auth.signin (the auth step). Actual %d %r' % (st, e))
     st, h, j = jreq('POST', '/api/auth/login', {'username': 'admin', 'password': 'admin'}, headers={'Origin': 'http://localhost:%d' % PORT})
-    ok(st == 200 and j['user']['mustChangePassword'] is True, 'The default administrator admin / admin signs in and must change the password. Actual %d %r' % (st, j))
+    ok(st == 200 and j['user']['mustChangePassword'] is True and j['user']['needsName'] is True, 'The default administrator admin / admin signs in and must change the password and choose a display name. Actual %d %r' % (st, j))
     cookies = h.get('set-cookie', [])
     sc = next((c for c in cookies if c.startswith('xexam_session=')), '')
     ok(sc and 'HttpOnly' in sc and 'SameSite=Strict' in sc and 'Secure' not in sc, 'Session cookie over plain HTTP: HttpOnly, SameSite=Strict, no Secure. Actual %r' % cookies)
@@ -527,8 +547,12 @@ try:
     ok(st == 403, 'Before the new password every other route is 403. Actual %d' % st)
     st, _, e = jreq('GET', '/api/ai/status')
     ok(st == 403 and isinstance(e, dict) and e.get('code') == 'auth.password', 'Before the new password /api/ai/status is 403 auth.password. Actual %d %r' % (st, e))
-    st, h, j = jreq('POST', '/api/auth/password', {'password': NEW_PASSWORD}, headers={'Origin': 'http://localhost:%d' % PORT})
-    ok(st == 200 and j['user']['mustChangePassword'] is False, 'New password saved. Actual %d %r' % (st, j))
+    # v2.6: a user without a display name must send one with the new password (the same 403 gate as the password change)
+    st, _, e = jreq('POST', '/api/auth/password', {'password': NEW_PASSWORD}, headers={'Origin': 'http://localhost:%d' % PORT})
+    ok(st == 400, 'v2.6: the new password without a display name is refused while the user has none. Actual %d %r' % (st, e))
+    st, h, j = jreq('POST', '/api/auth/password', {'password': NEW_PASSWORD, 'displayName': 'Admin'}, headers={'Origin': 'http://localhost:%d' % PORT})
+    ok(st == 200 and j['user']['mustChangePassword'] is False and j['user']['displayName'] == 'Admin' and j['user']['needsName'] is False,
+       'New password and display name saved. Actual %d %r' % (st, j))
     # v0.6.5: the password change rotates the session; this client continues with the new cookie, the old one has ended
     old_cookie = COOKIE
     sc = next((c for c in h.get('set-cookie', []) if c.startswith('xexam_session=')), '')
@@ -683,7 +707,7 @@ try:
         return j if st == 200 and isinstance(j, dict) else {}
 
     def user_rows():
-        return {u['username']: u for u in users_list().get('users', [])}
+        return {handle_of(u['username']): u for u in users_list().get('users', [])}
 
     def svc_when(cond):
         """The administrator's /api/auth/state when cond(aiService) holds, else None."""
@@ -713,10 +737,10 @@ try:
     m_off = re.search(r'pub const MSG_AI_SERVICE_OFF: &str = "([^"]*)";', src)
     ok(m_off is not None and m_off.group(1) == MSG_AI_SERVICE_OFF, 'backend/src/api/response.rs has MSG_AI_SERVICE_OFF = %r' % MSG_AI_SERVICE_OFF)
     REFUSED = {'error': MSG_AI_SERVICE_OFF, 'code': 'ai.serviceOff'}
-    st, _, e = jreq('POST', '/api/users/create', {'username': 'sam', 'password': 'sam-initial-2026', 'role': 'user', 'banks': 'all', 'ai': True})
+    st, _, e = jreq('POST', '/api/users/create', {'username': EM('sam'), 'password': 'sam-initial-2026', 'role': 'user', 'banks': 'all', 'ai': True})
     ok(st == 409 and e == REFUSED, 'Creating sam with the AI+ service before AI is set up → 409 ai.serviceOff (exact body). Actual %d %r' % (st, e))
     ok('sam' not in user_rows(), 'The refused create added no user')
-    st, _, us = jreq('POST', '/api/users/create', {'username': 'kim', 'password': 'kim-initial-2026', 'role': 'user', 'banks': 'all'})
+    st, _, us = jreq('POST', '/api/users/create', {'username': EM('kim'), 'password': 'kim-initial-2026', 'role': 'user', 'banks': 'all'})
     ok(st == 200, 'The administrator creates kim without the AI+ service (allowed while AI+ is not available). Actual %d' % st)
     KIM_ID, ADMIN_ID = user_rows()['kim']['id'], user_rows()['admin']['id']
     for body, what in (({'id': KIM_ID, 'ai': True}, 'on'), ({'id': KIM_ID, 'ai': False}, 'off (the stored value)'),
@@ -772,8 +796,8 @@ try:
     ok(all(c.get('effortFamily') == 'openai' for c in cfg['connections'])
        and cfg['slots']['default'].get('effortEffective') is None and cfg['slots']['default'].get('effortFamily') == 'openai',
        'v2.2: the connection has its family (openai); an untouched slot is Default and sends no strength parameter (effortEffective null, effortFamily openai). Actual %r' % cfg['slots']['default'])
-    ok(list(cfg['slots'].keys()) == ['default', 'chat', 'hint', 'explain', 'summary', 'generate', 'import'] and 'study' not in cfg['slots'],
-       'v1.9: seven model slots (study is split into hint and explain). Actual %r' % list(cfg['slots'].keys()))
+    ok(list(cfg['slots'].keys()) == ['default', 'chat', 'hint', 'explain', 'summary', 'assess', 'generate', 'import'] and 'study' not in cfg['slots'],
+       'v2.6: eight model slots (study is split into hint and explain; assess is its own slot). Actual %r' % list(cfg['slots'].keys()))
     ok(all(c.get('enabled') is True for c in cfg['connections']), 'v1.9: every connection starts on (enabled true). Actual %r' % [c.get('enabled') for c in cfg['connections']])
     st, _, r = jreq('POST', '/api/ai/admin/models/effort', {'slot': 'study', 'level': None})
     ok(st == 400, 'v1.9: the old slot name study is refused by the effort route (400). Actual %d' % st)
@@ -797,7 +821,7 @@ try:
     st, _, lim = jreq('GET', '/api/ai/admin/limits')
     ok(st == 200 and isinstance(lim, dict) and list(lim.get('limits', {}).keys()) == LIMIT_KEYS and lim['limits'] == LIMIT_DEFAULTS
        and lim.get('defaults') == LIMIT_DEFAULTS,
-       'GET /api/ai/admin/limits: the 36 keys in order, replyMaxTokens 3000, memoryTokens 200, calls 5 / 20 / 100, pacing on 13 / 230000, no messageChars. Actual %d %r' % (st, lim))
+       'GET /api/ai/admin/limits: the 38 keys in order, replyMaxTokens 3000, memoryTokens 200, calls 5 / 20 / 100, pacing on 13 / 230000, no messageChars. Actual %d %r' % (st, lim))
     ok(lim['ranges']['paceOn'] == [0, 1] and lim['ranges']['paceRpm'] == [1, 10000] and lim['ranges']['paceTpm'] == [1000, 100000000],
        'v1.9: the limits answer carries the ranges of the pacing keys. Actual %r' % {k: lim['ranges'].get(k) for k in ('paceOn', 'paceRpm', 'paceTpm')})
     for bad_key, bad in (('paceRpm', 0), ('paceRpm', 10001), ('paceTpm', 999), ('paceOn', 2)):
@@ -923,7 +947,7 @@ try:
     ok(len(stub_requests()) == seen_by_stub, 'The provider received no request because of the refused update')
 
     # -- A2 Users with and without the AI+ service --
-    st, _, us = jreq('POST', '/api/users/create', {'username': 'sam', 'password': 'sam-initial-2026', 'role': 'user', 'banks': 'all', 'ai': True})
+    st, _, us = jreq('POST', '/api/users/create', {'username': EM('sam'), 'password': 'sam-initial-2026', 'role': 'user', 'banks': 'all', 'ai': True})
     ok(st == 200, 'With AI+ available the administrator creates sam with the AI+ service. Actual %d %r' % (st, us))
     rows = user_rows()
     ok(rows['sam']['ai'] is True and rows['kim']['ai'] is False and rows['sam']['aiSuspended'] is False,
@@ -931,6 +955,17 @@ try:
     SAM_ID = rows['sam']['id']
     SAM = sign_in_new_user('sam', 'sam-initial-2026', 'sam-stack-2026')
     KIM = sign_in_new_user('kim', 'kim-initial-2026', 'kim-stack-2026')
+    # v2.6: display names. The admin list carries them; POST /api/auth/name changes one, refuses an @ and a taken name (any case)
+    ok(user_rows()['sam']['displayName'] == 'Sam' and user_rows()['kim']['displayName'] == 'Kim',
+       'v2.6: GET /api/users shows the display names chosen at the first sign-in. Actual %r' % [user_rows()[h]['displayName'] for h in ('sam', 'kim')])
+    st, _, e = jreq('POST', '/api/auth/name', {'displayName': 'Sam Two'}, headers={'Cookie': SAM})
+    ok(st == 200 and e['user']['displayName'] == 'Sam Two', 'v2.6: POST /api/auth/name changes the display name. Actual %d %r' % (st, e))
+    for body, want, what in (({'displayName': 'a@b'}, 400, 'an @'), ({'displayName': '   '}, 400, 'only spaces'),
+                             ({'displayName': 'x' * 21}, 400, '21 characters'), ({'displayName': 'KIM'}, 409, 'a name taken by kim (other case)')):
+        st, _, e = jreq('POST', '/api/auth/name', body, headers={'Cookie': SAM})
+        ok(st == want, 'v2.6: POST /api/auth/name with %s -> %d. Actual %d %r' % (what, want, st, e))
+    st, _, e = jreq('POST', '/api/auth/name', {'displayName': 'Sam'}, headers={'Cookie': SAM})
+    ok(st == 200 and e['user']['displayName'] == 'Sam', 'v2.6: sam takes the name Sam back. Actual %d %r' % (st, e))
     st, _, j = jreq('GET', '/api/auth/state', headers={'Cookie': SAM})
     ok(st == 200 and j['user']['aiAllowed'] is True and j.get('aiAvailable') is True
        and list(j.keys()) == ['user', 'library', 'aiAvailable', 'session', 'logVisits']
@@ -986,8 +1021,8 @@ try:
     ok(st == 200 and fs.get('hint') is False and fs.get('explain') is False, 'v1.9: explain moves alone as well. Actual %d %r' % (st, fs))
     st, _, cfg = jreq('POST', '/api/ai/admin/feature-switches', {'hint': True, 'explain': True})
     fs = (cfg.get('settings', cfg) if isinstance(cfg, dict) else {}).get('featureSwitches', {})
-    ok(st == 200 and all(fs.get(k) is True for k in ('chat', 'hint', 'explain', 'summary', 'generate', 'import')),
-       'v1.9: all six feature switches are on again. Actual %d %r' % (st, fs))
+    ok(st == 200 and all(fs.get(k) is True for k in ('chat', 'hint', 'explain', 'summary', 'assess', 'generate', 'import')),
+       'v1.9: all seven feature switches are on again. Actual %d %r' % (st, fs))
     st, _, chats = jreq('GET', '/api/ai/chats', headers={'Cookie': SAM})
     ok(st == 200 and [c['id'] for c in chats['chats']] == [chat_id], 'sam: GET /api/ai/chats lists the one chat. Actual %r' % chats)
     ok(list(chats['chats'][0].keys()) == CHAT_KEYS,
@@ -1032,7 +1067,7 @@ try:
     st, _, e = jreq('GET', '/api/ai/chat?id=%d' % chat_id)
     ok(st == 404 and e.get('code') == 'ai.notFound', "admin: sam's chat through the user route → 404 (user routes are scoped). Actual %d" % st)
     st, _, au = jreq('GET', '/api/ai/admin/users')
-    listed = {u['username']: u for u in au['users']} if st == 200 else {}
+    listed = {handle_of(u['username']): u for u in au['users']} if st == 200 else {}
     ok('sam' in listed and listed['sam']['ai'] is True and listed['sam']['chats'] == 1 and 'kim' not in listed,
        'admin: the AI users list has sam (AI+ service, 1 chat) and not kim. Actual %r' % sorted(listed))
     ok(all(admin_row_keys_ok(u, True) for u in au['users']) and listed['sam']['suspended'] is False,
@@ -1063,7 +1098,7 @@ try:
     st, _, e = jreq('GET', '/api/ai/admin/chat?user=%d&id=%d' % (SAM_ID, chat_id))
     ok(st == 200 and len(e['messages']) == count, "admin: sam's chat with sam's id → 200 (%d messages). Actual %d" % (count, st))
     lines = log_messages()
-    ok(any('viewed the AI chats and memories of user "sam"' in l for l in lines), 'The System log has the audit line of the view of sam')
+    ok(any('viewed the AI chats and memories of user "sam@example.com"' in l for l in lines), 'The System log has the audit line of the view of sam')
     ok(sum('viewed an AI chat of user' in l for l in lines) == views + 1, 'The refused pair wrote no audit line; the allowed view wrote one')
 
     st, _, e = jreq('POST', '/api/ai/send', {'chatId': chat_id, 'text': 'One more question'}, headers={'Cookie': SAM, 'Origin': 'https://evil.example.com'})
@@ -1131,7 +1166,7 @@ try:
     ok(st == 200 and b[:2] == b'PK', 'v1.6: sam with the right downloads the bank. Actual %d' % st)
     st, _, _ = jreq('POST', '/api/users/update', {'id': SAM_ID, 'canDownloadBanks': False})
     ok(st == 200 and user_rows()['sam']['canDownloadBanks'] is False, 'v1.6: the right is withdrawn again. Actual %d' % st)
-    st, _, _ = jreq('POST', '/api/users/create', {'username': 'lee', 'password': 'lee-initial-2026', 'role': 'user', 'banks': [], 'ai': True})
+    st, _, _ = jreq('POST', '/api/users/create', {'username': EM('lee'), 'password': 'lee-initial-2026', 'role': 'user', 'banks': [], 'ai': True})
     ok(st == 200, 'admin creates lee with the AI+ feature and no bank. Actual %d' % st)
     LEE = sign_in_new_user('lee', 'lee-initial-2026', 'lee-stack-2026')
 
@@ -1380,16 +1415,33 @@ try:
     pace(LEE)
     st, _, e = jreq('POST', '/api/ai/assess/ask', {'lang': 'en'}, headers={'Cookie': LEE})
     ok(st == 409 and e.get('code') == 'ai.assessFew', 'lee (AI+, no records): POST /api/ai/assess/ask → 409 ai.assessFew. Actual %d %r' % (st, e))
-    # v2.5: GET /api/dashboard: the exact key sets, and 401 without a session cookie
+    # v2.6: GET /api/dashboard: the exact key sets (ranking + wrongTop; the v2.5 "popular" block is gone), and 401 without a cookie
     st, _, d = jreq('GET', '/api/dashboard', headers={'Cookie': LEE})
-    ok(st == 200 and sorted(d) == ['popular', 'ranking'] and sorted(d['ranking']) == ['me', 'top', 'users']
-       and sorted(d['ranking']['me']) == ['answered', 'correct', 'rank'] and sorted(d['popular']) == ['days', 'items', 'since']
-       and d['popular']['days'] == 30 and d['ranking']['me']['rank'] is None and d['ranking']['me']['answered'] == 0,
-       'lee: GET /api/dashboard has the exact key sets and an unranked me. Actual %d %r' % (st, d))
+    ok(st == 200 and sorted(d) == ['ranking', 'wrongTop'] and sorted(d['ranking']) == ['me', 'top', 'users']
+       and sorted(d['ranking']['me']) == ['answered', 'correct', 'rank'] and sorted(d['wrongTop']) == ['items']
+       and d['wrongTop']['items'] == [] and d['ranking']['me']['rank'] is None and d['ranking']['me']['answered'] == 0,
+       'lee: GET /api/dashboard has the exact key sets (ranking, wrongTop), an unranked me and no wrong answers yet. Actual %d %r' % (st, d))
     ok(all(sorted(r) == ['answered', 'correct', 'name', 'rank', 'self'] for r in d['ranking']['top'])
-       and all(sorted(i) == ['bankId', 'correct', 'questionId', 'times'] for i in d['popular']['items'])
-       and len(d['ranking']['top']) <= 3 and len(d['popular']['items']) <= 3 and '@' not in json.dumps(d),
-       'The dashboard rows have the exact keys, at most 3 each, and no "@". Actual %r' % d)
+       and all(sorted(i) == ['attempts', 'bankId', 'questionId', 'wrong'] for i in d['wrongTop']['items'])
+       and len(d['ranking']['top']) <= 3 and len(d['wrongTop']['items']) <= 5 and '@' not in json.dumps(d),
+       'The dashboard rows have the exact keys, at most 3 ranking rows and 5 wrongTop items, and no "@". Actual %r' % d)
+    # sam has wrong answers (the records saved above): wrongTop lists them, most missed first, sam's own questions only
+    st, _, ds = jreq('GET', '/api/dashboard', headers={'Cookie': SAM})
+    items = ds['wrongTop']['items'] if st == 200 else []
+    ok(st == 200 and all(sorted(i) == ['attempts', 'bankId', 'questionId', 'wrong'] for i in items) and len(items) <= 5
+       and all(i['wrong'] >= 1 and i['attempts'] >= i['wrong'] for i in items)
+       and [i['wrong'] for i in items] == sorted((i['wrong'] for i in items), reverse=True),
+       'sam: wrongTop items have the exact keys, wrong >= 1 and are ordered most missed first. Actual %d %r' % (st, ds.get('wrongTop') if st == 200 else ds))
+    # v2.6: the saved-assessment route of v2.5 is gone; GET /api/ai/assess/latest answers {assess, today, running, perDay, remaining}
+    st, _, e = jreq('GET', '/api/ai/assess/saved', headers={'Cookie': SAM})
+    ok(st == 404, 'v2.6: GET /api/ai/assess/saved is gone → 404. Actual %d %r' % (st, e))
+    st, _, e = jreq('GET', '/api/ai/assess/latest', headers={'Cookie': LEE})
+    ok(st == 200 and sorted(e) == ['assess', 'perDay', 'remaining', 'running', 'today'] and e['assess'] is None
+       and e['running'] is False and e['perDay'] == 3 and e['remaining'] == 3
+       and re.fullmatch(r'\d{4}-\d{2}-\d{2}', e['today']),
+       'lee: GET /api/ai/assess/latest → {assess: null, today, running: false, perDay: 3, remaining: 3}. Actual %d %r' % (st, e))
+    st, _, e = jreq('GET', '/api/ai/assess/latest', headers={'Cookie': ''})
+    ok(st == 401, 'GET /api/ai/assess/latest without a session cookie → 401. Actual %d %r' % (st, e))
     st, _, e = jreq('GET', '/api/dashboard', headers={'Cookie': ''})
     ok(st == 401, 'GET /api/dashboard without a session cookie → 401. Actual %d %r' % (st, e))
     ka = study(hint_body(caps[0], 1), KIM)
@@ -1420,15 +1472,15 @@ try:
     # -- A6 AI banks (v1.1): features, generation, file import (questions and material), quota, limits --
     # The made-up provider answers by the first words of the system text (ai_stub.py); every question here is self-made.
     st, _, status = jreq('GET', '/api/ai/status', headers={'Cookie': SAM})
-    ok(st == 200 and list(status.get('features', {})) == ['chat', 'hint', 'explain', 'summary', 'generate', 'import']
+    ok(st == 200 and list(status.get('features', {})) == ['chat', 'hint', 'explain', 'summary', 'assess', 'generate', 'import']
        and status.get('why') is None and status['gen']['import']['maxMb'] == 20 and status['gen']['job'] is None and status['gen']['unseen'] == [],
-       "sam's status has the six feature switches, why null, gen with the import limits. Actual %d %r" % (st, {k: status.get(k) for k in ('features', 'why')}))
+       "sam's status has the seven feature switches, why null, gen with the import limits. Actual %d %r" % (st, {k: status.get(k) for k in ('features', 'why')}))
     st, _, banks = jreq('GET', '/api/banks', headers={'Cookie': SAM})
     source = next((b for b in banks['banks'] if b['total'] >= 30 and not b.get('ai')), None)
     ok(st == 200 and source is not None, 'sam sees a bank with at least 30 questions to generate from. Actual %d' % st)
 
     def set_features(user_id, **off):
-        feats = {k: True for k in ('chat', 'hint', 'explain', 'summary', 'generate', 'import')}
+        feats = {k: True for k in ('chat', 'hint', 'explain', 'summary', 'assess', 'generate', 'import')}
         feats.update({k: not v for k, v in off.items()})
         return jreq('POST', '/api/ai/admin/features', {'userId': user_id, 'features': feats})
 
@@ -1469,7 +1521,7 @@ try:
        'The generation ends done with exactly 20 questions and counts. Actual %r' % (job and {k: job[k] for k in ('state', 'made', 'error')}))
     st, _, banks = jreq('GET', '/api/banks', headers={'Cookie': SAM})
     ai_bank = next((b for b in banks['banks'] if b['id'] == job['bankId']), None)
-    ok(ai_bank and ai_bank['total'] == 20 and ai_bank['ai']['source'] == 'bank' and ai_bank['ai']['author'] == 'sam' and ai_bank['ai']['made'] == 20,
+    ok(ai_bank and ai_bank['total'] == 20 and ai_bank['ai']['source'] == 'bank' and ai_bank['ai']['author'] in ('sam', EM('sam')) and ai_bank['ai']['made'] == 20,
        'The new bank is listed with its ai object (source bank, author sam, 20 questions). Actual %r' % (ai_bank and ai_bank.get('ai')))
     st, _, j = jreq('POST', '/api/ai/gen/dismiss', {'id': gen_id}, headers={'Cookie': SAM})
     ok(st == 200 and j.get('ok') is True, 'Dismissing the finished card works. Actual %d' % st)
@@ -1535,22 +1587,22 @@ try:
     ok(st in (415, 429) and j.get('code') in ('ai.import.legacy', 'ai.gen.quota'), 'An old .doc is refused. Actual %d %r' % (st, j.get('code')))
     st, _, _ = req('GET', '/api/ai/import/upload', {'Cookie': SAM})
     ok(st in (403, 404, 405), 'GET on the upload route is not served. Actual %d' % st)
-    # Limits: 36 keys answer (v1.9), the AI banks tab keys are validated (composition rule)
+    # Limits: 38 keys answer (v1.9), the AI banks tab keys are validated (composition rule)
     st, _, lim = jreq('GET', '/api/ai/admin/limits')
-    ok(st == 200 and len(lim['limits']) == 36 and lim['limits']['genPerDay'] == 3 and lim['limits']['importMaxMb'] == 20
+    ok(st == 200 and len(lim['limits']) == 38 and lim['limits']['genPerDay'] == 3 and lim['limits']['importMaxMb'] == 20
        and lim['limits']['paceOn'] == 0 and lim['limits']['paceRpm'] == 13 and lim['limits']['paceTpm'] == 230000,
-       'The limits answer has the 36 keys (pacing off, 13 / 230000 kept). Actual %d %d' % (st, len(lim.get('limits', {}))))
+       'The limits answer has the 38 keys (pacing off, 13 / 230000 kept). Actual %d %d' % (st, len(lim.get('limits', {}))))
     st, _, j = jreq('POST', '/api/ai/admin/limits', {'genBankSingle': 0, 'genBankMulti': 0})
     ok(st == 400 and j.get('code') == 'ai.genCount' and j.get('field') == 'genBankMulti', 'Single + multiple of 0 is refused (400 ai.genCount, field genBankMulti). Actual %d %r' % (st, j))
     st, _, u = jreq('GET', '/api/ai/admin/usage?days=7')
     purposes = [r['purpose'] for r in u.get('byPurpose', [])]
     ok(st == 200 and purposes[-3:] == ['generate', 'import', 'other'], 'Usage by feature ends with generate, import and other (model lists and tests, L-40). Actual %r' % purposes)
     st, _, gl = jreq('GET', '/api/ai/admin/gen?limit=50')
-    ok(st == 200 and len(gl['jobs']) >= 3 and gl['jobs'][0]['username'] == 'sam', 'The administrators see the recent AI bank jobs. Actual %d' % st)
+    ok(st == 200 and len(gl['jobs']) >= 3 and gl['jobs'][0]['username'] == EM('sam'), 'The administrators see the recent AI bank jobs. Actual %d' % st)
 
     # -- A3 Suspend / Resume of sam's AI+ function (AI settings), and the AI+ service switched off --
-    OFF_LINE = 'AI function turned off for user "sam" by admin "admin"'
-    ON_LINE = 'AI function turned on for user "sam" by admin "admin"'
+    OFF_LINE = 'AI function turned off for user "sam@example.com" by admin "admin"'
+    ON_LINE = 'AI function turned on for user "sam@example.com" by admin "admin"'
 
     def log_count(text):
         return sum(text in l for l in log_messages())
@@ -1563,7 +1615,7 @@ try:
     ok(st == 400 and e.get('code') == 'ai.badRequest', 'A suspend body with another key → 400 ai.badRequest. Actual %d %r' % (st, e))
     st, _, r = jreq('POST', '/api/ai/admin/suspend', {'userId': SAM_ID})
     ok(st == 200 and isinstance(r, dict) and admin_row_keys_ok(r.get('user', {}), False) and r['user']['suspended'] is True
-       and r['user']['username'] == 'sam', 'admin suspends sam: 200 {"user": AdminUserRow} with suspended true. Actual %d %r' % (st, r))
+       and r['user']['username'] == EM('sam'), 'admin suspends sam: 200 {"user": AdminUserRow} with suspended true. Actual %d %r' % (st, r))
     st, _, e = jreq('POST', '/api/ai/send', {'chatId': chat_id, 'text': QUESTION, 'lang': 'en'}, headers={'Cookie': SAM})
     ok(st == 403 and e.get('code') == 'ai.suspended', 'sam (suspended): POST /api/ai/send → 403 ai.suspended. Actual %d %r' % (st, e))
     st, _, e = jreq('POST', '/api/ai/memories/suggest', {'messageId': asked['ja'], 'lang': 'ja'}, headers={'Cookie': SAM})
@@ -1575,7 +1627,7 @@ try:
        'sam (suspended): /api/ai/status says suspended true, allowed false, enabled true. Actual %r' % ss)
     ok(user_rows()['sam']['aiSuspended'] is True, 'GET /api/users: sam aiSuspended true (the report after the suspend reached the backend at once)')
     st, _, au = jreq('GET', '/api/ai/admin/users')
-    listed = {u['username']: u for u in au['users']} if st == 200 else {}
+    listed = {handle_of(u['username']): u for u in au['users']} if st == 200 else {}
     ok(listed.get('sam', {}).get('suspended') is True and listed['sam']['ai'] is True,
        'AI settings still lists sam, with suspended true. Actual %r' % listed.get('sam'))
     ok(until(lambda: log_count(OFF_LINE) == 1, 5), 'The System log has the line %s' % OFF_LINE)
@@ -1625,7 +1677,7 @@ try:
     st, _, e = jreq('POST', '/api/ai/send', {'chatId': None, 'text': QUESTION, 'lang': 'en'}, headers={'Cookie': SAM})
     ok(st == 403 and e.get('code') == 'ai.notAllowed', 'sam (AI+ service off): POST /api/ai/send → 403 ai.notAllowed. Actual %d %r' % (st, e))
     st, _, au = jreq('GET', '/api/ai/admin/users')
-    ok(st == 200 and 'sam' not in [u['username'] for u in au['users']],
+    ok(st == 200 and EM('sam') not in [u['username'] for u in au['users']],
        'AI settings no longer lists sam once the AI+ service is off (the data stays). Actual %r' % [u['username'] for u in au.get('users', [])])
     st, _, chats = jreq('GET', '/api/ai/chats', headers={'Cookie': SAM})
     ok(st == 200 and len(chats['chats']) == 3, 'sam (AI+ service off) still lists all three chats. Actual %r' % chats)
@@ -1638,7 +1690,7 @@ try:
     row = user_rows()['sam']
     ok(row['ai'] is True and row['aiSuspended'] is True, 'sam is still suspended after the AI+ service is on again. Actual %r' % row)
     st, _, au = jreq('GET', '/api/ai/admin/users')
-    ok(st == 200 and [u['suspended'] for u in au['users'] if u['username'] == 'sam'] == [True],
+    ok(st == 200 and [u['suspended'] for u in au['users'] if u['username'] == EM('sam')] == [True],
        'AI settings lists sam again, still suspended. Actual %r' % au)
     st, _, e = jreq('POST', '/api/ai/send', {'chatId': None, 'text': QUESTION, 'lang': 'en'}, headers={'Cookie': SAM})
     ok(st == 403 and e.get('code') == 'ai.suspended', 'sam (service on, still suspended): POST /api/ai/send → 403 ai.suspended. Actual %d %r' % (st, e))
@@ -1652,7 +1704,7 @@ try:
     st, _, _ = jreq('POST', '/api/users/delete', {'id': SAM_ID})
     ok(st == 200, 'admin deletes sam. Actual %d' % st)
     st, _, au = jreq('GET', '/api/ai/admin/users')
-    ok(st == 200 and 'sam' not in [u['username'] for u in au['users']], 'The AI users list does not have sam')
+    ok(st == 200 and EM('sam') not in [u['username'] for u in au['users']], 'The AI users list does not have sam')
     st, _, usage = jreq('GET', '/api/ai/admin/usage?days=30')
     ok(st == 200 and any(u['userId'] is None for u in usage['byUser']),
        "The usage keeps sam's calls anonymised (a byUser row with userId null). Actual %r" % (usage.get('byUser') if isinstance(usage, dict) else usage))

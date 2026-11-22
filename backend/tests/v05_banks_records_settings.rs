@@ -1155,7 +1155,7 @@ fn settings_defaults_update_invalid_and_reset() {
     let db = dir.path().join("x.db");
     let s = open_fixed(&db);
     let defaults =
-        json!({"theme": "system", "uiLang": "en", "autoAdvance": false, "questionLang": "ja"});
+        json!({"theme": "system", "uiLang": "en", "autoAdvance": false, "questionLang": "en"});
     let got = s.settings(ADMIN).expect("settings");
     assert_eq!(got, defaults);
     assert_eq!(
@@ -1806,13 +1806,13 @@ async fn api_settings_roundtrip_validation_reset_and_restart() {
     let db = dir.path().join("xexam.db");
     let a = real_app_at(&db);
     let defaults =
-        r#"{"theme": "system", "uiLang": "en", "autoAdvance": false, "questionLang": "ja"}"#;
+        r#"{"theme": "system", "uiLang": "en", "autoAdvance": false, "questionLang": "en"}"#;
     let r = get(&a.app, "/api/settings").await;
     assert_eq!((r.status, r.text().as_str()), (StatusCode::OK, defaults));
     let r = post_json(&a.app, "/api/settings", r#"{"theme": "dark"}"#).await;
     assert_eq!(
         r.text(),
-        r#"{"theme": "dark", "uiLang": "en", "autoAdvance": false, "questionLang": "ja"}"#
+        r#"{"theme": "dark", "uiLang": "en", "autoAdvance": false, "questionLang": "en"}"#
     );
     let r = post_json(
         &a.app,

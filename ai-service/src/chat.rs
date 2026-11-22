@@ -784,7 +784,10 @@ pub async fn run(g: Generation) {
             data::set_reasoning(tx, message, &reasoning, reasoning_ms, reasoning_cut)?;
         }
         data::touch_chat(tx, chat, now)?;
-        stats::insert_usage_purpose(tx, &usage, purpose)
+        // the study assessment keeps its latest done answer apart from the chat (a no-op for every other answer)
+        data::save_assess_latest(tx, message, status, &text, &route.model, now)?;
+        stats::insert_usage_purpose(tx, &usage, purpose)?;
+        stats::mark_assess_usage(tx, message)
     });
     if let Err(e) = saved {
         tracing::error!("could not save the end of an AI answer: {e}");

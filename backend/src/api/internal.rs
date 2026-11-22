@@ -687,6 +687,12 @@ async fn auth_step(st: &AppState, headers: &HeaderMap) -> Response {
             response::MSG_PASSWORD_CHANGE_REQUIRED,
             "auth.password",
         ),
+        auth::IntrospectOutcome::Name => denied(
+            StatusCode::FORBIDDEN,
+            "name",
+            response::MSG_NAME_REQUIRED,
+            "auth.name",
+        ),
         auth::IntrospectOutcome::Allowed(statement) => {
             let mut resp = Response::new(Body::empty());
             *resp.status_mut() = StatusCode::NO_CONTENT;
@@ -778,7 +784,7 @@ async fn introspect_session(
     };
     let found = super::auth::session_user_checked(st, &sid).await?;
     Ok(match found {
-        Some(u) if u.id == id && !u.must_change_password => json!({
+        Some(u) if u.id == id && !u.setup_required() => json!({
             "ok": true,
             "user": {
                 "id": u.id,

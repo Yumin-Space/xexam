@@ -693,7 +693,7 @@ async fn the_log_never_holds_passwords_tokens_cookies_or_question_text() {
         &a,
         "/api/auth/password",
         Some(&c),
-        &json!({"password": secrets[0]}).to_string(),
+        &json!({"password": secrets[0], "displayName": "Admin"}).to_string(),
     )
     .await;
     assert_eq!(r.status, 200);

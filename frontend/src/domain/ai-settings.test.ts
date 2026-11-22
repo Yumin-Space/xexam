@@ -14,7 +14,7 @@ import {
   isRotation, keyAfter, keyLine, LENGTH_KEYS, limitIssue, limitProblem, LIMIT_KEYS, LIMIT_RANGES, limitsFormOf, limitsUpdate,
   modelGroups, modelKind, movesKeys, nameProblem, newDefaultChoices, orderModels, originOf, parseRefKey, perCall, rangeOf, refKey,
   refOf, retentionOf, reusableFrom, serviceCause, SERVER_KEYS, SHARE_KEYS, shownCode, slotModel, slotNote, slotUsing, SLOTS,
-  FORMATS, connGroups, connOn, hashOfSafety, PACE_KEYS, paceEffective, SAFETY_SUBS, slotFeature, slotOn, subOfHash, subOfKey, SUB_KEYS, statusCards, suggestName, SUMMARY_KEYS, SVC_WAIT_MS, tabOfHash, testHint, urlAfterSwitch, blockTag, callsFigures, todayCell, convTotals,
+  FORMATS, connGroups, connOn, hashOfSafety, PACE_KEYS, paceEffective, SAFETY_SUBS, slotFeature, slotOn, subOfHash, subOfKey, SUB_KEYS, statusCards, suggestName, SUMMARY_KEYS, ASSESS_KEYS, SVC_WAIT_MS, tabOfHash, testHint, urlAfterSwitch, blockTag, callsFigures, todayCell, convTotals,
 } from './ai-settings.ts';
 import type { AiConnection, AiModelList, AiPoolModel, AiService, AiSettings } from '../types/api.ts';
 
@@ -269,10 +269,10 @@ const v13 = (o: Partial<AiSettings> = {}): AiSettings => ({
   enabled: true, effective: true, state: 'on', pauseReason: null, keyProblem: null, retentionDays: 90, updatedAt: 0, updatedBy: 'admin',
   defaults: DEFAULTS, maxConnections: 8, connections: [conn()], pool: [pool(4, 1, 'demo-chat-small')],
   slots: {
-    default: slot(4, 4), chat: slot(null, 4, 'default'), hint: slot(null, 4, 'default'), explain: slot(null, 4, 'default'), summary: slot(null, 4, 'default'),
+    default: slot(4, 4), chat: slot(null, 4, 'default'), hint: slot(null, 4, 'default'), explain: slot(null, 4, 'default'), summary: slot(null, 4, 'default'), assess: slot(null, 4, 'default'),
     generate: slot(null, 4, 'default'), import: slot(null, 4, 'default'),
   },
-  featureSwitches: { chat: true, hint: true, explain: true, summary: true, generate: true, import: true }, ...o,
+  featureSwitches: { chat: true, hint: true, explain: true, summary: true, assess: true, generate: true, import: true }, ...o,
 });
 
 test('a connection form: from a saved one, a blank one, and the name that follows the host', () => {
@@ -431,14 +431,14 @@ test('the four status cards: AI+ switch, connections, default model, features', 
   assert.deepEqual([bad?.tone, bad?.key, bad?.params], ['warn', 'ai.set.card.conn.someBad', { n: 2, bad: 1 }]);
   const unreadable = statusCards(v13({ connections: [conn({ keys: { apiKey: { set: true, hint: '', unreadable: true }, gatewayKey: NONE } })] }))[1];
   assert.equal(unreadable?.key, 'ai.set.card.conn.someBad', 'a key that cannot be read counts as a problem');
-  const off = statusCards(v13({ featureSwitches: { chat: true, hint: true, explain: true, summary: true, generate: false, import: false } }))[3];
+  const off = statusCards(v13({ featureSwitches: { chat: true, hint: true, explain: true, summary: true, assess: true, generate: false, import: false } }))[3];
   assert.deepEqual([off?.tone, off?.key, off?.offFeatures], ['warn', 'ai.set.card.features.someOff', ['generate', 'import']]);
 });
 
 test('the default model that cannot be used is a warning only: nothing is switched to another model', () => {
   const s = v13({
     pool: [pool(4, 1, 'demo-chat-small'), pool(5, 2, 'demo-chat-large')], connections: [conn({ status: 'broken' }), conn({ id: 2, name: 'second' })],
-    slots: { default: slot(4, null), chat: slot(null, null), hint: slot(null, null), explain: slot(null, null), summary: slot(null, null), generate: slot(null, null), import: slot(null, null) },
+    slots: { default: slot(4, null), chat: slot(null, null), hint: slot(null, null), explain: slot(null, null), summary: slot(null, null), assess: slot(null, null), generate: slot(null, null), import: slot(null, null) },
   });
   assert.equal(defaultUnusable(s), true);
   const m = statusCards(s)[2];
@@ -453,7 +453,7 @@ test('slot notes: a row on the default stays quiet; an unusable own model says t
   const s = v13({
     pool: [pool(4, 1, 'demo-chat-small'), pool(5, 2, 'demo-chat-large', { status: 'failed' })],
     connections: [conn(), conn({ id: 2, name: 'second', status: 'broken' })],
-    slots: { default: slot(4, 4), chat: slot(5, 4, 'default'), hint: slot(null, 4, 'default'), explain: slot(null, 4, 'default'), summary: slot(null, 4, 'default'), generate: slot(null, 4, 'default'), import: slot(null, 4, 'default') },
+    slots: { default: slot(4, 4), chat: slot(5, 4, 'default'), hint: slot(null, 4, 'default'), explain: slot(null, 4, 'default'), summary: slot(null, 4, 'default'), assess: slot(null, 4, 'default'), generate: slot(null, 4, 'default'), import: slot(null, 4, 'default') },
   });
   assert.deepEqual(slotNote(s, 'chat'), { kind: 'fallback', conn: 'second' });
   assert.equal(slotNote(s, 'hint'), null, 'following the default is not a fallback');
@@ -461,7 +461,7 @@ test('slot notes: a row on the default stays quiet; an unusable own model says t
   assert.equal(slotModel(s, 'chat')?.id, 5);
   assert.equal(slotUsing(s, 'chat')?.id, 4);
   // nothing set up yet: no warnings at all
-  const empty = v13({ state: 'setup', enabled: false, connections: [], pool: [], slots: { default: slot(null, null), chat: slot(null, null), hint: slot(null, null), explain: slot(null, null), summary: slot(null, null), generate: slot(null, null), import: slot(null, null) } });
+  const empty = v13({ state: 'setup', enabled: false, connections: [], pool: [], slots: { default: slot(null, null), chat: slot(null, null), hint: slot(null, null), explain: slot(null, null), summary: slot(null, null), assess: slot(null, null), generate: slot(null, null), import: slot(null, null) } });
   for (const k of SLOTS) assert.equal(slotNote(empty, k), null, k);
   assert.equal(defaultUnusable(empty), false);
 });
@@ -535,8 +535,8 @@ test('retention days', () => {
 });
 
 test('v1.3 limits: 33 keys in groups, the new ones, new defaults and ranges', () => {
-  assert.equal(LIMIT_KEYS.length, 36);
-  assert.equal(new Set(LIMIT_KEYS).size, 36);
+  assert.equal(LIMIT_KEYS.length, 38);
+  assert.equal(new Set(LIMIT_KEYS).size, 38);
   assert.deepEqual([...LIMIT_KEYS].sort(), Object.keys(DEFAULT_LIMITS).sort(), 'every key has a default');
   assert.deepEqual([...LIMIT_KEYS].sort(), Object.keys(LIMIT_RANGES).sort(), 'and a range');
   assert.deepEqual([...CAP_KEYS], ['callsPerMinute', 'callsPerHour', 'callsPerDay']);
@@ -545,6 +545,10 @@ test('v1.3 limits: 33 keys in groups, the new ones, new defaults and ranges', ()
   assert.deepEqual([...LENGTH_KEYS], ['replyMaxTokens'], 'one answer length for chat, hint, explanation and summary');
   assert.deepEqual([...SHARE_KEYS], ['studyShare', 'studyShareDays']);
   assert.deepEqual([...SUMMARY_KEYS], ['summaryMaxItems']);
+  assert.deepEqual([...ASSESS_KEYS], ['assessPerDay', 'assessAdminsExempt']);
+  assert.deepEqual([DEFAULT_LIMITS.assessPerDay, DEFAULT_LIMITS.assessAdminsExempt], [3, 1], 'three a day, administrators exempt');
+  assert.deepEqual(LIMIT_RANGES.assessPerDay, [0, 50]);
+  assert.deepEqual(LIMIT_RANGES.assessAdminsExempt, [0, 1]);
   assert.deepEqual([...SERVER_KEYS], ['perUserRunning', 'globalRunning', 'genRunning']);
   assert.deepEqual([...CONTENT_KEYS], ['genMinSource', 'genMinWrong', 'genBankSingle', 'genBankMulti', 'genWrongSingle', 'genWrongMulti']);
   assert.deepEqual([...BANK_KEYS], [...CONTENT_KEYS], 'the AI banks tab keeps the content rules only');
@@ -622,11 +626,12 @@ test('jobTime: the full local date and time YYYY-MM-DD HH:mm, also for today', (
 
 const connOff = (o: Partial<AiConnection> = {}): AiConnection => conn({ id: 2, name: 'second', enabled: false, ...o });
 
-test('v1.9 slots: seven rows, hint and explain are separate, only the default row has no switch', () => {
-  assert.deepEqual([...SLOTS], ['default', 'chat', 'hint', 'explain', 'summary', 'generate', 'import']);
+test('v1.9 slots: eight rows, hint and explain are separate, only the default row has no switch', () => {
+  assert.deepEqual([...SLOTS], ['default', 'chat', 'hint', 'explain', 'summary', 'assess', 'generate', 'import']);
   assert.equal(slotFeature('default'), null);
+  assert.equal(slotFeature('assess'), 'assess');
   assert.equal(slotFeature('explain'), 'explain');
-  const s = v13({ featureSwitches: { chat: true, hint: false, explain: true, summary: true, generate: true, import: true } });
+  const s = v13({ featureSwitches: { chat: true, hint: false, explain: true, summary: true, assess: true, generate: true, import: true } });
   assert.equal(slotOn(s, 'hint'), false);
   assert.equal(slotOn(s, 'explain'), true, 'hint and explain are independent');
   assert.equal(slotOn(s, 'default'), true);
@@ -687,11 +692,13 @@ test('v1.9 pacing: keys, defaults, ranges and the figures as entered, even gap)'
 });
 
 test('v1.9 safety sub-tabs: together exactly the safety keys, each once; the hash names a sub-tab or none', () => {
-  assert.deepEqual([...SAFETY_SUBS], ['caps', 'chat', 'study', 'summary', 'gen', 'import', 'server']);
+  assert.deepEqual([...SAFETY_SUBS], ['caps', 'chat', 'study', 'summary', 'assess', 'gen', 'import', 'server']);
   const all = SAFETY_SUBS.flatMap((k) => [...SUB_KEYS[k]]);
   assert.equal(all.length, new Set(all).size, 'no key twice');
   assert.deepEqual([...all].sort(), [...AS_KEYS].sort());
   assert.equal(subOfKey('paceTpm'), 'server');
+  assert.equal(subOfKey('assessPerDay'), 'assess');
+  assert.equal(subOfKey('assessAdminsExempt'), 'assess');
   assert.equal(subOfKey('callsPerMinute'), 'caps');
   assert.equal(subOfKey('genMinSource'), null, 'the content rules belong to the AI banks tab');
   assert.equal(subOfHash('#/ai-settings?tab=safety&sub=server'), 'server');

@@ -46,6 +46,14 @@ function color(v: string, theme: Record<string, string>): Rgba {
     assert.ok(next, `token ${ref[1]}`);
     return color(next, theme);
   }
+  // color-mix(in srgb, A P%, B): the podium tints (A and B are tokens or colours; the mix is opaque when both are)
+  const mix = /^color-mix\(in srgb,\s*(.+?)\s+(\d+)%\s*,\s*(.+)\)$/.exec(v.trim());
+  if (mix) {
+    const a = color(mix[1]!, theme);
+    const b = color(mix[3]!, theme);
+    const k = Number(mix[2]) / 100;
+    return [0, 1, 2, 3].map((i) => a[i]! * k + b[i]! * (1 - k)) as Rgba;
+  }
   const hex = /^#([0-9a-f]{6})$/i.exec(v.trim());
   if (hex) {
     const n = parseInt(hex[1]!, 16);
@@ -108,26 +116,142 @@ describe('dashboard text contrast (WCAG AA)', () => {
 });
 
 describe('dashboard layout', () => {
-  it('a long name gets an ellipsis in its own shrinking box and the "You" tag stays whole', () => {
-    const t = rule(DASH, '.dash-name-t');
-    assert.equal(t['min-width'], '0');
-    assert.equal(t.overflow, 'hidden');
-    assert.equal(t['text-overflow'], 'ellipsis');
-    assert.equal(t['white-space'], 'nowrap');
-    // text-overflow does nothing on the flex row itself
-    assert.equal(rule(DASH, '.dash-name')['text-overflow'], undefined);
-    assert.equal(rule(DASH, '.dash-you').flex, 'none');
-    assert.match(PAGE, /h\('span', \{ class: 'dash-name-t' \}, e\.name\)/);
+  it('the AI card is a rounded soft surface with an amber thread, and its button never exceeds the card', () => {
+    const card = rule(DASH, '.dash-ai');
+    assert.equal(card.background, 'var(--card)');
+    assert.match(card['border-radius']!, /^20px$/);
+    assert.match(card['box-shadow']!, /inset 4px 0 0 var\(--ai-2\)/);
+    const btn = rule(DASH, '.dash-ai .btn');
+    assert.equal(btn['min-height'], '44px');
+    assert.equal(btn['max-width'], '100%');
+    // The reason beside a greyed button wraps instead of widening the card
+    assert.equal(rule(DASH, '.dash-note')['min-width'], '0');
+    assert.equal(rule(DASH, '.dash-ai-text')['white-space'], 'pre-line');
   });
 
-  it('the 无法使用 tag beside the greyed button: no extra margin, and a small pill on phones', () => {
-    assert.equal(rule(DASH, '.dash-ai .aip-grp-inline > .aip-na')['margin-left'], '0');
-    // the section start-aligns its rows, so the pill and the button keep their own width on phones too
-    assert.equal(rule(DASH, '.dash-ai')['justify-items'], 'start');
+  it('four small tiles go two by two on phones, one row wider; every tile keeps 88 px', () => {
     const phone = DASH.indexOf('@media (max-width: 480px)');
     assert.ok(phone >= 0);
-    const btn = rule(DASH, '.dash-ai .btn', phone);
-    assert.equal(btn.width, undefined);
-    assert.equal(btn['max-width'], '100%');
+    const grid = rule(DASH, '.dash-row[data-n="4"]', phone);
+    assert.equal(grid.display, 'grid');
+    assert.equal(grid['grid-template-columns'], 'repeat(2, minmax(0, 1fr))');
+    assert.equal(rule(DASH, '.dash-row .dash-tile', phone)['min-height'], '88px');
+    // The rule lives inside the phone query only: the base row stays a flex row
+    assert.equal(rule(DASH, '.dash-row').display, 'flex');
+    assert.match(PAGE, /'data-n': String\(row\.length\)/);
+    assert.match(PAGE, /navAllowed\('banks', S\.user\)/);
+  });
+});
+
+describe('chalk board (the most missed questions)', () => {
+  const BOARD_T = read('../components/chalk-board.ts');
+  const MEDIA = tokens(MAIN, ':root:not([data-theme="light"])');
+  const CHALK = ['--board', '--board-line', '--chalk', '--chalk-dim', '--chalk-hi'];
+  it('the board tokens exist in the light theme, the dark theme and the follow-system dark block (dark ones equal)', () => {
+    for (const k of CHALK) {
+      assert.ok(LIGHT[k], `light ${k}`);
+      assert.ok(tokens(MAIN, ':root[data-theme="dark"]')[k], `dark ${k}`);
+      assert.equal(MEDIA[k], tokens(MAIN, ':root[data-theme="dark"]')[k], `follow-system ${k}`);
+    }
+    // Owner: white board with black lines in the light theme, black board with white lines in the dark theme
+    assert.ok(lum(color('var(--board)', THEMES.light)) > lum(color('var(--chalk)', THEMES.light)) + 0.5, 'light: dark lines on white');
+    assert.ok(lum(color('var(--chalk)', THEMES.dark)) > lum(color('var(--board)', THEMES.dark)) + 0.5, 'dark: white lines on black');
+  });
+
+  it('every chalk text passes AA on the board, in both themes; the ring is a visible 3:1', () => {
+    const num = rule(DASH, '.dash-curve-n, .dash-curve-t').fill!;
+    const label = rule(DASH, '.dash-curve-t').fill!;
+    assert.equal(num, 'var(--chalk)');
+    assert.equal(label, 'var(--chalk-dim)');
+    // No opacity on the texts (that would quietly lower the contrast)
+    for (const sel of ['.dash-curve-n, .dash-curve-t', '.dash-curve-t', '.dash-curve-n1']) assert.equal(rule(DASH, sel).opacity, undefined, sel);
+    for (const [name, th] of Object.entries(THEMES)) {
+      const bg = color(rule(DASH, '.dash-board').background!, th);
+      assert.ok(contrast(color(num, th), bg) >= AA, `${name} number`);
+      assert.ok(contrast(color(label, th), bg) >= AA, `${name} label`);
+      assert.ok(contrast(color('var(--chalk-hi)', th), bg) >= 3, `${name} ring`);
+      // The hint and the meta line of the detail region sit on --fill under the board
+      assert.ok(contrast(color('var(--ink3)', th), color('var(--fill)', th)) >= AA, `${name} hint`);
+      assert.ok(contrast(color(rule(DASH, '.dash-pick-meta').color!, th), color('var(--fill)', th)) >= AA, `${name} meta`);
+      assert.ok(contrast(color(rule(DASH, '.dash-ai-err').color!, th), card(th)) >= AA, `${name} error`);
+      assert.ok(contrast(color(rule(DASH, '.dash-ai-meta').color!, th), card(th)) >= AA, `${name} card meta`);
+    }
+  });
+
+  it('strokes: round caps, no fill, every line drawn as two strokes from the seeded sketch helper', () => {
+    const path = rule(DASH, '.dash-chalk path');
+    assert.equal(path.stroke, 'var(--chalk)');
+    assert.equal(path['stroke-linecap'], 'round');
+    assert.equal(path.fill, 'none');
+    assert.match(BOARD_T, /ds\.map\(\(d, i\) => svg\('path', \{ d, class: `\$\{cls\} dash-s\$\{i \+ 1\}` \}\)\)/);
+    assert.match(BOARD_T, /sketchCurve\(lay\.curve, rng\(\d+\)/);
+    assert.equal(rule(DASH, '.dash-chalk path.dash-chalk-hi').stroke, 'var(--chalk-hi)');
+  });
+
+  it('the drawing is decoration only; each point is a real transparent button of at least 44 x 44 px', () => {
+    assert.match(BOARD_T, /svg\('svg', \{ class: 'dash-chalk', 'aria-hidden': 'true', focusable: 'false' \}\)/);
+    assert.equal(rule(DASH, '.dash-chalk')['pointer-events'], 'none');
+    const pt = rule(DASH, '.dash-pt');
+    assert.equal(pt.position, 'absolute');
+    assert.equal(pt['min-width'], '44px');
+    assert.equal(pt['min-height'], '44px');
+    assert.equal(pt.background, 'transparent');
+    assert.equal(rule(DASH, '.dash-board').position, 'relative');
+    assert.match(rule(DASH, '.dash-pt:focus-visible').outline!, /var\(--chalk-hi\)/);
+  });
+
+  it('no motion on the board (nothing to switch off for reduced motion)', () => {
+    for (const m of DASH.matchAll(/(\.dash-(?:board|chalk|pt|curve)[^{]*)\{([^}]*)\}/g)) {
+      assert.doesNotMatch(m[2]!, /animation|transition/, m[1]!);
+    }
+  });
+
+  it('the pick region keeps the whole stem: wrapped, never clipped', () => {
+    const stem = rule(DASH, '.dash-pick-stem');
+    assert.equal(stem['white-space'], 'pre-wrap');
+    assert.equal(stem['overflow-wrap'], 'anywhere');
+    assert.equal(stem['text-overflow'], undefined);
+    assert.equal(stem['-webkit-line-clamp'], undefined);
+    assert.ok(rule(DASH, '.dash-pick')['min-width'] === '0');
+  });
+
+  it('every point is a button with a spoken name and state, the region is polite and Escape clears a pin', () => {
+    assert.match(BOARD_T, /h\('button', \{\s*id: `dash-wp-\$\{r\.rank\}`, class: `dash-pt dash-pt-\$\{r\.rank\}`, type: 'button', 'aria-pressed': 'false'/);
+    assert.match(BOARD_T, /'aria-label': t\('dash\.wrong\.aria'/);
+    assert.match(BOARD_T, /b\.setAttribute\('aria-pressed', String\(pick\.pinned === id\)\)/);
+    // the detail is a region; a polite live line repeats the shown question (the layers themselves are aria-hidden)
+    assert.match(BOARD_T, /role: 'region'/);
+    assert.match(BOARD_T, /class: 'sr-only', 'aria-live': 'polite'/);
+    // every question is drawn once as a layer of one grid cell, so hovering never changes the region's height
+    assert.match(BOARD_T, /dash-pick-layer/);
+    assert.equal(rule(DASH, '.dash-pick-layer')['grid-area'], '1 / 1');
+    assert.match(BOARD_T, /e\.key === 'Escape' && pick\.pinned/);
+    // Hover is for a mouse only; the keyboard counts only when the focus is visible
+    assert.match(BOARD_T, /pointerType === 'mouse'/);
+    assert.match(BOARD_T, /matches\(':focus-visible'\)/);
+    // The board shows the stem in the default question language (the page resolves the rows)
+    assert.match(PAGE, /wrongRows\(v\.data\.wrongTop\.items, S\.bank, S\.settings\.questionLang\)/);
+    assert.match(PAGE, /chalkBoard\(rows, wrongStats\)/);
+    // No medals, no gold / silver / bronze, no emoji (owner: medals look cheap)
+    const boardCss = DASH.slice(DASH.indexOf('/* ---------- Chalk curve'), DASH.indexOf('/* The detail region'));
+    for (const src of [BOARD_T, PAGE, boardCss]) {
+      assert.doesNotMatch(src, /medal|gold|silver|bronze/i);
+      assert.doesNotMatch(src, /\p{Extended_Pictographic}/u);
+    }
+  });
+
+  it('wide screens (>= 900 px) use two equal columns, the phone column is untouched', () => {
+    const wide = DASH.indexOf('@media (min-width: 900px)');
+    assert.ok(wide >= 0);
+    const page = rule(DASH, '.page-dash', wide);
+    assert.equal(page['max-width'], '1080px');
+    assert.equal(page['grid-template-columns'], 'repeat(2, minmax(0, 1fr))');
+    assert.equal(rule(DASH, '.page-dash > *', wide)['grid-column'], '1 / -1');
+    assert.equal(rule(DASH, '.page-dash > .dash-rank, .page-dash > .dash-wrong', wide)['grid-column'], 'auto');
+    assert.equal(rule(DASH, '.dash-row, .dash-row:is([data-n="4"], [data-n="5"], [data-n="6"])', wide)['grid-auto-flow'], 'column');
+    // the base column stays 560 px; the plane is hidden only on the narrowest phones
+    assert.equal(rule(DASH, '.page-dash')['max-width'], '560px');
+    assert.match(DASH, /@media \(max-width: 340px\) \{\s*html\[data-hand\] \.dash-doodle \{ display: none; \}/);
+    assert.ok(!DASH.includes('.dash-skel') && !DASH.includes('.dash-bar'));
   });
 });

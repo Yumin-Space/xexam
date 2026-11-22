@@ -65,6 +65,8 @@
   .nav-list { gap: 4px; }
   .nav-pop .nav-link { position: relative; min-height: 40px; padding-block: 4px; }
   .nav-pop .nav-link::after { content: ""; position: absolute; inset: -2px 0; }
+  /* the user row (a link to the profile since v2.6) keeps its full 44 px: it is a single row, not part of the list */
+  .nav-pop a.nav-who { min-height: 44px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -91,8 +93,13 @@
 /* v1.2 (A-OWNER-83): the steps of a tight top bar (components/shell.ts fitBar), each only when the account label would spill
    over the menu button (large iOS text size, page zoom): no user icon, then no role tag, then the logo alone (the name stays
    for screen readers) */
+.topbar.fit-0 .hand-btn { display: none; }
 .topbar.fit-1 .acct-ico { display: none; }
 .topbar.fit-2 .acct-role { display: none; }
 /* last resorts of fitBar for a very large text size: a smaller name, then no name (the logo / bar still lead home) */
 .topbar.fit-3 .brand-name { font-size: 16px; }
 .topbar.fit-4 .brand-name { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+/* v2.6: the menu's user row is a link to the Profile page: a normal menu row (44 px everywhere), the name gives way with an ellipsis */
+a.nav-who { min-height: 44px; padding: 6px 10px; text-decoration: none; font-size: 13px; color: var(--ink2); }
+a.nav-who .nav-who-tags { align-self: center; }

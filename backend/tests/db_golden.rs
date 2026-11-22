@@ -406,8 +406,8 @@ fn sqlite_master(path: &Path) -> Vec<Value> {
     .collect()
 }
 
-/// The type and name of every object a schema-11 database has, in `sqlite_master` rowid order (v2.0).
-const SCHEMA_11_OBJECTS: [(&str, &str); 41] = [
+/// The type and name of every object a schema-12 database has, in `sqlite_master` rowid order (v2.0; v2.6 adds the last one).
+const SCHEMA_12_OBJECTS: [(&str, &str); 42] = [
     ("table", "meta"),
     ("index", "sqlite_autoindex_meta_1"),
     ("table", "sqlite_sequence"),
@@ -449,10 +449,11 @@ const SCHEMA_11_OBJECTS: [(&str, &str); 41] = [
     ("table", "user_banks"),
     ("index", "sqlite_autoindex_user_banks_1"),
     ("index", "idx_user_banks_bank"),
+    ("index", "idx_users_display_name"),
 ];
 
 #[test]
-fn schema_11_is_the_same_for_a_fresh_file_and_the_python_sample() {
+fn schema_12_is_the_same_for_a_fresh_file_and_the_python_sample() {
     // tests/baseline/fixtures/sample.db was built by the old Python implementation (schema 1). Since v2.0 (schema 11) the
     // "v1 text identical to the Python version" guarantee is given up: the v1 text is only the start of the upgrade chain, and
     // nine tables are rebuilt with foreign keys. A fresh database and the migrated Python sample must still end up with
@@ -490,7 +491,7 @@ fn schema_11_is_the_same_for_a_fresh_file_and_the_python_sample() {
         .iter()
         .map(|r| (r[0].as_str().expect("type"), r[1].as_str().expect("name")))
         .collect();
-    assert_eq!(objects, SCHEMA_11_OBJECTS);
+    assert_eq!(objects, SCHEMA_12_OBJECTS);
     let sql_of = |name: &str| -> String {
         fresh
             .iter()
@@ -526,9 +527,14 @@ fn schema_11_is_the_same_for_a_fresh_file_and_the_python_sample() {
         "uid",
         "last_active_at",
         "can_download_banks",
+        "display_name",
     ] {
         assert!(users.contains(col), "{col}");
     }
+    assert_eq!(
+        sql_of("idx_users_display_name"),
+        "CREATE UNIQUE INDEX idx_users_display_name ON users(display_name COLLATE NOCASE) WHERE display_name IS NOT NULL"
+    );
     assert_eq!(
         sql_of("idx_users_uid"),
         "CREATE UNIQUE INDEX idx_users_uid ON users(uid) WHERE uid <> ''"

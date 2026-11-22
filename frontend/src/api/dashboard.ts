@@ -1,10 +1,10 @@
-// v2.5: the Home dashboard's one read-only request, GET /api/dashboard (leaderboard + most practised questions).
-// The types live here so types/api.ts stays untouched. The server sends no user ids, no e-mail domains and no question text.
+// v2.5: the Home dashboard's one read-only request, GET /api/dashboard (leaderboard + the viewer's most missed questions).
+// The types live here so types/api.ts stays untouched. The server sends no user ids, no e-mail domains and no question text; the wrong-answer list is the viewer's own.
 import { getJson } from './client.ts';
 
 export interface RankEntry {
   rank: number;
-  /** Already masked by the server (an e-mail username shows only a masked local part); the viewer's own row is in full */
+  /** The display name; a user without one is shown masked by the server (an e-mail login keeps only a masked local part) */
   name: string;
   answered: number;
   correct: number;
@@ -18,16 +18,19 @@ export interface RankMe {
   correct: number;
 }
 
-export interface PopularItem {
+/** One of the viewer's most missed questions: ids and counts only (the text is read from the loaded bank) */
+export interface WrongItem {
   questionId: string;
   bankId: number;
-  times: number;
-  correct: number;
+  /** How many times the viewer answered it wrong, all time */
+  wrong: number;
+  attempts: number;
 }
 
 export interface Dashboard {
   ranking: { users: number; top: RankEntry[]; me: RankMe };
-  popular: { days: number; since: string; items: PopularItem[] };
+  /** The viewer's own top 5, most missed first */
+  wrongTop: { items: WrongItem[] };
 }
 
 export const fetchDashboard = (): Promise<Dashboard> => getJson<Dashboard>('/api/dashboard');

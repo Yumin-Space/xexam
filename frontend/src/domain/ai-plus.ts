@@ -130,18 +130,6 @@ export function localDay(d: Date): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
-/**
- * The date an assessment answer names when it is not from today, or null. The day comes from the answer's own `createdAt`
- * (Unix seconds) in the browser's local time and is compared with the browser's today, so both sides use one clock (the
- * server's `date` is its own calendar day, which can differ from the browser's); `date` is only the fallback for an answer
- * without `createdAt`.
- */
-export function assessDateTag(a: { createdAt: number | null; date?: string | null } | null | undefined, now: Date = new Date()): string | null {
-  if (!a) return null;
-  const day = a.createdAt != null ? localDay(new Date(a.createdAt * 1000)) : a.date ?? null;
-  return day && day !== localDay(now) ? day : null;
-}
-
 // ---------------------------------------------------------------- which controls a page has (spec 7.4, 7.5)
 
 export type StudyKind = 'hint' | 'explain';

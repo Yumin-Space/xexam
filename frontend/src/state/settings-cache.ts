@@ -10,7 +10,7 @@ export const DEFAULT_SETTINGS: Readonly<Settings> = Object.freeze({
   theme: 'system',
   uiLang: 'en',
   autoAdvance: false,
-  questionLang: 'ja',
+  questionLang: 'en',
 });
 
 const isTheme = (v: unknown): v is Theme => v === 'system' || v === 'light' || v === 'dark';

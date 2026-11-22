@@ -81,6 +81,18 @@ export function hardSoonMinutes(hardEndsAt: string | null | undefined, nowMs: nu
   return Math.max(1, Math.ceil(left / 60_000));
 }
 
+/** Entries per page of the activity list (the entries are paged on the client, within what has been read) */
+export const ACTIVITY_PAGE_SIZE = 20;
+
+/** One page of `total` loaded entries: the page is clamped into 1..pages (an empty list is one empty page); from / to are 1-based, 0 when empty */
+export function activityPage(total: number, page: number, size = ACTIVITY_PAGE_SIZE): { page: number; pages: number; start: number; end: number; from: number; to: number } {
+  const pages = Math.max(1, Math.ceil(total / size));
+  const p = Math.min(Math.max(1, Math.trunc(page) || 1), pages);
+  const start = (p - 1) * size;
+  const end = Math.min(total, start + size);
+  return { page: p, pages, start, end, from: total ? start + 1 : 0, to: end };
+}
+
 /** New entries (read with `after`) in front of the list, no duplicates, newest first */
 export function mergeNewer<T extends { id: number }>(list: readonly T[], fresh: readonly T[]): T[] {
   const have = new Set(list.map((e) => e.id));

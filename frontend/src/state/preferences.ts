@@ -4,7 +4,7 @@ import { fetchSettings, resetSettings as apiResetSettings, saveSettings } from '
 import { barColor } from '../domain/theme-color.ts';
 import { localeTag, setUiLang } from '../i18n/index.ts';
 import type { Settings } from '../types/api.ts';
-import { cacheSettings, normalizeSettings } from './settings-cache.ts';
+import { cacheSettings, DEFAULT_SETTINGS, normalizeSettings } from './settings-cache.ts';
 import { paths } from './storage-keys.ts';
 import { S } from './store.ts';
 
@@ -96,7 +96,7 @@ export async function migrateBrowserQuestionLang(): Promise<void> {
   }
   if (local !== 'zh' && local !== 'en' && local !== 'ja') return;
   try {
-    if (local !== S.settings.questionLang && S.settings.questionLang === 'ja') adopt(await saveSettings({ questionLang: local }));
+    if (local !== S.settings.questionLang && S.settings.questionLang === DEFAULT_SETTINGS.questionLang) adopt(await saveSettings({ questionLang: local }));
     localStorage.removeItem(paths.lang);
   } catch {
     /* try again next time */

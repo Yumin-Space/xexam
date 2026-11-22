@@ -25,13 +25,18 @@ pub const MSG_BAD_SETTINGS: &str = "设置的值不对。";
 // v0.6
 pub const MSG_SIGN_IN_REQUIRED: &str = "请先登录。";
 pub const MSG_ADMIN_ONLY: &str = "只有管理员可以进行这个操作。";
-pub const MSG_BAD_LOGIN: &str = "用户名或密码不对。";
+pub const MSG_BAD_LOGIN: &str = "邮箱或密码不对。";
 pub const MSG_TOO_MANY_LOGINS: &str = "登录失败次数太多，请稍后再试。";
 pub const MSG_PASSWORD_CHANGE_REQUIRED: &str = "请先设置新密码。";
 pub const MSG_SAME_PASSWORD: &str = "新密码不能和原来的一样。";
-pub const MSG_BAD_USERNAME: &str = "用户名不对：1–40 个字符，只能用字母、数字和 . _ - @。";
+pub const MSG_BAD_USERNAME: &str = "邮箱不对：1–40 个字符，只能用字母、数字和 . _ - @。";
 pub const MSG_BAD_PASSWORD: &str = "密码需要 8–128 个字符。";
-pub const MSG_USERNAME_TAKEN: &str = "这个用户名已经有人用了。";
+pub const MSG_USERNAME_TAKEN: &str = "这个邮箱已经有人用了。";
+/// v2.6 display name (`POST /api/auth/name`, `POST /api/auth/password`): empty, rule broken, taken (409), required first
+pub const MSG_NAME_EMPTY: &str = "请输入用户名。";
+pub const MSG_NAME_BAD: &str = "用户名最多 20 个字，不能包含 @ 或控制字符。";
+pub const MSG_NAME_TAKEN: &str = "这个用户名已经有人用了。";
+pub const MSG_NAME_REQUIRED: &str = "请先设置用户名。";
 pub const MSG_USER_NOT_FOUND: &str = "这个用户不存在（可能已被删除），请刷新页面后再试。";
 pub const MSG_LAST_ADMIN: &str = "至少要保留一个启用的管理员。";
 pub const MSG_NOT_YOURSELF: &str = "不能对自己的账户做这个操作。";

@@ -23,6 +23,7 @@ pub const PAGES: &[&str] = &[
     "record",
     "wrong",
     "settings",
+    "profile",
     "about",
     "quiz",
     "result",
@@ -336,7 +337,8 @@ mod tests {
 
     #[test]
     fn pages_are_the_contract_list() {
-        assert_eq!(PAGES.len(), 14);
+        assert_eq!(PAGES.len(), 15);
+        assert!(PAGES.contains(&"profile"));
         assert!(PAGES.contains(&"aiSettings") && PAGES.contains(&"quiz"));
         assert!(!PAGES.contains(&"login"));
     }

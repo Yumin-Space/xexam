@@ -168,12 +168,17 @@ export function reportAuthError(path: string, e: ApiError): void {
 
 /** The backend's MSG_PASSWORD_CHANGE_REQUIRED (backend/src/api/response.rs), sent with 403 */
 export const MSG_PASSWORD_CHANGE_REQUIRED = '请先设置新密码。';
+/** v2.6: the backend's MSG_NAME_REQUIRED, sent with 403 while the user has no display name yet */
+export const MSG_NAME_REQUIRED = '请先设置用户名。';
+/** v2.6: the backend's MSG_NAME_EMPTY / MSG_NAME_BAD (400), used to point the focus at the name field */
+export const MSG_NAME_EMPTY = '请输入用户名。';
+export const MSG_NAME_BAD = '用户名最多 20 个字，不能包含 @ 或控制字符。';
 
 /** The route of the sign-in itself: its 401 is a wrong username or password, not a lost session */
 const LOGIN_PATH = '/api/auth/login';
 
 /** `expired` (v1.3): a 401 with code `auth.expired` (the session ended by its time rule); handled like `signin`, but the page says so */
-export type AuthProblem = 'signin' | 'password' | 'expired';
+export type AuthProblem = 'signin' | 'password' | 'name' | 'expired';
 
 let authHandler: (problem: AuthProblem) => void = () => {};
 
@@ -190,6 +195,7 @@ export function isSignInError(e: unknown): boolean {
 function authProblem(path: string, e: ApiError): AuthProblem | null {
   if (e.status === 401 && path !== LOGIN_PATH) return e.code === 'auth.expired' ? 'expired' : 'signin';
   if (e.status === 403 && e.kind === 'http' && (e.serverMessage === MSG_PASSWORD_CHANGE_REQUIRED || e.code === 'auth.password')) return 'password';
+  if (e.status === 403 && e.kind === 'http' && (e.serverMessage === MSG_NAME_REQUIRED || e.code === 'auth.name')) return 'name';
   return null;
 }
 

@@ -28,13 +28,9 @@ test('the dashboard visit refreshes S.records through loadVisit', () => {
   assert.match(s, /S\.records = records\.records;/);
 });
 
-test('the assessment button and the greeting take the newest time from newestRecordAt, not records[0]', () => {
-  const ctl = src('../components/ai-plus-controls.ts');
-  const body = ctl.slice(ctl.indexOf('export function assessButton'), ctl.indexOf('export function aiTableNote'));
-  assert.match(body, /newestRecordAt\(records\)/);
-  assert.doesNotMatch(body, /records\[0\]/);
+test('the greeting takes the newest time from newestRecordAt, not records[0]', () => {
   const page = src('../pages/dashboard.ts');
-  const hello = page.slice(page.indexOf('function hello'), page.indexOf('function aiRow'));
+  const hello = page.slice(page.indexOf('function hello'), page.indexOf('// ----', page.indexOf('function hello')));
   assert.match(hello, /newestRecordAt\(S\.records\)/);
   assert.doesNotMatch(hello, /rec\[0\]|records\[0\]/);
 });

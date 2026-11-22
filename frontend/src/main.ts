@@ -1,6 +1,7 @@
 // App entry: applies the cached settings (first paint), maps the route to a page inside the shell, registers the redraw function, and starts.
-// Before anything else, the sign-in pages: while S.authView is set, only the sign-in page or "choose a new password" is drawn.
+// Before anything else, the sign-in pages: while S.authView is set, only the sign-in page, "choose a new password" or (v2.6) "set a username" is drawn.
 import './styles/main.css';
+import { applyHandMode } from './components/hand-mode.ts';
 import { studyTransport } from './api/ai.ts';
 import { isTooManyRequests } from './api/client.ts';
 import { installAiPanel, reanchorAiPanel } from './components/ai-panel.ts';
@@ -17,12 +18,13 @@ import { readFeatures } from './domain/ai-features.ts';
 import { renderAbout } from './pages/about.ts';
 import { renderAiChat, renderAiNoAccess, renderAiUnavailable } from './pages/ai.ts';
 import { renderAiSettings } from './pages/ai-settings.ts';
-import { renderNewPassword, renderSignIn } from './pages/auth.ts';
+import { renderNewPassword, renderSetName, renderSignIn } from './pages/auth.ts';
 import { renderBanks } from './pages/banks.ts';
 import { renderDashboard } from './pages/dashboard.ts';
 import { renderForbidden } from './pages/forbidden.ts';
 import { renderLogs } from './pages/logs.ts';
 import { installQuizKeys, renderQuiz } from './pages/quiz.ts';
+import { renderProfile } from './pages/profile.ts';
 import { renderRecords } from './pages/records.ts';
 import { renderResult } from './pages/result.ts';
 import { renderSettings } from './pages/settings.ts';
@@ -35,6 +37,9 @@ import { applySettings, watchSystemTheme } from './state/preferences.ts';
 import { S, canOpenBanks, isAdmin } from './state/store.ts';
 import { h, keepFocus, must } from './utils/dom.ts';
 import { BAR_MQ, matches } from './utils/media.ts';
+
+// v2.6 preview: the blackboard (hand-written font) mode saved in this browser, before the first paint
+applyHandMode();
 
 function solo(...kids: Array<HTMLElement | null>): HTMLElement {
   return h('div', { class: 'solo' }, h('div', { class: 'solo-brand' }, brand()), kids);
@@ -67,6 +72,8 @@ function page(): { el: HTMLElement; title: string } {
       return { el: renderResult(), title: t('title.result') };
     case 'settings':
       return { el: renderSettings(), title: t('nav.settings') };
+    case 'profile':
+      return { el: renderProfile(), title: t('profile.title') };
     case 'about':
       return { el: renderAbout(), title: t('about.title') };
     case 'ai': {
@@ -147,6 +154,10 @@ function draw(): void {
   }
   if (S.authView === 'password') {
     app.replaceChildren(renderNewPassword());
+    return;
+  }
+  if (S.authView === 'name') {
+    app.replaceChildren(renderSetName());
     return;
   }
   if (S.phase === 'loading') {

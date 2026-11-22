@@ -51,7 +51,7 @@ from device import NAMED_SIZES  # noqa: E402
 from browser import find_chrome, kill_tree, popen_group, remove_dir  # noqa: E402
 
 REPO = retake.REPO
-PAGES = ['home', 'study', 'quiz', 'result', 'records', 'ai', 'ai-settings', 'users', 'logs', 'settings', 'banks', 'about',
+PAGES = ['home', 'study', 'quiz', 'result', 'records', 'ai', 'ai-settings', 'users', 'logs', 'settings', 'profile', 'banks', 'about',
          'signin', 'forbidden', 'menu']
 LANGS = ['zh', 'en', 'ja']
 THEMES = ['light', 'dark']
@@ -68,6 +68,7 @@ ACCOUNTS = [
     ('alex', 'user, AI+ paused (greyed AI controls)'),
     ('kim', 'user, disabled (cannot sign in)'),
     (seed_extra.LOCKED_USER, 'user, locked (cannot sign in)'),
+    # v2.6: the handles above are what the checks use; every user signs in with an e-mail (seed.login_of) and has a display name
 ]
 CANNOT_SIGN_IN = ('kim', seed_extra.LOCKED_USER)
 
@@ -351,7 +352,7 @@ class Stack:
     def write_state(self, extra=None):
         """stack.json in the output folder: the URL, the made-up accounts and every Docker name the stack created, so a
         stack that was killed hard can be cleaned up by name."""
-        state = {'base': self.base, 'lan': self.lan_ip, 'accounts': {u: seed.DEMO_PASSWORD for u, _ in ACCOUNTS
+        state = {'base': self.base, 'lan': self.lan_ip, 'accounts': {seed.login_of(u): seed.DEMO_PASSWORD for u, _ in ACCOUNTS
                                                                       if u not in CANNOT_SIGN_IN},
                  'docker': self.backend.created() if self.backend else {}}
         state.update(extra or {})
@@ -407,7 +408,7 @@ def print_keep(stack, out):
         print('  URL: %s/' % stack.base)
     print('  Made-up accounts (password for all: %s):' % seed.DEMO_PASSWORD)
     for user, what in ACCOUNTS:
-        print('    %-8s %s' % (user, what))
+        print('    %-32s %s' % (seed.login_of(user), what))      # v2.6: the sign-in is the e-mail
     print('  Extra data: bank "%s" (51 questions), %d study records for lee.' % (seed_extra.BANK_NAME,
                                                                                   stack.summary.get('leeRecords', 0)))
     if stack.lan_ip:

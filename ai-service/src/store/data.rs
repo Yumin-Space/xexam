@@ -1,6 +1,6 @@
 //! Users, chats, messages and memories. Every query of user content filters by the owner's id.
 use crate::identity::Identity;
-use crate::study::assess::{parse_assess_line, AssessLine, ASSESS_REF_PREFIX};
+use crate::study::assess::parse_assess_line;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -1274,102 +1274,119 @@ pub fn summary_saved(c: &Connection, user: i64, chat_ref: &str) -> rusqlite::Res
     saved_with(c, chat, SQL_SUMMARY_LATEST, SQL_SUMMARY_LAST_GOOD, &[])
 }
 
-/// A saved assessment: the answer rows, the day of its chat and the numbers of its stored line.
+/// The latest assessment of a user (`assess_latest`, one row per user).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AssessSaved {
-    pub saved: Saved,
-    /// `YYYY-MM-DD`, from the ref of the chat that holds the newest matching attempt
-    pub date: String,
-    pub line: AssessLine,
+pub struct AssessLatest {
+    pub content: String,
+    pub lang: String,
+    pub model: Option<String>,
+    /// `YYYY-MM-DD HH:MM`, the newest record the assessment was made for
+    pub latest_at: String,
+    pub records: i64,
+    pub answered: i64,
+    /// `YYYY-MM-DD`, the ai-service local day it was written
+    pub day: String,
+    pub created_at: i64,
+    /// Successful runs on `day` (the per-day limit counts them)
+    pub runs: i64,
 }
 
-/// Every assistant assessment answer of the user, newest first, across all of the user's `assess@` chats, with the
-/// stored user line it answers (its parent; the user message just before it when the parent is missing). The order is
-/// by message id, so a follow-up that touches an older chat does not change which attempt is the newest.
-const SQL_ASSESS_ATTEMPTS: &str = "SELECT a.id, a.status, a.content <> '', ch.id, ch.ref,
-        COALESCE(
-          (SELECT u.content FROM messages u WHERE u.id = a.parent_id AND u.chat_id = a.chat_id AND u.role = 'user'),
-          (SELECT u.content FROM messages u WHERE u.chat_id = a.chat_id AND u.role = 'user' AND u.id < a.id
-           ORDER BY u.id DESC LIMIT 1))
-     FROM messages a JOIN chats ch ON ch.id = a.chat_id
-     WHERE ch.user_id = ?1 AND ch.kind = 'summary' AND ch.ref LIKE 'assess@%'
-       AND a.role = 'assistant' AND a.kind = 'summary'
-     ORDER BY a.id DESC";
-
-/// The user's assessment made for the record set whose newest record is at `latest_at` (`YYYY-MM-DD HH:MM`), or None
-/// when no attempt was made for it. Every `assess@` chat of the user is searched, and only attempts whose stored line
-/// carries `latest_at` count: `latest` is the newest of them whatever its status (a streaming answer is followed, a
-/// stopped or failed one is shown, never asked again on its own), `last_good` the newest finished, non-empty one when
-/// `latest` is not `done` (as [`summary_saved`] gives them).
-pub fn assess_saved(
-    c: &Connection,
-    user: i64,
-    latest_at: &str,
-) -> rusqlite::Result<Option<AssessSaved>> {
-    struct Attempt {
-        id: i64,
-        chat: i64,
-        chat_ref: String,
-        line: AssessLine,
-    }
-    let mut st = c.prepare(SQL_ASSESS_ATTEMPTS)?;
-    let mut rows = st.query([user])?;
-    let mut latest: Option<Attempt> = None;
-    let mut good: Option<i64> = None;
-    while let Some(r) = rows.next()? {
-        let stored: Option<String> = r.get(5)?;
-        let Some(line) = stored.as_deref().and_then(parse_assess_line) else {
-            continue;
-        };
-        if line.latest_at != latest_at {
-            continue;
-        }
-        let status: String = r.get(1)?;
-        let is_good = status == "done" && r.get::<_, bool>(2)?;
-        let id: i64 = r.get(0)?;
-        if latest.is_none() {
-            latest = Some(Attempt {
-                id,
-                chat: r.get(3)?,
-                chat_ref: r.get(4)?,
-                line,
-            });
-        }
-        if is_good {
-            good = Some(id);
-            break;
-        }
-    }
-    drop(rows);
-    let Some(top) = latest else {
-        return Ok(None);
-    };
-    let latest_row = answer_by_id(c, top.id)?;
-    // like `saved_with`: the last good answer is sent only beside a latest one that is not `done`
-    let last_good = match good {
-        Some(id) if latest_row.status != "done" => Some(answer_by_id(c, id)?),
-        _ => None,
-    };
-    let chat_title = c
-        .query_row("SELECT title FROM chats WHERE id = ?1", [top.chat], |r| {
-            r.get::<_, String>(0)
+impl AssessLatest {
+    /// The JSON the capsule reads. `model` is stripped for ordinary users by `hide::for_viewer`.
+    pub fn to_json(&self) -> Value {
+        json!({
+            "text": self.content,
+            "day": self.day,
+            "createdAt": self.created_at,
+            "latestAt": self.latest_at,
+            "records": self.records,
+            "answered": self.answered,
+            "model": self.model,
         })
-        .optional()?;
-    let date = top
-        .chat_ref
-        .strip_prefix(ASSESS_REF_PREFIX)
-        .unwrap_or_default()
-        .to_string();
-    Ok(Some(AssessSaved {
-        saved: Saved {
-            chat_id: Some(top.chat),
-            chat_title,
-            latest: Some(latest_row),
-            last_good,
+    }
+}
+
+/// The user's latest assessment, or None.
+pub fn assess_latest(c: &Connection, user: i64) -> rusqlite::Result<Option<AssessLatest>> {
+    c.query_row(
+        "SELECT content, lang, model, latest_at, records, answered, day, created_at, runs
+         FROM assess_latest WHERE user_id = ?1",
+        [user],
+        |r| {
+            Ok(AssessLatest {
+                content: r.get(0)?,
+                lang: r.get(1)?,
+                model: r.get(2)?,
+                latest_at: r.get(3)?,
+                records: r.get(4)?,
+                answered: r.get(5)?,
+                day: r.get(6)?,
+                created_at: r.get(7)?,
+                runs: r.get(8)?,
+            })
         },
-        date,
-        line: top.line,
-    }))
+    )
+    .optional()
+}
+
+/// Called when an answer finishes: when it is a non-empty `done` answer of an assessment chat (a `summary` chat whose ref
+/// starts with `assess@`), it replaces the user's latest assessment. Failed, stopped and empty answers write nothing, so
+/// they neither replace the old text nor use up the day. The numbers come from the stored user line the answer replies to.
+/// Returns whether a row was written.
+pub fn save_assess_latest(
+    c: &Connection,
+    msg: i64,
+    status: &str,
+    content: &str,
+    model: &str,
+    now: i64,
+) -> rusqlite::Result<bool> {
+    if status != "done" || content.trim().is_empty() {
+        return Ok(false);
+    }
+    // the day is the one the request was accepted on (the chat ref `assess@<day>`), not the day the answer ends
+    let row: Option<(i64, Option<String>, String, String)> = c
+        .query_row(
+            "SELECT ch.user_id,
+                    COALESCE(
+                      (SELECT u.content FROM messages u WHERE u.id = a.parent_id AND u.chat_id = a.chat_id AND u.role = 'user'),
+                      (SELECT u.content FROM messages u WHERE u.chat_id = a.chat_id AND u.role = 'user' AND u.id < a.id
+                       ORDER BY u.id DESC LIMIT 1)),
+                    COALESCE(a.lang, ''),
+                    substr(ch.ref, 8)
+             FROM messages a JOIN chats ch ON ch.id = a.chat_id
+             WHERE a.id = ?1 AND a.role = 'assistant' AND a.kind = 'summary'
+               AND ch.kind = 'summary' AND ch.ref LIKE 'assess@%'",
+            [msg],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .optional()?;
+    let Some((user, stored, lang, day)) = row else {
+        return Ok(false);
+    };
+    let Some(line) = stored.as_deref().and_then(parse_assess_line) else {
+        return Ok(false);
+    };
+    c.execute(
+        "INSERT INTO assess_latest (user_id, content, lang, model, latest_at, records, answered, day, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+         ON CONFLICT(user_id) DO UPDATE SET content = excluded.content, lang = excluded.lang, model = excluded.model,
+           latest_at = excluded.latest_at, records = excluded.records, answered = excluded.answered,
+           runs = CASE WHEN assess_latest.day = excluded.day THEN assess_latest.runs + 1 ELSE 1 END,
+           day = excluded.day, created_at = excluded.created_at",
+        params![
+            user,
+            content,
+            lang,
+            model,
+            line.latest_at,
+            line.records,
+            line.answered,
+            day,
+            now
+        ],
+    )?;
+    Ok(true)
 }
 
 /// `RunningInfo` of an answer of the user, or None.

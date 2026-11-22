@@ -176,7 +176,7 @@ async fn the_refusals_of_the_upload_in_their_order_write_nothing() {
     e.t.post(
         "/api/ai/admin/features",
         &e.admin,
-        json!({"userId": e.user.id, "features": {"chat": true, "hint": true, "explain": true, "summary": true, "generate": true, "import": false}}),
+        json!({"userId": e.user.id, "features": {"chat": true, "hint": true, "explain": true, "summary": true, "assess": true, "generate": true, "import": false}}),
     )
     .await;
     let (s, v) = e.t.upload(&e.user, "a.docx", ok_file.clone()).await;
@@ -187,7 +187,7 @@ async fn the_refusals_of_the_upload_in_their_order_write_nothing() {
     e.t.post(
         "/api/ai/admin/features",
         &e.admin,
-        json!({"userId": e.user.id, "features": {"chat": true, "hint": true, "explain": true, "summary": true, "generate": true, "import": true}}),
+        json!({"userId": e.user.id, "features": {"chat": true, "hint": true, "explain": true, "summary": true, "assess": true, "generate": true, "import": true}}),
     )
     .await;
     // file types

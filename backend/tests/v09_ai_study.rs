@@ -113,6 +113,9 @@ fn clear_flag(a: &App, id: i64) {
         )
         .expect("clear")
         .expect("user");
+    a.store
+        .set_display_name(id, &format!("User {}", id))
+        .expect("name");
 }
 
 /// Starts a session for user `id`: the cookie and the `sid` (the token hash).

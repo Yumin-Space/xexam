@@ -812,6 +812,7 @@ async fn post_body(
     match path {
         "/api/auth/logout" => auth::logout(st, a, origin).await,
         "/api/auth/password" => auth::change_password(st, a, &data, headers, origin).await,
+        "/api/auth/name" => auth::set_name(st, a, &data).await,
         "/api/users/create" => auth::create(st, a, &data).await,
         "/api/users/update" => auth::update(st, a, &data).await,
         "/api/users/password" => auth::reset_password(st, a, &data).await,

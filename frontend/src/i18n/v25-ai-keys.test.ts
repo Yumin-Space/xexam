@@ -26,13 +26,35 @@ test('binding texts', () => {
   assert.equal(t('aiplus.chat.suffix.assess'), 'AI学习评估');
   setUiLang('en');
   assert.equal(t('aiplus.busy.assess'), 'Writing the study assessment…');
-  assert.equal(t('ai.feature.summary'), 'AI summary & study assessment');
-  assert.equal(t('ai.feature.summary.short'), 'Summary · check');
+  // v2.6: the assessment is its own feature; the summary label is just "AI summary"
+  assert.equal(t('ai.feature.summary'), 'AI summary');
+  assert.equal(t('ai.feature.assess'), 'AI study assessment');
   // The AI Chat list names the assessment as the dashboard button and the window do
   assert.equal(t('aiplus.chat.suffix.assess'), 'AI study assessment');
   assert.equal(t('aiplus.chat.suffix.assess'), t('dash.ai.title'));
   setUiLang('ja');
-  assert.equal(t('ai.feature.summary'), 'AI まとめ・学習評価');
+  assert.equal(t('ai.feature.summary'), 'AI まとめ');
+  assert.equal(t('ai.feature.assess'), 'AI 学習状況の評価');
+  setUiLang('zh');
+  assert.equal(t('ai.feature.summary'), 'AI 总结');
+  assert.equal(t('ai.feature.assess'), 'AI 学习评估');
+  assert.equal(t('ai.err.assessDaily'), '今天的 AI 学习评估次数已用完，明天再来吧。');
+  assert.equal(t('dash.ai.wait.daily'), '今天的评估次数已用完，明天再来');
+  assert.equal(t('dash.ai.remaining', { n: 2 }), '今天还能评估 2 次');
+});
+
+test('v2.6 assessment feature keys exist in en, zh and ja', () => {
+  const K = ['ai.feature.assess', 'ai.feature.assess.short', 'ai.set.slot.assess', 'ai.set.safeTab.assess', 'ai.set.safeTab.assessShort',
+    'ai.limits.group.assess', 'ai.set.limit.assessPerDay', 'ai.set.limit.assessPerDayHint', 'ai.set.limit.assessAdminsExempt',
+    'ai.set.usage.purpose.assess', 'dash.ai.remaining', 'dash.ai.wait.daily', 'ai.err.assessDaily'];
+  for (const lang of LANGS) {
+    setUiLang(lang);
+    for (const k of K) {
+      const v = t(k as MsgKey, { n: 1 });
+      assert.ok(v && v !== k, `${lang} ${k}`);
+    }
+  }
+  assert.equal(knownAiCode('ai.assessDaily'), true);
 });
 
 test('ai.assessFew is a known code with its own text', () => {

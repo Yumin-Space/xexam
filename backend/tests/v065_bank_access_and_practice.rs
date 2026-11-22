@@ -177,7 +177,13 @@ async fn login(a: &App, name: &str, password: &str) -> Resp {
 /// Signs in as the default administrator and sets a real password. Returns the cookie.
 async fn admin(a: &App) -> String {
     let c = cookie_of(&login(a, "admin", "admin").await);
-    let r = post(a, "/api/auth/password", &c, json!({ "password": ADMIN_PW })).await;
+    let r = post(
+        a,
+        "/api/auth/password",
+        &c,
+        json!({ "password": ADMIN_PW, "displayName": "Admin" }),
+    )
+    .await;
     assert_eq!(r.status, 200, "{}", r.text());
     cookie_of(&r)
 }
@@ -199,7 +205,7 @@ async fn user(a: &App, admin_cookie: &str, name: &str, extra: Value) -> (i64, St
         a,
         "/api/auth/password",
         &c,
-        json!({ "password": format!("{name}-own-pass") }),
+        json!({ "password": format!("{name}-own-pass"), "displayName": format!("{name} display") }),
     )
     .await;
     assert_eq!(r.status, 200, "{}", r.text());

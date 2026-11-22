@@ -197,6 +197,9 @@ fn session(a: &App, id: i64) -> String {
         )
         .expect("flag")
         .expect("user");
+    a.store
+        .set_display_name(id, &format!("User {}", id))
+        .expect("name");
     let token = auth::new_session_token();
     let now = auth::unix_now();
     a.store
@@ -779,7 +782,7 @@ fn a_fresh_database_is_the_current_schema_and_a_schema_9_file_migrates_with_one_
         .expect("query")
         .map(|r| r.expect("row"))
         .collect();
-    assert_eq!(rows, vec![r#"{"from":9,"to":11}"#.to_string()]);
+    assert_eq!(rows, vec![r#"{"from":9,"to":12}"#.to_string()]);
     // fresh and migrated databases have the same users columns, and the next open writes nothing
     let cols = |c: &Connection| -> Vec<String> {
         c.prepare("SELECT name FROM pragma_table_info('users') ORDER BY name")

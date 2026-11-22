@@ -14,8 +14,8 @@ import { aiDown } from './status.ts';
 import { A, num, redraw, when, writePeriod } from './state.ts';
 
 const periodLabel = (p: UsagePeriod): string => (p === '12h' ? t('ai.set.last12h') : p === 'today' ? t('ai.set.today') : t('ai.set.days', { n: p }));
-/** The six features of the usage chart (UC-1), in the order of the bars */
-const PURPOSES = ['chat', 'hint', 'explain', 'summary', 'generate', 'import'] as const;
+/** The seven features of the usage chart (UC-1), in the order of the bars */
+const PURPOSES = ['chat', 'hint', 'explain', 'summary', 'assess', 'generate', 'import'] as const;
 
 export async function loadUsage(): Promise<void> {
   const days = A.usageDays;

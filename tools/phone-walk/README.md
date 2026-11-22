@@ -127,7 +127,7 @@ insets are then reported as skipped.
 | W-IM-1 | Bank management (sam) at 360 / 390 / 412 / 768 / 1280: the AI import is its own card (not inside the Excel card) with a heading, a note naming the size and question limit, a drop zone; its button is the Excel button's twin (same size and left edge), 44 px high on phones, no sideways scroll; a user without AI+ (riley) sees no card |
 | W-IM-2 | Bank management (sam) at 360 / 390 / 412: a made-up file with 130 numbered lines fails locally (no AI call); the failed import card has a close button in its top-right corner, 44 px on a phone, and tapping it removes the card |
 | W-GB-1 | Home (sam): the AI generation button sits in the start panel header inside the screen, no sideways scroll |
-| W-BT-1 | every AI+ badge (header, menu, Settings, User management, AI settings rows, Home) has a non-empty tip; the account button has no native `title` |
+| W-BT-1 | every AI+ badge (header, menu, Profile, User management, AI settings rows, Home) has a non-empty tip; the account button has no native `title` |
 | W-FP-1 | AI settings > AI+ users: five checkboxes in two groups per row (AI hint and AI analysis are one box), each group on one row in zh / ja; administrators' boxes disabled |
 | W-UC-1 | AI settings > AI usage at 360 / 390 / 412: three charts with an `aria-label`, every bar labelled, the calls / tokens switch on both bar charts (the title follows, tokens are stacked), a tip on a tapped bar and 10 px beside the line (none 90 px away), the line 3 px, labels never overlap, they fit the card |
 | W-AB-1 | one AI bank is generated (admin), practised and deleted again: the AI+题集 badge with its tip and caution line is on the question card and on the result (skipped when no AI bank can be made on the stack) |
@@ -219,3 +219,28 @@ W-V22-AB also checks the top bar's brand: the word Xexam without the logo icon o
 Older checks that assumed the list-first phone flow or the Chats / Memory tabs now open the drawer first (`open_sidebar`) and use
 the memory row (`open_memories`), both in `checks.py`: W-CH-2 (phone header row instead of the title row), W-CH-4, W-CH-5,
 W-CH-82 and W-CH-83.
+
+## v2.6 checks (`checks_v26.py`)
+
+`checks_v26.py` (group `g_v26`, registered at the end of `checks.py`; run alone with `--only 'W-V26-*'`), zh / en / ja, light and
+dark, 320 / 375 / 430 px plus 1280. Since v2.6 every made-up user signs in with an e-mail (`seed.LOGINS`, e.g. `sam@example.com`)
+and has a display name (`seed.NAMES`); the checks keep the short handles (`sam`, `lee`, ...) and `seed.Session.sign_in` passes
+the first-sign-in gate (new password + name, or name only). Hand-written mode is on by default (`html[data-hand]`). The final Home
+has this order: greeting, resume card, the Exam & practice hero (a paper plane), six tiles (3 per row), the leaderboard as a
+hand-drawn line chart (`.dash-rank`), the most-missed parabola board (`.dash-wrong`) and the AI assessment card (`.dash-ai`),
+folded on every visit and last. `lee` has wrong answers on at least five questions, so the most-missed board has five points; the
+card check makes one assessment of `lee` through the made-up provider on first use.
+
+| Check | What |
+|---|---|
+| W-V26-RANK | Leaderboard line chart (lee): every point (`.dash-rank .dash-pt`) a button >= 44 x 44 px, inside the width, no overlap, an aria-label each, place 1 highest, every SVG text inside the board; before a tap the hint shows, a tap shows the line (`.dash-rank-pick`, no `@`) and presses one point |
+| W-V26-POD | Most-missed parabola board (lee): five points >= 44 x 44 px, no overlap, nothing cut or outside the width, SVG texts inside the board; a tap on place 1 opens the question and its correct answer under the board (`aria-live` polite), a second tap closes it; on a desktop Escape clears a pinned pick |
+| W-V26-CAP | AI assessment card (lee): last block of the page, folded on arrival (`aria-expanded` false, body hidden), toggle >= 44 px high and inside the card, title and AI+ badge apart; opened by a tap: whole text, no model name, action button >= 44 px high and inside the card (disabled with a reason line when today's is used); folded again after leaving Home and coming back; a user without AI+ and without a saved text (riley) has no card |
+| W-V26-TL | Tiles: 5 or 6 tiles are rows of three (a wide screen may also show one row), 4 tiles are 2 x 2 up to 480 px and one row wider; order records, wrong answers, AI Chat, banks, settings, profile; each >= 88 px high, `data-n` matches the count (lee, sam, riley); hand mode is on by default and the Aa switch is visible |
+| W-V26-PRF | Profile page (sam): account / username / password sections, every control >= 44 px on a phone, nothing outside the width, the login line is an e-mail, the password row opens three fields in place; Settings has no account section; the menu user row is a >= 44 px link to `#/profile` and opens it |
+| W-V26-CTR | 1280 / 1440 px: Settings, Profile, Users, AI settings and About are centred (left and right space equal within 2 px) |
+| W-V26-LOG | System log (admin): a pager shows on one of the two tabs, inside the width, controls >= 44 px on a phone, no overlap, no sideways scroll |
+| W-V26-NAME | First sign-in (page `signin`): a new user sees the new-password page with the username field above the password fields; a user who only lacks a username sees the name-only page (one field, Save, Sign out); targets >= 44 px on a phone, nothing sticks out, a 21-character name and a name with `@` show an inline error. The name-only part clears the user's name in `xexam.db`, so it runs with `--backend cargo` only and is skipped with Docker |
+
+`W-V25-AI` (the amber AI button and its dialog) was retired in v2.6; the AI card is checked by `W-V26-CAP`. The page list of `walk.py`
+(`--pages`) has a new entry `profile`.

@@ -19,7 +19,7 @@
 .wrap.qz { padding-top: max(12px, env(safe-area-inset-top)); }
 /* With a mouse the theme toggle is as tall as the exit button next to it (36 px); touch keeps the 44 px of the phone rules below */
 @media (hover: hover) and (pointer: fine) {
-  .qbar .theme-btn { width: 36px; height: 36px; }
+  .qbar :is(.theme-btn, .hand-btn) { width: 36px; height: 36px; }
 }
 .qbar .ql { display: flex; align-items: baseline; gap: 10px; min-width: 0; font-size: 18px; }
 /* The "Question 3 of 25" text is the page heading (h1); it keeps the look of plain text */
@@ -253,12 +253,15 @@
      margins eat the row gap, so its box touches the neighbours' boxes without overlapping them. When the row is tight (the quiz
      page sets .tight, .tighter, .tightest one after the other until nothing is clipped) the count takes its short form "3/50",
      then the gaps and the clock icon go, so the position "4 / 50" always keeps its room */
-  .qbar .theme-btn { position: relative; width: 44px; height: 44px; margin-inline: -8px; }
+  .qbar :is(.theme-btn, .hand-btn) { position: relative; width: 44px; height: 44px; margin-inline: -8px; }
+  /* Aa sits left of the toggle: its right margin is 0 so the two boxes touch instead of overlapping (both eat the gap) */
+  .qbar .hand-btn { margin-right: 0; }
   .qbar.tight .qcount-l { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
   .qbar.tight .qcount-s { display: inline; }
   .qbar.tight .qcount { margin-right: 0; }
   .qbar.tighter .r { gap: 4px; }
-  .qbar.tighter .theme-btn { margin-inline: -4px; }
+  .qbar.tighter :is(.theme-btn, .hand-btn) { margin-inline: -4px; }
+  .qbar.tighter .hand-btn { margin-right: 0; }
   .qbar.tighter .qtime .mi { display: none; }
   .qbar.tightest .qkind { display: none; }
   /* Last resort on the narrowest phones (320 px, 100 questions): the answered count leaves the row (the meter under it shows it;
@@ -266,6 +269,8 @@
   .qbar.tightest .qcount { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
   .qbar.tightest .qcount-s { display: none; }
   .qbar.tightest .qsubmit .mi { display: none; }
+  /* Fourth step (320-340 px, 100 questions with auto-advance or a long timer): the Aa button leaves the row; the switch stays in Settings and the other bars */
+  .qbar.tightest2 .hand-btn { display: none; }
   .qexit .mi { display: inline; width: 22px; height: 22px; }
   .qexit .lbl { display: none; }
 
@@ -369,9 +374,11 @@
   .btn.qsubmit { min-height: 28px; }
   /* The theme toggle: a 36 px box on the 36 px row; its tap area reaches 9 px below it. The save-and-exit tap area (::after,
      3 px to the left) covers the toggle's neighbouring 3 px, so the toggle's right margin leaves those 3 px free */
-  .qbar .theme-btn { height: 36px; margin-inline: -8px -5px; }
-  .qbar .theme-btn::after { content: ""; position: absolute; inset: 0 0 -9px; }
-  .qbar.tighter .theme-btn { margin-inline: -4px -1px; }
+  .qbar :is(.theme-btn, .hand-btn) { height: 36px; margin-inline: -8px -5px; }
+  .qbar .hand-btn { margin-right: 0; }
+  .qbar :is(.theme-btn, .hand-btn)::after { content: ""; position: absolute; inset: 0 0 -9px; }
+  .qbar.tighter :is(.theme-btn, .hand-btn) { margin-inline: -4px -1px; }
+  .qbar.tighter .hand-btn { margin-right: 0; }
   .qbar .btn.qsubmit::after { inset: -4px -4px -12px; }
   .wrap.qz .paper { padding: 8px 12px; }
   .wrap.qz .phead { min-height: 28px; margin-bottom: 4px; }
@@ -390,6 +397,8 @@
   font-size: 16px; font-weight: 700; line-height: 1.4; color: var(--on-answer-solid);
 }
 .pverdict svg { width: 20px; height: 20px; flex: none; stroke: currentColor; }
+/* Hand-written mode: the red pen mark would vanish on the solid green / orange verdict key, so it sits on a small white disc */
+html[data-hand] .pverdict svg { background: #fff; border-radius: 50%; padding: 2px; box-sizing: content-box; }
 .pverdict.ok { background: var(--answer-right-solid); }
 .pverdict.ng { background: var(--answer-wrong-solid); }
 .pverdict:focus { outline: none; }
@@ -406,3 +415,12 @@
   .tiles .tile.ok:not(.done):hover { background: var(--answer-right-solid); }
   .tiles .tile.ng:not(.done):hover { background: var(--answer-wrong-solid); }
 }
+
+/* v2.6 preview, blackboard mode (html[data-hand], the "Aa" switch in the bar): the question itself is hand-written (stem,
+   options, hotspot items and their choices); the bar, the counters and the buttons keep the page font */
+html[data-hand] .qz :where(.stem, .opt .t, .hs-item p),
+html[data-hand] .qz :is(.stem, .opt, .hs-item) [lang] { font-family: 'Xexam Hand', var(--en); }
+html[data-hand]:lang(zh-CN) .qz :where(.stem, .opt .t, .hs-item p),
+html[data-hand] .qz :is(.stem, .opt, .hs-item) [lang|="zh"] { font-family: 'Xexam Hand', var(--zh); }
+html[data-hand]:lang(ja) .qz :where(.stem, .opt .t, .hs-item p),
+html[data-hand] .qz :is(.stem, .opt, .hs-item) [lang="ja"] { font-family: 'Xexam Hand', var(--jp); }

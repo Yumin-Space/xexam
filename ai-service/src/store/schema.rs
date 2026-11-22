@@ -45,6 +45,25 @@ pub fn is_retired(table: &str, column: &str) -> bool {
         .any(|(t, c)| *t == table && *c == column)
 }
 
+/// v2.6 (no version bump, `IF NOT EXISTS`, run on every open): the latest AI study assessment of each user, one row per
+/// user. It is written when an assessment answer finishes (`done`, non-empty) and is deliberately separate from the chat
+/// that produced it: deleting chats, "delete all" and the retention sweep never touch it; only deleting the user does
+/// (cascade). `day` is the ai-service local date of the answer and drives the once-a-day rule.
+pub const ASSESS_LATEST_TABLE: &str = "
+CREATE TABLE IF NOT EXISTS assess_latest (
+  user_id    INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  content    TEXT NOT NULL,
+  lang       TEXT NOT NULL,
+  model      TEXT,
+  latest_at  TEXT NOT NULL,
+  records    INTEGER NOT NULL,
+  answered   INTEGER NOT NULL,
+  day        TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  runs       INTEGER NOT NULL DEFAULT 1
+);
+";
+
 /// Table of AI schema 8 (v1.4, all `IF NOT EXISTS`): the settings of the external IP-location lookup. A row exists only
 /// after a passing "test and save", so "saved" means "tested". The key (when there is one) is sealed with the AI master
 /// key under its own AAD (`secret::GEO_KEY_AAD`); it is never returned and never logged.
@@ -316,7 +335,7 @@ pub const V7_COLUMNS: [(&str, &str, &str); 18] = [
     // administrator's model pick: connection id and model id (both NULL = the chat default)
     ("chats", "pick_conn", "pick_conn INTEGER"),
     ("chats", "pick_model", "pick_model TEXT"),
-    // global feature switches (bits of features.rs, 0..63)
+    // global feature switches (bits of features.rs, 0..127)
     (
         "settings",
         "features_off",
@@ -545,6 +564,41 @@ CREATE TABLE model_slots (
 pub const V9_SEED: &str = "INSERT OR IGNORE INTO model_slots (slot, model_id, updated_at) VALUES
   ('default', NULL, ?1), ('chat', NULL, ?1), ('hint', NULL, ?1), ('explain', NULL, ?1),
   ('summary', NULL, ?1), ('generate', NULL, ?1), ('import', NULL, ?1)";
+
+/// v2.6: `model_slots` with the eighth slot `assess` (the study assessment is its own feature). Run when the table's CHECK
+/// does not list it yet (a CHECK cannot be altered); `assess` starts as a copy of the `summary` row.
+pub const V26_MODEL_SLOTS: &str = "
+CREATE TABLE model_slots (
+  slot       TEXT PRIMARY KEY NOT NULL CHECK (slot IN ('default', 'chat', 'hint', 'explain', 'summary', 'assess', 'generate', 'import')),
+  model_id   INTEGER REFERENCES models(id) ON DELETE SET NULL,
+  updated_at INTEGER NOT NULL,
+  updated_by TEXT NOT NULL DEFAULT '',
+  effort     TEXT
+)";
+
+/// v2.6 columns, added on every open (idempotent, no version change): the per-day assessment count, the two limits and the usage mark of assessment calls.
+pub const V26_COLUMNS: [(&str, &str, &str); 4] = [
+    (
+        "usage",
+        "assess",
+        "assess INTEGER NOT NULL DEFAULT 0 CHECK (assess IN (0, 1))",
+    ),
+    (
+        "assess_latest",
+        "runs",
+        "runs INTEGER NOT NULL DEFAULT 1",
+    ),
+    (
+        "limits",
+        "assess_per_day",
+        "assess_per_day INTEGER NOT NULL DEFAULT 3 CHECK (assess_per_day BETWEEN 0 AND 50)",
+    ),
+    (
+        "limits",
+        "assess_admins_exempt",
+        "assess_admins_exempt INTEGER NOT NULL DEFAULT 1 CHECK (assess_admins_exempt BETWEEN 0 AND 1)",
+    ),
+];
 
 /// The Gemma thinking family is gone (v1.9): its stored choices become the Google ones, which send the same wire request.
 /// Anything else of that family is cleared (send nothing). Run at the end of every `init()` when a `gemma:` row exists.

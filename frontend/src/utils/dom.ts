@@ -42,7 +42,24 @@ export function paras(text: string | null | undefined, extra?: string, lang?: st
 
 const SVGNS = 'http://www.w3.org/2000/svg';
 
-/** Small correct / incorrect icons */
+/** One brush stroke as a filled shape: from `a` (width wa) to `b` (width wb), the ends rounded by the outline's stroke */
+function brush(a: [number, number], b: [number, number], wa: number, wb: number): string {
+  const dx = b[0] - a[0], dy = b[1] - a[1], len = Math.hypot(dx, dy) || 1;
+  const nx = -dy / len, ny = dx / len;
+  const f = (v: number): string => v.toFixed(2);
+  const p = (q: [number, number], w: number, side: number): string => `${f(q[0] + nx * w * side / 2)} ${f(q[1] + ny * w * side / 2)}`;
+  // a slight belly in the middle of the stroke, as a brush presses harder there
+  const m: [number, number] = [a[0] + dx * 0.45, a[1] + dy * 0.45];
+  const wm = Math.max(wa, wb) * 1.12;
+  return `M${p(a, wa, 1)} Q${p(m, wm, 1)} ${p(b, wb, 1)} L${p(b, wb, -1)} Q${p(m, wm, -1)} ${p(a, wa, -1)} Z`;
+}
+
+/**
+ * Small correct / incorrect icons. Each carries two drawings: the plain tick / cross, and (v2.6, hand-written mode) a
+ * teacher's red ink — for correct an oval ring drawn in one crayon stroke that runs past its start, for wrong a cross of two
+ * brush strokes (the second starts with a round blob, both run out dry). The ink shapes are filled; a fine-noise filter
+ * (components/hand-mode.ts, #xexam-crayon) roughens their edges. The stylesheet shows one of the two (html[data-hand]).
+ */
 export function svgMark(ok: boolean): SVGSVGElement {
   const s = document.createElementNS(SVGNS, 'svg');
   s.setAttribute('viewBox', '0 0 20 20');
@@ -51,9 +68,28 @@ export function svgMark(ok: boolean): SVGSVGElement {
   s.setAttribute('stroke-linecap', 'round');
   s.setAttribute('stroke-linejoin', 'round');
   s.setAttribute('aria-hidden', 'true');
-  const p = document.createElementNS(SVGNS, 'path');
-  p.setAttribute('d', ok ? 'M4 10.5l4 4 8-9' : 'M5 5l10 10M15 5L5 15');
-  s.append(p);
+  const el = (tag: string, attrs: Record<string, string>): SVGElement => {
+    const e = document.createElementNS(SVGNS, tag);
+    for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+    return e;
+  };
+  s.append(el('path', { d: ok ? 'M4 10.5l4 4 8-9' : 'M5 5l10 10M15 5L5 15', class: 'mk-plain' }));
+  const ink = el('g', { class: 'mk-hand' });
+  if (ok) {
+    // the ring: a tilted oval, open at the lower right, its tail running down past the start
+    ink.append(
+      el('path', { d: 'M13.9 15.6C10.2 17.6 4.6 17.4 2.6 13.9C0.9 10.8 2.6 6.2 6.6 4.1C10.4 2.1 15.6 2.5 17.6 5.4C19.4 8.2 17.7 12.4 15.2 15.1C14 16.4 12.6 17.6 11.2 18.9', class: 'mk-ring' }),
+      el('path', { d: 'M13.4 15.2C10 16.9 5.2 16.8 3.4 13.7C2 11 3.5 7 6.9 5.1', class: 'mk-ring mk-ring2' }));
+  } else {
+    // the first stroke from top left to bottom right, the second from a blob at the bottom left up to the top right
+    ink.append(
+      el('path', { d: brush([4.2, 3.4], [16.4, 16.8], 2.9, 1.5), class: 'mk-ink' }),
+      el('path', { d: 'M3.6 3.0L6.4 6.6M4.9 2.6L7.6 5.6', class: 'mk-dry' }),
+      el('circle', { cx: '4.6', cy: '15.8', r: '2', class: 'mk-ink' }),
+      el('path', { d: brush([4.8, 15.6], [16.6, 3.6], 3.1, 1.1), class: 'mk-ink' }),
+      el('path', { d: 'M14.6 4.9L17.6 2.2M15.6 6.2L18.2 3.9', class: 'mk-dry' }));
+  }
+  s.append(ink);
   return s;
 }
 

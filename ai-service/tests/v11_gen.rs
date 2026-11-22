@@ -175,7 +175,7 @@ async fn the_status_reports_the_quota_the_job_and_the_unseen_card() {
     assert_eq!(v["why"], Value::Null);
     assert_eq!(
         v["features"],
-        json!({"chat": true, "hint": true, "explain": true, "summary": true, "generate": true, "import": true})
+        json!({"chat": true, "hint": true, "explain": true, "summary": true, "assess": true, "generate": true, "import": true})
     );
     let g = &v["gen"];
     assert_eq!(
@@ -585,7 +585,7 @@ async fn the_feature_taken_away_mid_job_stops_it() {
         .post(
             "/api/ai/admin/features",
             &e.admin,
-            json!({"userId": e.user.id, "features": {"chat": true, "hint": true, "explain": true, "summary": true, "generate": false, "import": true}}),
+            json!({"userId": e.user.id, "features": {"chat": true, "hint": true, "explain": true, "summary": true, "assess": true, "generate": false, "import": true}}),
         )
         .await;
     assert_eq!(s, 200, "{v}");

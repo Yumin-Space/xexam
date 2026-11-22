@@ -1,18 +1,22 @@
 # -*- coding: utf-8 -*-
 """The screenshot scenes: headless Chrome drives the real UI through DOM clicks, one browser per language.
 
-shoot_language() writes, into one folder, the 33 images the READMEs and docs use (25 desktop images 1280 px wide and 8
+shoot_language() writes, into one folder, the 38 images the READMEs and docs use (28 desktop images 1280 px wide and 10
 iPhone images 390 x 844, both at device scale 2). Since v1.0 the UI is phone-first (icons with tap-and-hold labels, a
 one-row practice bar, a collapsible AI+ panel under the card, a centered GitHub footer line); the scenes follow it:
 
-  desktop-1-home        (v2.5) the Home dashboard (#/): greeting, the saved exam to continue, the page tiles, the AI study
-                        assessment button, the leaderboard and the most practised questions
+  desktop-1-home        (v2.6) the Home dashboard (#/) in hand-written mode (the default): greeting, the saved exam to continue,
+                        the Exam & practice hero (paper plane), the six page tiles (one row on the desktop, the leaderboard and most-missed boards side by side), the leaderboard as a hand-drawn
+                        line chart, the most-missed parabola board (five places; place 1 is tapped, so its question and the
+                        correct answer show under the board) and, last, the AI study assessment card (folded on every visit;
+                        the scene opens it so the made-up sample text of the UI language and the Update button show)
   desktop-2-quiz        an exam in progress, on a hotspot question with its first item answered
   desktop-3-result      the result of a whole exam: the score and the first answer card (an orange wrong option, the verdict)
   desktop-4-records     Study records
   desktop-5-banks       Question banks: the preview of an update ("Kitchen basics (v2)") and the guide unfolded, shortened
                         to its first two sections (basics and the six columns) so the whole guide card ends inside the image
-  desktop-6-settings    Settings, as the administrator: with the AI chat mode section (Normal selected; administrators only)
+  desktop-6-settings    Settings, as the administrator: with the AI chat mode section (Normal selected; administrators only) and the
+                        default question language; since v2.6 without an account section (that moved to the Profile page)
   desktop-7-dark        the exam page in the dark theme
   desktop-8-about       About: the newest changelog entry shortened to the bullets that fit, so the whole What's new card
                         (with the folded earlier versions) ends inside the image
@@ -64,7 +68,11 @@ one-row practice bar, a collapsible AI+ panel under the card, a centered GitHub 
   desktop-25-ai-bank-home (v1.1) the Exam & practice page (#/study) after an AI generation from the checked sheets (made by the stub provider, a name typed
                         per language): the AI+ Set row in the bank list and the done card; the bank is deleted again after
                         this scene, desktop-21 and iphone-8 (so no other scene asks its made-up questions)
-  iphone-1-home         (v2.5) the Home dashboard on a phone: tiles, AI button, leaderboard
+  iphone-1-home         (v2.6) the Home dashboard on a phone: six tiles (3 x 2), the leaderboard line chart, the most-missed
+                        board (place 1 tapped) and the opened AI assessment card last
+  desktop-27-profile    (v2.6) the Profile page as sam: the account (login e-mail, role, AI+ badge), the username and the Change
+                        password row (an e-mail login, never the fresh-install "admin")
+  iphone-10-profile     (v2.6) the Profile page on a phone
   iphone-9-study        (v2.5) the Exam & practice page with the latest card (one-row actions) and the start bar
   iphone-2-quiz         an exam: compact top row, one-row bar (previous, Next, flag), collapsed answer sheet
   iphone-3-menu         the menu
@@ -120,6 +128,9 @@ JS_TICK_ALL = """(() => { const boxes = [...document.querySelectorAll('.home-pic
   return boxes.filter((b) => b.checked).length })()"""
 SCENES.insert(SCENES.index('desktop-25-ai-bank-home.png') + 1, 'desktop-26-study.png')
 SCENES.insert(SCENES.index('desktop-10-users.png') + 1, 'desktop-10-users-signin.png')
+# v2.6: the Profile page (the account section moved there from Settings)
+SCENES.insert(SCENES.index('desktop-26-study.png') + 1, 'desktop-27-profile.png')
+SCENES.append('iphone-10-profile.png')
 
 BROWSER_LANG = {'en': 'en-US', 'zh-CN': 'zh-CN', 'ja': 'ja'}
 UI_LANG = {'en': 'en', 'zh-CN': 'zh', 'ja': 'ja'}          # the uiLang / questionLang setting
@@ -682,9 +693,9 @@ JS_AI_TABS = r"""((expected) => {
 JS_AI_SAFETY = r"""(() => {
   const bad = [];
   const groups = window.__qa('.ais-subgroup').map(g => (g.querySelector('.ais-h3')?.innerText || '').replace(/\s+/g, ' ').trim());
-  if (groups.length < 5) bad.push(groups.length + ' limit sub-groups (v1.3: the caps, chat, study, summary, generation, import, the server protection expected)');
-  if (!document.getElementById('ais-g-calls')) bad.push('no request caps group');
-  if (!document.getElementById('ais-g-server')) bad.push('no server protection group');
+  // v1.9 split the limits into sub-tabs (ais-subtabs): the open sub-tab shows its own group(s) only
+  if (groups.length < 1) bad.push('no limit group on the open AI safety sub-tab');
+  if (!document.querySelector('.ais-subtabs')) bad.push('no AI safety sub-tabs');
   return [bad, groups];
 })()"""
 
@@ -974,11 +985,106 @@ def _show_sign_in_places(base, cookie):
         password = seed.DEMO_PASSWORD
         req = urllib.request.Request(
             base + '/api/auth/login', method='POST',
-            data=json.dumps({'username': name, 'password': password}).encode(),
+            data=json.dumps({'username': seed.login_of(name), 'password': password}).encode(),
             headers={'Content-Type': 'application/json', 'Origin': base, 'X-Real-IP': ip, 'X-Geo-Country': country,
                      'X-Geo-Region': region, 'X-Geo-City': city,
                      'User-Agent': IPHONE_UA if name == 'alex' else DESKTOP_UA})
         urllib.request.urlopen(req, timeout=60).read()
+
+
+# v2.6: the Home AI card shows the saved AI study assessment. So that every image shows a fixed sample text without an AI call,
+# the scenes answer GET /api/ai/assess/latest in the page itself with this made-up sample text of the UI language (nothing
+# is written to any database); the opened card then shows the text, its date and the Update button.
+ASSESS_SAMPLE = {
+    'en': ('You answered a good number of questions in the last weeks and most of them were right, so your accuracy is steady. '
+           'Short sessions on several days will help you more than one long session. Use the next days to practise the '
+           'questions you missed most often and look at the wrong-answer notebook once. Try one timed exam at the end of the week.'),
+    'zh': ('最近几周你做了不少题，大部分都答对了，正确率比较稳定。分几天做短时间练习，比一次学很久更有效。'
+           '接下来几天先把错得最多的题再练一遍，并翻一翻错题本。周末再安排一次限时考试试试。'),
+    'ja': ('ここ数週間でたくさんの問題に取り組み、ほとんど正解できていて、正答率は安定しています。'
+           '長時間まとめて学ぶより、数日に分けて短く学ぶほうが効果的です。これからの数日は、よく間違える問題を中心に練習し、'
+           '間違いノートも一度見直しましょう。週末に時間を決めた模擬試験を一度受けてみてください。'),
+}
+
+
+def _assess_stub_js(code):
+    payload = {'assess': {'text': ASSESS_SAMPLE[code], 'day': '2026-11-21', 'createdAt': None, 'latestAt': '2026-11-21 09:30',
+                          'records': 12, 'answered': 180, 'model': None},
+               'today': '2026-11-22', 'perDay': None, 'remaining': None, 'running': False}
+    return ("(() => { const real = window.fetch.bind(window); const body = JSON.stringify(%s); "
+            "window.fetch = (u, o) => { const url = typeof u === 'string' ? u : (u && u.url) || ''; "
+            "if (url.indexOf('/api/ai/assess/latest') >= 0) return Promise.resolve(new Response(body, {status: 200, "
+            "headers: {'Content-Type': 'application/json'}})); return real(u, o); }; })();" % json.dumps(payload))
+
+
+def _with_assess_stub(s, code, scene):
+    """Runs scene() with the made-up assessment text installed in every page the browser loads meanwhile."""
+    ident = s.cdp.call('Page.addScriptToEvaluateOnNewDocument', source=_assess_stub_js(code))['identifier']
+    try:
+        scene()
+    finally:
+        s.cdp.call('Page.removeScriptToEvaluateOnNewDocument', identifier=ident)
+
+
+# The Home checks shared by the desktop and the phone image: hand mode on, no sideways scroll, hero tile, the order of the
+# blocks (tiles, leaderboard, most missed, the AI card last), the leaderboard line chart with at least one point, the
+# most-missed board with five points, no @ in a leaderboard label, at least five small tiles, and the AI card folded on arrival.
+# Then place 1 of the most-missed board is tapped (its question shows under the board) and the AI card is opened (its text
+# and Update button show).
+JS_HOME_CHECK = """(() => { const bad = []; const de = document.documentElement;
+  if (!de.hasAttribute('data-hand')) bad.push('hand mode is not on by default');
+  if (de.scrollWidth > de.clientWidth + 1) bad.push('the page scrolls horizontally');
+  if (!document.querySelector('.dash-hero')) bad.push('no hero tile');
+  const top = (s) => { const e = document.querySelector(s); return e ? e.getBoundingClientRect().top : null; };
+  const ys = ['.dash-hero', '.dash-row', '.dash-rank', '.dash-wrong', '.dash-ai'].map(top);
+  if (ys.some(y => y === null) || ys.some((y, i) => i && y < ys[i - 1])) bad.push('the blocks are not in the order hero, tiles, leaderboard, most missed, AI card');
+  const pts = [...document.querySelectorAll('.dash-rank .dash-pt')];
+  if (pts.length < 1) bad.push('the leaderboard chart has no points');
+  if (pts.some(e => (e.getAttribute('aria-label') || '').includes('@'))) bad.push('an @ in a leaderboard label');
+  const wrong = document.querySelectorAll('.dash-wrong .dash-pt').length; if (wrong !== 5) bad.push('the most-missed board has ' + wrong + ' places, want 5');
+  const row = document.querySelector('.dash-row'); const n = row ? row.querySelectorAll('.dash-tile').length : 0;
+  if (n < 5) bad.push('only ' + n + ' small tiles for the administrator');
+  const tog = document.querySelector('.dash-ai-toggle');
+  if (!tog) bad.push('the AI card has no toggle');
+  else if (tog.getAttribute('aria-expanded') !== 'false') bad.push('the AI card is not folded on arrival');
+  const first = document.querySelector('.dash-wrong .dash-pt-1'); if (first) first.click();
+  if (tog) tog.click();
+  const cap = document.querySelector('.dash-ai');
+  if (!cap || !(cap.querySelector('.dash-ai-text') || {textContent: ''}).textContent.trim()) bad.push('no assessment card with a text');
+  else if (cap.querySelector('.dash-ai-body').hidden) bad.push('the AI card did not open');
+  if (cap && !cap.querySelector('.dash-ai-btn, .aip-sum-btn')) bad.push('the AI card has no button');
+  return bad; })()"""
+
+# Six tiles (the administrator with AI) are 3 per row; four are 2 x 2 up to 480 px; on a wide screen one row is fine too
+JS_TILES_GRID = """(() => { const t = [...document.querySelectorAll('.dash-row .dash-tile')]; const n = t.length;
+  const r = e => e.getBoundingClientRect();
+  const tops = new Set(t.map(e => Math.round(r(e).top))).size, lefts = new Set(t.map(e => Math.round(r(e).left))).size;
+  const want = n >= 5 ? [Math.ceil(n / 3), 3] : (n === 4 && innerWidth <= 480) ? [2, 2] : [1, n];
+  return tops === want[0] && lefts === want[1] ? [] : [n + ' tiles in ' + tops + ' rows x ' + lefts + ' columns, want ' + want[0] + ' x ' + want[1]]; })()"""
+
+JS_PROFILE_CHECK = """(() => { const bad = []; const de = document.documentElement;
+  if (!document.querySelector('.page-profile')) bad.push('no Profile page');
+  if (!document.querySelector('#pf-name')) bad.push('no username field');
+  if (!document.querySelector('#pf-pw-toggle')) bad.push('no Change password row');
+  if (de.scrollWidth > de.clientWidth + 1) bad.push('the page scrolls horizontally');
+  const small = [...document.querySelectorAll('.page-profile button, .page-profile input:not(.sr-only)')]
+    .filter(e => e.getClientRects().length && e.getBoundingClientRect().height < %d);
+  if (small.length) bad.push(small.length + ' controls under %d px');
+  if (!((document.querySelector('.pf-login') || {}).textContent || '').includes('@')) bad.push('the login is not an e-mail');
+  return bad; })()"""
+
+
+def _as_sam(s, base, cookie, code, scene):
+    """Runs scene() signed in as sam (an e-mail login) and puts the administrator's cookie back afterwards: the fresh-install
+    administrator logs in as "admin", which is not an e-mail, so the Profile images are taken as sam."""
+    sam = seed.Session(base).sign_in('sam', seed.DEMO_PASSWORD).cookie[seed.COOKIE]
+    s.cdp.call('Network.setCookie', name=seed.COOKIE, value=sam, url=base + '/', httpOnly=True, sameSite='Strict')
+    try:
+        s.nav()
+        s.js(JS_SETUP + "(%s, 'light')" % json.dumps(code))      # sam's own language setting follows the run
+        scene()
+    finally:
+        s.cdp.call('Network.setCookie', name=seed.COOKIE, value=cookie, url=base + '/', httpOnly=True, sameSite='Strict')
 
 
 def _desktop_scenes(s, base, cookie, code, upload, with_log):
@@ -1042,13 +1148,13 @@ def _desktop_scenes(s, base, cookie, code, upload, with_log):
     s.js(JS_TICK_ALL)
     s.page('desktop-26-study.png', cap=1500)
     if s.wanted('desktop-1-home.png'):
-        # the dashboard, with the saved exam as its resume card; no sideways scroll, no @ in the ranking names
-        s.nav('#/', settle=2.8)
-        _expect(s.js("(() => { const bad = []; const de = document.documentElement; if (de.scrollWidth > de.clientWidth + 1) bad.push('the page scrolls horizontally'); "
-                     "if (!document.querySelector('.dash-hero')) bad.push('no hero tile'); "
-                     "if ([...document.querySelectorAll('.dash-name')].some(e => e.textContent.includes('@'))) bad.push('an @ in a ranking name'); return bad; })()"),
-                'the Home dashboard')
-        s.page('desktop-1-home.png', cap=1500)
+        # the dashboard, with the saved exam as its resume card, the line chart, the most-missed board (place 1 tapped) and the opened AI card
+        def home():
+            s.nav('#/', settle=2.8)
+            _expect(s.js(JS_HOME_CHECK), 'the Home dashboard')
+            time.sleep(0.4)
+            s.page('desktop-1-home.png', cap=2600)
+        _with_assess_stub(s, code, home)
     if s.wanted('desktop-5-banks.png'):
         s.nav('#/banks')
         print('  banks:', s.js(JS_UPDATE))
@@ -1063,7 +1169,17 @@ def _desktop_scenes(s, base, cookie, code, upload, with_log):
         s.page('desktop-5-banks.png', fixed=bottom + 24)
         s.js("fetch('/api/import/cancel', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'}).then(r => r.status)")
     s.nav('#/settings')
+    _expect(s.js("(() => { const bad = []; if (document.querySelector('.set-username, .set-pw')) bad.push('Settings still has an account section'); "
+                 "if (!document.querySelector('.page-settings')) bad.push('no Settings page'); return bad; })()"),
+            'Settings without the account section')
     s.page('desktop-6-settings.png', cap=1800)
+    if s.wanted('desktop-27-profile.png'):
+        def profile():
+            s.nav('#/profile', settle=2.0)
+            _expect(s.js(JS_PROFILE_CHECK % (1, 1)), 'the Profile page')
+            s.page('desktop-27-profile.png', cap=1100)
+        _as_sam(s, base, cookie, code, profile)
+        s.nav()
     users_images = ('desktop-10-users.png', 'desktop-10-users-signin.png')
     if any(s.wanted(n) for n in users_images):
         _show_sign_in_places(base, cookie)       # the eye is open for these images: made-up addresses and places
@@ -1323,10 +1439,15 @@ def _phone_scenes(s, base, cookie, code):
     s.js(JS_TICK_ALL)
     s.phone('iphone-9-study.png')
     if s.wanted('iphone-1-home.png'):
-        s.nav('#/', settle=2.8)
-        _expect(s.js("(() => { const bad = []; const de = document.documentElement; if (de.scrollWidth > de.clientWidth + 1) bad.push('the page scrolls horizontally'); "
-                     "if (!document.querySelector('.dash-hero')) bad.push('no hero tile'); return bad; })()"), 'the Home dashboard on a phone')
-        s.phone('iphone-1-home.png')
+        def phone_home():
+            s.nav('#/', settle=2.8)
+            _expect(s.js(JS_HOME_CHECK), 'the Home dashboard on a phone')
+            _expect(s.js(JS_TILES_GRID), 'the small tiles on a phone')
+            time.sleep(0.4)
+            # the whole page down to the end of the opened AI card in one tall image (the viewport alone would stop above the board)
+            low = s.js("Math.ceil(document.querySelector('.dash-ai').getBoundingClientRect().bottom + scrollY + 24)")
+            s.png('iphone-1-home.png', PHONE_W, min(2400, max(PHONE_H, int(low or 0))), True)
+        _with_assess_stub(s, code, phone_home)
         s.nav()
     s.js(JS_RESUME)
     if s.wanted('iphone-2-quiz.png'):
@@ -1336,6 +1457,13 @@ def _phone_scenes(s, base, cookie, code):
     s.nav('#/records')
     s.js("(async () => { document.querySelector('.menu-btn').click(); await window.__wait(450); return 'menu' })()")
     s.phone('iphone-3-menu.png')
+    if s.wanted('iphone-10-profile.png'):
+        def profile():
+            s.nav('#/profile', settle=2.0)
+            _expect(s.js(JS_PROFILE_CHECK % (44, 44)), 'the Profile page on a phone')
+            s.phone('iphone-10-profile.png')
+        _as_sam(s, base, cookie, code, profile)
+        s.nav('#/records')
     s.nav('#/records')
     if s.wanted('iphone-4-records.png'):
         s.metrics(360, PHONE_H, True)

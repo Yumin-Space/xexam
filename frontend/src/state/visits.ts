@@ -1,7 +1,7 @@
 // The page-visit report (v1.3, activity log): which route change is reported. Pure; state/actions.ts sends it.
 import type { VisitPage } from '../types/api.ts';
 
-const PAGES: readonly string[] = ['home', 'study', 'banks', 'users', 'logs', 'records', 'record', 'wrong', 'settings', 'about', 'quiz', 'result', 'ai', 'aiSettings'];
+const PAGES: readonly string[] = ['home', 'study', 'banks', 'users', 'logs', 'records', 'record', 'wrong', 'settings', 'profile', 'about', 'quiz', 'result', 'ai', 'aiSettings'];
 
 /**
  * The page to report for a move from route `from` (null = the page was just opened) to route `to`, or null for nothing: only

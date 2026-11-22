@@ -1,0 +1,51 @@
+/* Profile page (v2.6): the account, the username (edited in place) and the collapsed "Change password" row. It reuses the
+   section look of Settings (settings.css); the password rules moved here from there. Colour tokens only (see main.css). */
+
+/* Centred like the other narrow pages (the main column is wider than the page) */
+.page-profile { max-width: var(--page-narrow, 880px); margin-inline: auto; }
+
+/* ---------- Username: the field and its Save button side by side, stacked on a phone ---------- */
+.pf-name-row { display: flex; align-items: flex-start; gap: 12px; }
+.pf-name-row .fld { flex: 1 1 auto; min-width: 0; max-width: 28em; }
+.pf-name-save { flex: none; margin-top: 22px; min-height: 40px; }
+.pf-name-err { margin: 12px 0 0; font-size: 14px; }
+.pf-name-err p { margin: 0; }
+.pf-login { overflow-wrap: anywhere; }
+@media (max-width: 480px) {
+  .pf-name-row { flex-direction: column; align-items: stretch; }
+  .pf-name-row .fld { max-width: none; }
+  .pf-name-save { margin-top: 0; width: 100%; min-height: 44px; }
+}
+@media (pointer: coarse) { .pf-name-save { min-height: 44px; } }
+
+/* ---------- Account: username and role, then "Change password" under a hairline ---------- */
+.set-props { margin-bottom: 20px; }
+/* The role and, for a bank manager, the "Bank manager" tag with a line on what it allows (v0.7) */
+.set-role { display: flex; flex-wrap: wrap; gap: 4px; }
+.set-manager { margin-top: -8px; }
+.set-username { font-weight: 600; }
+.set-pw h3 { margin-bottom: 4px; font-size: 15px; font-weight: 600; }
+.set-pw-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 16px; align-items: start; margin-bottom: 16px; }
+.set-pw .err, .set-pw .callout { margin: 0 0 16px; font-size: 14px; }
+.set-pw .callout p, .set-pw .err p { margin: 0; }
+.set-pw-done:focus { outline: none; }
+@media (max-width: 720px) {
+  .set-pw-grid { grid-template-columns: minmax(0, 1fr); max-width: 420px; }
+}
+
+/* ST-1: "Change password >" is one 44 px row; the fields open in place */
+.set-pw-h { margin: 0; font-size: 15px; font-weight: 600; }
+.set-pw-toggle {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; width: calc(100% + 24px); min-height: 44px; margin: 0 -12px;
+  padding: 8px 12px; border: 0; border-radius: 8px; background: transparent; color: var(--ink); font: inherit; font-size: 15px; font-weight: 600;
+  text-align: left; cursor: pointer; transition: background-color .12s ease;
+}
+@media (hover: hover) { .set-pw-toggle:hover { background: var(--hover); } }
+.set-pw-toggle:focus-visible { outline: 2px solid var(--print); outline-offset: -2px; }
+.set-pw-chev { width: 16px; height: 16px; flex: none; color: var(--ink3); transition: transform .12s ease; }
+.set-pw-toggle[aria-expanded="true"] .set-pw-chev { transform: rotate(90deg); }
+.set-pw-form { margin-top: 8px; }
+.set-pw-form[hidden] { display: none; }
+.set-pw > .callout { margin: 8px 0 4px; }
+
+@media (prefers-reduced-motion: reduce) { .set-pw-toggle, .set-pw-chev { transition: none; } }

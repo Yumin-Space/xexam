@@ -14,10 +14,12 @@ const ready = (o: Record<string, unknown> = {}): AiStatus => ({
 
 const ctx = (o: Partial<ControlContext> = {}): ControlContext => ({ role: 'user', service: true, canManageBanks: true, status: ready(), ...o });
 
-test('six keys in FP-1 order, grouped as the table shows them', () => {
-  assert.deepEqual([...FEATURE_KEYS], ['chat', 'hint', 'explain', 'summary', 'generate', 'import']);
+test('seven keys in FP-1 order, grouped as the table shows them', () => {
+  assert.deepEqual([...FEATURE_KEYS], ['chat', 'hint', 'explain', 'summary', 'assess', 'generate', 'import']);
   // one box / switch per entry: hint + analysis is one item (under `hint`) that writes both keys
-  assert.deepEqual([...FEATURE_GROUPS.main, ...FEATURE_GROUPS.banks], ['chat', 'hint', 'summary', 'generate', 'import']);
+  assert.deepEqual([...FEATURE_GROUPS.main, ...FEATURE_GROUPS.banks], ['chat', 'hint', 'summary', 'assess', 'generate', 'import']);
+  // the assessment box follows the summary box
+  assert.equal(FEATURE_GROUPS.main.indexOf('assess'), FEATURE_GROUPS.main.indexOf('summary') + 1);
   assert.deepEqual([...FEATURE_GROUPS.main, ...FEATURE_GROUPS.banks].flatMap((k) => [...pairedKeys(k)]), [...FEATURE_KEYS]);
 });
 
@@ -37,6 +39,8 @@ test('hint and analysis are one item: one label, both keys written together', ()
   assert.equal(featureLabelKey('hint'), 'ai.feature.study');
   assert.equal(featureLabelKey('hint', true), 'ai.feature.study.short');
   assert.equal(featureLabelKey('summary'), 'ai.feature.summary');
+  assert.equal(featureLabelKey('assess'), 'ai.feature.assess');
+  assert.equal(featureLabelKey('assess', true), 'ai.feature.assess.short');
   assert.equal(featureLabelKey('import', true), 'ai.feature.import.short');
   assert.deepEqual(offLabelKeys(['chat', 'hint', 'explain', 'import']), ['ai.feature.chat', 'ai.feature.study', 'ai.feature.import']);
   assert.deepEqual(offLabelKeys(['hint']), ['ai.feature.hint']);

@@ -80,8 +80,8 @@ pub use system_settings::{
     MAX_RETENTION_DAYS, MIN_RETENTION_DAYS, SIGNIN_INFO,
 };
 pub use users::{
-    ActiveFacts, AiUserRow, EndedSession, NewSession, Place, SessionRow, SessionUser, SigninInfo,
-    Touch, UpdatedUser, UserChange, UserRow, UserUpdate,
+    ActiveFacts, AiUserRow, EndedSession, NewSession, PasswordChange, Place, SessionRow,
+    SessionUser, SigninInfo, Touch, UpdatedUser, UserChange, UserRow, UserUpdate,
 };
 
 /// One bank whose old-layout questions [`Store::retire_old_layout_questions`] retired.

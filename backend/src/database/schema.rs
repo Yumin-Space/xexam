@@ -44,8 +44,12 @@
 //!   tables are dropped. No column, type, default or CHECK changes. See `store::migrate` and docs/en/database.md.
 //!   Deliberately NOT linked (records outlive their questions; audit snapshots): `attempt_items.question_id`,
 //!   `user_stats.question_id`, `activity_log.user_id`, `system_settings.updated_by`.
+//! - Schema v12 (v2.6) adds one nullable column to `users` and one index (`V12_COLUMNS`, `V12_DISPLAY_NAME_INDEX`): the
+//!   public display name (`users.display_name`, NULL = not chosen yet; existing users keep NULL and are asked for one at
+//!   their next sign-in). Names are unique case-insensitively among the set ones; `users.username` stays the login. A v2.5
+//!   binary opens a v12 file unchanged (its inserts leave the column NULL).
 
-pub const SCHEMA_VERSION: &str = "11";
+pub const SCHEMA_VERSION: &str = "12";
 
 pub const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS meta (
@@ -487,3 +491,12 @@ CREATE INDEX IF NOT EXISTS idx_attempts_session ON attempts(user_id, session_key
 /// warning (see `store::migrate`); the every-open check creates it later once the duplicates are gone.
 pub const V11_USERS_UID_INDEX: &str =
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_uid ON users(uid) WHERE uid <> ''";
+
+/// Columns added by schema v12 (same rules as [`V2_COLUMNS`]).
+pub const V12_COLUMNS: [(&str, &str, &str); 1] = [
+    // The public display name (leaderboard, greeting, menu). NULL = not chosen yet; an empty string is never stored.
+    ("users", "display_name", "display_name TEXT"),
+];
+
+/// Unique, case-insensitive display names (set ones only). Created after the column, idempotent.
+pub const V12_DISPLAY_NAME_INDEX: &str = "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_display_name ON users(display_name COLLATE NOCASE) WHERE display_name IS NOT NULL";

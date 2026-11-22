@@ -103,6 +103,33 @@ fn split_study_slot(c: &Connection, now: i64) -> rusqlite::Result<()> {
     Ok(())
 }
 
+/// v2.6, on every open: the `assess` model slot (the table is rebuilt once, the new slot copies the `summary` row) and the
+/// v2.6 columns. The `limits` row of an existing file gets the column defaults (3 per day, administrators exempt).
+fn add_assess_slot(c: &Connection, now: i64) -> rusqlite::Result<()> {
+    add_columns(c, &schema::V26_COLUMNS)?;
+    let old: bool = c.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'model_slots' AND sql NOT LIKE '%assess%')",
+        [],
+        |r| r.get(0),
+    )?;
+    if old {
+        c.execute_batch(&format!(
+            "BEGIN; ALTER TABLE model_slots RENAME TO model_slots_v9; {};
+             INSERT INTO model_slots (slot, model_id, updated_at, updated_by, effort)
+               SELECT slot, model_id, updated_at, updated_by, effort FROM model_slots_v9;
+             INSERT INTO model_slots (slot, model_id, updated_at, updated_by, effort)
+               SELECT 'assess', model_id, {now}, updated_by, effort FROM model_slots_v9 WHERE slot = 'summary';
+             DROP TABLE model_slots_v9; COMMIT;",
+            schema::V26_MODEL_SLOTS
+        ))?;
+    }
+    c.execute(
+        "INSERT OR IGNORE INTO model_slots (slot, model_id, updated_at) VALUES ('assess', NULL, ?1)",
+        [now],
+    )?;
+    Ok(())
+}
+
 /// Adds the listed columns that the tables lack (the same step for new and upgraded databases).
 fn add_columns(c: &Connection, cols: &[(&str, &str, &str)]) -> rusqlite::Result<()> {
     for (table, column, def) in cols {
@@ -711,6 +738,11 @@ impl Store {
                 ));
             }
         }
+        // v2.6: the latest-assessment table, added on every open (idempotent, no version change)
+        conn.execute_batch(schema::ASSESS_LATEST_TABLE)
+            .map_err(|e| format!("cannot upgrade the AI database {{path}}: {e}"))?;
+        add_assess_slot(&conn, crate::util::unix_now())
+            .map_err(|e| format!("cannot upgrade the AI database {{path}}: {e}"))?;
         // A-OWNER-48: the two "unlimited" switches default to on. A schema-6 file written before that keeps its stored 0 until
         // this one-time step (after a backup copy) moves it; every other path already has the new column default.
         let flagged: bool = conn

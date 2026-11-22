@@ -1,4 +1,4 @@
-//! v2.5: `GET /api/dashboard` (leaderboard + most practised). Made-up users, banks and questions only; e-mail-shaped sample
+//! `GET /api/dashboard` (leaderboard + most missed, v2.6 shapes). Made-up users, banks and questions only; e-mail-shaped sample
 //! names use the reserved `example.invalid` domain.
 #[path = "api_common/mod.rs"]
 mod apic;
@@ -18,7 +18,7 @@ use xexam_backend::auth::{self, Role};
 use xexam_backend::database::{FixedClock, FnClock, Store, UserChange};
 use xexam_backend::logs::LogBuffer;
 use xexam_backend::models::{
-    Answer, Attempt, AttemptKind, AttemptResult, BankAccess, Kind, Question,
+    Answer, Attempt, AttemptKind, AttemptResult, BankAccess, Kind, Question, Viewer,
 };
 use xexam_backend::services::RealEngine;
 
@@ -120,6 +120,9 @@ fn user(a: &App, name: &str) -> Who {
 }
 
 fn admin(a: &App) -> Who {
+    raw(&a.db)
+        .execute("UPDATE users SET display_name='Admin' WHERE id=1", [])
+        .expect("name the admin");
     Who {
         id: 1,
         cookie: start(a, 1, true),
@@ -140,7 +143,14 @@ async fn dash(a: &App, cookie: &str) -> Resp {
     .await
 }
 
+/// Signed-in users without a display name are gated (v2.6), so a viewer gets a name `V<id>` first if it has none.
 async fn dash_json(a: &App, w: &Who) -> Value {
+    raw(&a.db)
+        .execute(
+            "UPDATE users SET display_name='V'||id WHERE id=?1 AND display_name IS NULL",
+            params![w.id],
+        )
+        .expect("name the viewer");
     let r = dash(a, &w.cookie).await;
     assert_eq!(r.status, 200, "{}", r.text());
     r.json()
@@ -235,6 +245,23 @@ fn put_record(c: &Connection, user: i64, at: &str, items: &[(&str, bool, bool)])
     }
 }
 
+/// One `user_stats` row of a real question: `attempts` answers, `correct` right ones, the rest wrong.
+fn put_qstat(c: &Connection, user: i64, qid: &str, attempts: i64, correct: i64) {
+    c.execute(
+        "INSERT INTO user_stats(user_id, question_id, attempts, correct, wrong, streak) VALUES(?1, ?2, ?3, ?4, ?5, 0)",
+        params![user, qid, attempts, correct, attempts - correct],
+    )
+    .expect("stats");
+}
+
+fn set_display(c: &Connection, user: i64, name: &str) {
+    c.execute(
+        "UPDATE users SET display_name=?1 WHERE id=?2",
+        params![name, user],
+    )
+    .expect("display name");
+}
+
 fn names(j: &Value) -> Vec<String> {
     j["ranking"]["top"]
         .as_array()
@@ -244,8 +271,8 @@ fn names(j: &Value) -> Vec<String> {
         .collect()
 }
 
-fn popular_ids(j: &Value) -> Vec<String> {
-    j["popular"]["items"]
+fn wrong_ids(j: &Value) -> Vec<String> {
+    j["wrongTop"]["items"]
         .as_array()
         .expect("items")
         .iter()
@@ -260,18 +287,16 @@ async fn empty_install_has_the_exact_shape() {
     let a = app();
     let adm = admin(&a);
     let j = dash_json(&a, &adm).await;
-    assert_eq!(keys(&j), ["popular", "ranking"]);
+    assert_eq!(keys(&j), ["ranking", "wrongTop"]);
     assert_eq!(keys(&j["ranking"]), ["me", "top", "users"]);
     assert_eq!(keys(&j["ranking"]["me"]), ["answered", "correct", "rank"]);
-    assert_eq!(keys(&j["popular"]), ["days", "items", "since"]);
+    assert_eq!(keys(&j["wrongTop"]), ["items"]);
     assert_eq!(j["ranking"]["top"], json!([]));
     assert_eq!(j["ranking"]["users"], json!(0));
     assert_eq!(j["ranking"]["me"]["rank"], Value::Null);
     assert_eq!(j["ranking"]["me"]["answered"], json!(0));
     assert_eq!(j["ranking"]["me"]["correct"], json!(0));
-    assert_eq!(j["popular"]["items"], json!([]));
-    assert_eq!(j["popular"]["days"], json!(30));
-    assert_eq!(j["popular"]["since"], json!("2026-10-23 14:05"));
+    assert_eq!(j["wrongTop"]["items"], json!([]));
 }
 
 #[tokio::test]
@@ -281,16 +306,15 @@ async fn entries_have_the_exact_keys_and_need_a_session() {
     let c = raw(&a.db);
     let bank = put_bank(&c, "Sample bank");
     put_q(&c, "q1", Some(bank), true, 1);
-    put_stats(&c, adm.id, 10, 7);
-    put_record(&c, adm.id, "2026-11-20 10:00", &[("q1", true, true)]);
+    put_qstat(&c, adm.id, "q1", 4, 1);
     let j = dash_json(&a, &adm).await;
     assert_eq!(
         keys(&j["ranking"]["top"][0]),
         ["answered", "correct", "name", "rank", "self"]
     );
     assert_eq!(
-        keys(&j["popular"]["items"][0]),
-        ["bankId", "correct", "questionId", "times"]
+        keys(&j["wrongTop"]["items"][0]),
+        ["attempts", "bankId", "questionId", "wrong"]
     );
     let r = send(
         &a.router,
@@ -341,40 +365,49 @@ async fn disabled_and_unanswered_users_are_not_ranked() {
 }
 
 #[tokio::test]
-async fn names_are_masked_for_everyone_and_domains_never_leave() {
+async fn names_prefer_the_display_name_and_mask_only_the_fallback() {
     let a = app();
     let adm = admin(&a);
     let e1 = user(&a, "alice@example.invalid");
     let e2 = user(&a, "bo@example.invalid");
+    let e3 = user(&a, "dana@example.invalid");
     let plain = user(&a, "carol");
     let c = raw(&a.db);
     put_stats(&c, e1.id, 30, 30);
     put_stats(&c, e2.id, 20, 20);
+    put_stats(&c, e3.id, 15, 15);
     put_stats(&c, plain.id, 10, 10);
+    // e3 chose a public name; the rest have none yet (NULL)
+    set_display(&c, e3.id, "Dana the Brave");
     for viewer in [&adm, &plain] {
-        let r = dash(&a, &viewer.cookie).await;
-        assert_eq!(r.status, 200);
-        let text = r.text();
+        let j = dash_json(&a, viewer).await;
+        let text = j.to_string();
         assert!(
             !text.contains("example") && !text.contains("invalid"),
             "{text}"
         );
-        assert!(!text.contains('@'), "{text}");
-        let j = r.json();
         let top = &j["ranking"]["top"];
         assert_eq!(top[0]["name"], json!("a***e"));
         assert_eq!(top[1]["name"], json!("b***"));
-        assert_eq!(top[2]["name"], json!("carol"));
-        assert_eq!(top[2]["self"], json!(viewer.id == plain.id));
+        assert_eq!(top[2]["name"], json!("Dana the Brave"));
     }
-    // the e-mail user sees their own full name, and only that row says self
-    let r = dash_json(&a, &e1).await;
+    // a viewer without a display name (only reachable through the store, the gate stops the session) sees their own
+    // full login, others masked
+    let own = a.store.dashboard_as(&Viewer::admin(e1.id)).expect("own");
     assert_eq!(
-        r["ranking"]["top"][0]["name"],
+        own["ranking"]["top"][0]["name"],
         json!("alice@example.invalid")
     );
-    assert_eq!(r["ranking"]["top"][0]["self"], json!(true));
-    assert_eq!(r["ranking"]["top"][1]["self"], json!(false));
+    assert_eq!(own["ranking"]["top"][0]["self"], json!(true));
+    assert_eq!(own["ranking"]["top"][1]["self"], json!(false));
+    assert_eq!(own["ranking"]["top"][1]["name"], json!("b***"));
+    // with a display name the own row shows it, never the login; others see it unmasked too
+    set_display(&c, e1.id, "Ali");
+    let own = a.store.dashboard_as(&Viewer::admin(e1.id)).expect("own");
+    assert_eq!(own["ranking"]["top"][0]["name"], json!("Ali"));
+    assert!(!own.to_string().contains("example"), "{own}");
+    let r = dash_json(&a, &plain).await;
+    assert_eq!(r["ranking"]["top"][0]["name"], json!("Ali"));
 }
 
 #[tokio::test]
@@ -398,7 +431,7 @@ async fn me_is_reported_when_outside_the_top_three() {
 }
 
 #[tokio::test]
-async fn unanswered_items_count_in_neither_block() {
+async fn unanswered_items_never_count() {
     let a = app();
     let w = user(&a, "una");
     let c = raw(&a.db);
@@ -406,23 +439,22 @@ async fn unanswered_items_count_in_neither_block() {
     grant(&c, w.id, bank);
     put_q(&c, "q1", Some(bank), true, 1);
     put_q(&c, "q2", Some(bank), true, 2);
-    // q1 answered wrong, q2 unanswered (answer NULL, correct 0)
+    // q1 answered wrong, q2 unanswered in an exam (answer NULL, correct 0): user_stats has no q2 row
     put_record(
         &c,
         w.id,
         "2026-11-21 09:00",
         &[("q1", true, false), ("q2", false, false)],
     );
-    // user_stats counts only answered items by construction
-    put_stats(&c, w.id, 1, 0);
+    put_qstat(&c, w.id, "q1", 1, 0);
     let j = dash_json(&a, &w).await;
-    assert_eq!(popular_ids(&j), ["q1"]);
-    assert_eq!(j["popular"]["items"][0]["times"], json!(1));
-    assert_eq!(j["ranking"]["me"]["answered"], json!(1));
+    assert_eq!(wrong_ids(&j), ["q1"]);
+    assert_eq!(j["wrongTop"]["items"][0]["wrong"], json!(1));
+    assert_eq!(j["wrongTop"]["items"][0]["attempts"], json!(1));
 }
 
 #[tokio::test]
-async fn reset_removes_the_user_and_pruning_keeps_the_ranking() {
+async fn pruning_keeps_the_ranking_and_reset_clears_both_lists() {
     // a ticking clock, one new minute per call
     let n = Arc::new(AtomicUsize::new(0));
     let a = app_with(Arc::new(FnClock(move || {
@@ -434,16 +466,17 @@ async fn reset_removes_the_user_and_pruning_keeps_the_ranking() {
     {
         let c = raw(&a.db);
         let bank = put_bank(&c, "Sample bank");
+        grant(&c, w.id, bank);
         put_q(&c, "q1", Some(bank), true, 1);
     }
-    for _ in 0..501 {
+    for i in 0..501 {
         a.store
             .record_attempt(
                 w.id,
                 &Attempt {
                     results: vec![AttemptResult {
                         id: "q1".into(),
-                        correct: true,
+                        correct: i % 3 != 0,
                     }],
                     sheets: vec!["S".into()],
                     mode: "all".into(),
@@ -467,7 +500,11 @@ async fn reset_removes_the_user_and_pruning_keeps_the_ranking() {
     let j = dash_json(&a, &other).await;
     assert_eq!(names(&j), ["rita"]);
     assert_eq!(j["ranking"]["top"][0]["answered"], json!(501));
-    assert_eq!(j["ranking"]["top"][0]["correct"], json!(501));
+    // the wrong counts come from user_stats, so pruning does not lose them
+    let j = dash_json(&a, &w).await;
+    assert_eq!(wrong_ids(&j), ["q1"]);
+    assert_eq!(j["wrongTop"]["items"][0]["wrong"], json!(167));
+    assert_eq!(j["wrongTop"]["items"][0]["attempts"], json!(501));
     // reset
     let text = json!({}).to_string();
     let len = text.len().to_string();
@@ -490,27 +527,12 @@ async fn reset_removes_the_user_and_pruning_keeps_the_ranking() {
     assert_eq!(r.status, 200, "{}", r.text());
     let j = dash_json(&a, &other).await;
     assert_eq!(j["ranking"]["top"], json!([]));
-    assert_eq!(j["popular"]["items"], json!([]));
-}
-
-#[tokio::test]
-async fn the_window_is_thirty_days() {
-    let a = app();
-    let w = user(&a, "wanda");
-    let c = raw(&a.db);
-    let bank = put_bank(&c, "Sample bank");
-    grant(&c, w.id, bank);
-    put_q(&c, "old", Some(bank), true, 1);
-    put_q(&c, "new", Some(bank), true, 2);
-    put_record(&c, w.id, "2026-10-22 12:00", &[("old", true, true)]); // 31 days back
-    put_record(&c, w.id, "2026-10-24 12:00", &[("new", true, true)]); // 29 days back
     let j = dash_json(&a, &w).await;
-    assert_eq!(j["popular"]["since"], json!("2026-10-23 14:05"));
-    assert_eq!(popular_ids(&j), ["new"]);
+    assert_eq!(j["wrongTop"]["items"], json!([]));
 }
 
 #[tokio::test]
-async fn most_practised_follows_the_bank_scope() {
+async fn most_missed_follows_the_bank_scope() {
     let a = app();
     let adm = admin(&a);
     let b = user(&a, "bruno");
@@ -520,22 +542,44 @@ async fn most_practised_follows_the_bank_scope() {
     put_q(&c, "one", Some(bank1), true, 1);
     put_q(&c, "two", Some(bank2), true, 2);
     grant(&c, b.id, bank1);
-    // bank 2 is practised most
-    for _ in 0..3 {
-        put_record(&c, adm.id, "2026-11-20 10:00", &[("two", true, true)]);
+    for w in [&adm, &b] {
+        put_qstat(&c, w.id, "two", 6, 1); // missed most, but bank 2 is not bruno's
+        put_qstat(&c, w.id, "one", 3, 2);
     }
-    put_record(&c, adm.id, "2026-11-20 11:00", &[("one", true, true)]);
     let jb = dash_json(&a, &b).await;
-    assert_eq!(popular_ids(&jb), ["one"]);
+    assert_eq!(wrong_ids(&jb), ["one"]);
     assert!(!jb.to_string().contains("two"));
     let ja = dash_json(&a, &adm).await;
-    assert_eq!(popular_ids(&ja), ["two", "one"]);
-    assert_eq!(ja["popular"]["items"][0]["times"], json!(3));
-    assert_eq!(ja["popular"]["items"][0]["bankId"], json!(bank2));
+    assert_eq!(wrong_ids(&ja), ["two", "one"]);
+    assert_eq!(ja["wrongTop"]["items"][0]["wrong"], json!(5));
+    assert_eq!(ja["wrongTop"]["items"][0]["attempts"], json!(6));
+    assert_eq!(ja["wrongTop"]["items"][0]["bankId"], json!(bank2));
 }
 
 #[tokio::test]
-async fn retired_and_orphan_questions_are_excluded() {
+async fn other_users_statistics_never_leak() {
+    let a = app();
+    let me = user(&a, "mia");
+    let other = user(&a, "olli");
+    let c = raw(&a.db);
+    let bank = put_bank(&c, "Sample bank");
+    grant(&c, me.id, bank);
+    grant(&c, other.id, bank);
+    put_q(&c, "mine", Some(bank), true, 1);
+    put_q(&c, "theirs", Some(bank), true, 2);
+    put_qstat(&c, me.id, "mine", 2, 1);
+    put_qstat(&c, other.id, "theirs", 9, 0);
+    put_qstat(&c, other.id, "mine", 9, 0);
+    let j = dash_json(&a, &me).await;
+    assert_eq!(wrong_ids(&j), ["mine"]);
+    assert_eq!(j["wrongTop"]["items"][0]["wrong"], json!(1));
+    assert!(!j["wrongTop"].to_string().contains("theirs"));
+    // no text, no names: only ids and counts
+    assert_eq!(keys(&j["wrongTop"]["items"][0]).len(), 4);
+}
+
+#[tokio::test]
+async fn correct_only_retired_and_orphan_questions_are_excluded() {
     let a = app();
     let w = user(&a, "wren");
     let c = raw(&a.db);
@@ -544,42 +588,39 @@ async fn retired_and_orphan_questions_are_excluded() {
     put_q(&c, "live", Some(bank), true, 1);
     put_q(&c, "retired", Some(bank), false, 2);
     put_q(&c, "orphan", None, true, 3);
-    put_record(
-        &c,
-        w.id,
-        "2026-11-21 09:00",
-        &[
-            ("live", true, true),
-            ("retired", true, true),
-            ("orphan", true, true),
-            ("gone", true, true),
-        ],
-    );
+    put_q(&c, "perfect", Some(bank), true, 4);
+    put_qstat(&c, w.id, "live", 2, 1);
+    put_qstat(&c, w.id, "retired", 2, 0);
+    put_qstat(&c, w.id, "orphan", 2, 0);
+    put_qstat(&c, w.id, "gone", 2, 0);
+    put_qstat(&c, w.id, "perfect", 5, 5);
     let j = dash_json(&a, &w).await;
-    assert_eq!(popular_ids(&j), ["live"]);
+    assert_eq!(wrong_ids(&j), ["live"]);
 }
 
 #[tokio::test]
-async fn ties_are_stable_and_capped_at_three() {
+async fn ordering_ties_are_stable_and_capped_at_five() {
     let a = app();
     let adm = admin(&a);
     let c = raw(&a.db);
     let bank = put_bank(&c, "Sample bank");
-    for i in 1..=5 {
+    let bank2 = put_bank(&c, "Sample two");
+    for i in 1..=7 {
         put_q(&c, &format!("t{i}"), Some(bank), true, i);
     }
-    // every question practised once, correct: the order falls back to bank, then seq
-    for i in (1..=5).rev() {
-        put_record(
-            &c,
-            adm.id,
-            "2026-11-21 09:00",
-            &[(&format!("t{i}"), true, true)],
-        );
-    }
+    put_q(&c, "b2", Some(bank2), true, 1);
+    put_qstat(&c, adm.id, "t1", 4, 1); // wrong 3, correct 1
+    put_qstat(&c, adm.id, "t2", 3, 0); // wrong 3, correct 0: before t1
+    put_qstat(&c, adm.id, "t3", 5, 3); // wrong 2
+    put_qstat(&c, adm.id, "t4", 5, 3); // identical to t3: position order
+    put_qstat(&c, adm.id, "b2", 5, 3); // identical, later bank
+    put_qstat(&c, adm.id, "t5", 2, 1); // wrong 1: cut by the cap of five
+    put_qstat(&c, adm.id, "t6", 3, 2); // wrong 1
+    put_qstat(&c, adm.id, "t7", 3, 3); // no wrong
     for _ in 0..2 {
         let j = dash_json(&a, &adm).await;
-        assert_eq!(popular_ids(&j), ["t1", "t2", "t3"]);
+        assert_eq!(wrong_ids(&j), ["t2", "t1", "t3", "t4", "b2"]);
+        assert_eq!(j["wrongTop"]["items"].as_array().expect("items").len(), 5);
     }
 }
 

@@ -53,10 +53,10 @@ export const fullAt = (at: string): string => at.slice(0, 16);
 /** More users than this get a search field (US-11) */
 export const SEARCH_FROM = 10;
 
-/** The users whose name contains `query` (case-insensitive, trimmed); everyone for an empty query */
-export function filterUsers<T extends { username: string }>(list: readonly T[], query: string): T[] {
+/** The users whose login or display name contains `query` (case-insensitive, trimmed); everyone for an empty query */
+export function filterUsers<T extends { username: string; displayName?: string | null }>(list: readonly T[], query: string): T[] {
   const q = query.trim().toLowerCase();
-  return q ? list.filter((u) => u.username.toLowerCase().includes(q)) : [...list];
+  return q ? list.filter((u) => u.username.toLowerCase().includes(q) || (u.displayName ?? '').toLowerCase().includes(q)) : [...list];
 }
 
 /** The kinds of a row's fact lines (v1.4), in the order they are drawn */

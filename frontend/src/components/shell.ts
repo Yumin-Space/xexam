@@ -4,7 +4,9 @@ import '../styles/shell.css';
 import { shutdownApp } from '../api/import.ts';
 import { joinAccountTip } from '../domain/account-tip.ts';
 import { ownBadgeState } from '../domain/badge-state.ts';
+import { shownName } from '../domain/user-name.ts';
 import { toggledTheme } from '../domain/theme-color.ts';
+import { handMode, toggleHandMode } from './hand-mode.ts';
 import { barStep, initialBar } from '../domain/top-bar.ts';
 import { t, type MsgKey } from '../i18n/index.ts';
 import { routeHash, sectionOf, type NavSection, type Route } from '../router.ts';
@@ -77,6 +79,8 @@ export const ICONS = {
   menu: [{ d: 'M4 7h16' }, { d: 'M4 12h16' }, { d: 'M4 17h16' }],
   about: [{ cx: 12, cy: 12, r: 8.5 }, { d: 'M12 11v5.5' }, { d: 'M12 7.6v.4' }],
   close: [{ d: 'M6 6l12 12' }, { d: 'M18 6 6 18' }],
+  /** v2.6: the wrong-answer notebook (a notebook with a cross) */
+  notebook: [{ d: 'M6 4.5h11.5v15.5H7.5A1.5 1.5 0 0 1 6 18.5Z' }, { d: 'M6 18.5A1.5 1.5 0 0 1 7.5 17h10' }, { d: 'M10 8.2l3.6 3.6' }, { d: 'M13.6 8.2 10 11.8' }],
   user: [{ cx: 12, cy: 8.5, r: 3.8 }, { d: 'M4.8 20c.9-3.6 3.8-5.6 7.2-5.6s6.3 2 7.2 5.6' }],
   users: [{ cx: 9.5, cy: 8.5, r: 3.3 }, { d: 'M3.5 19.5c.7-3.2 3-5 6-5s5.3 1.8 6 5' }, { d: 'M15.3 5.6a3.2 3.2 0 0 1 0 6' }, { d: 'M17.4 14.8c1.7.6 2.8 2.2 3.2 4.7' }],
   signOut: [{ d: 'M14 4.5H6.5v15H14' }, { d: 'M10.5 12h10' }, { d: 'M17 8.5l3.5 3.5-3.5 3.5' }],
@@ -111,7 +115,7 @@ const NAV: Array<{ section: NavSection; route: Route; label: MsgKey; icon: Shape
 
 const HREF: Record<NavSection, string> = {
   home: '#/', study: '#/study', banks: '#/banks', records: '#/records', ai: '#/ai', users: '#/users', aiSettings: '#/ai-settings', logs: '#/logs',
-  settings: '#/settings', about: '#/about',
+  settings: '#/settings', profile: '#/profile', about: '#/about',
 };
 
 const ROLE_NAME: Record<Role, MsgKey> = { admin: 'role.admin', user: 'role.user' };
@@ -227,13 +231,13 @@ function fitBar(): void {
   const el = barEl();
   const acct = el?.querySelector<HTMLElement>('.acct-btn');
   if (!el || !acct) return;
-  el.classList.remove('fit-1', 'fit-2', 'fit-3', 'fit-4');
+  el.classList.remove('fit-0', 'fit-1', 'fit-2', 'fit-3', 'fit-4');
   // scrollWidth rounds up and clientWidth down: 1 px is the rounding of a box that fits exactly
   // v2.3: scrollWidth does not see content that overflows to the LEFT of a centred row, and the account's wrapper may shrink
   // under its button (a very large text size on a 320 px phone), so the boxes are compared too: the AI+ badge inside its button,
   // and the brand, theme, account and menu buttons never overlap each other.
   const parts = (): HTMLElement[] => [
-    el.querySelector<HTMLElement>('.top-brand'), el.querySelector<HTMLElement>('.theme-btn'), acct, el.querySelector<HTMLElement>('.menu-wrap > .menu-btn'),
+    el.querySelector<HTMLElement>('.top-brand'), el.querySelector<HTMLElement>('.hand-btn'), el.querySelector<HTMLElement>('.theme-btn'), acct, el.querySelector<HTMLElement>('.menu-wrap > .menu-btn'),
   ].filter((e): e is HTMLElement => e != null && e.getClientRects().length > 0);
   const crowded = (): boolean => {
     const a = acct.getBoundingClientRect();
@@ -249,9 +253,10 @@ function fitBar(): void {
   // v2.2 / v2.3 (owner): the name "Xexam" never goes (people should see which app this is); the logo icon shows on wider
   // screens and is left out on phones (styles/shell.css). On a phone the account's name is already hidden and the icon, the AI+ badge and the short admin
   // tag ARE the account: the tag goes first (its text is in the tip), then the icon. Wider screens keep the v1.2 order.
+  // v2.6: the "Aa" switch (also in Settings › text) is the first to step aside (fit-0).
   // Last resorts (only with a very large text size on a narrow phone): the name gets smaller (fit-3), and only if even that
   // does not fit it is left out (fit-4) rather than letting the buttons overlap.
-  const steps = matches(PHONE_MQ) ? ['fit-2', 'fit-1', 'fit-3', 'fit-4'] : ['fit-1', 'fit-2', 'fit-3', 'fit-4'];
+  const steps = matches(PHONE_MQ) ? ['fit-0', 'fit-2', 'fit-1', 'fit-3', 'fit-4'] : ['fit-0', 'fit-1', 'fit-2', 'fit-3', 'fit-4'];
   for (const step of steps) {
     if (!tight()) return;
     el.classList.add(step);
@@ -300,9 +305,9 @@ function accountControl(open: boolean): HTMLElement | null {
   // (v0.8: with the badge the label says "AI+ on" too, because the aria-label replaces what the button shows; round 2: with
   // the dark badge it says why AI+ cannot be used now, since nothing inside a button can be focused to read its tooltip)
   const accountLabel = !user ? ''
-    : badge.kind === 'on' ? t('nav.accountLabelAi', { name: user.username, role: roleText(user) })
-      : badge.kind === 'off' ? t('nav.accountLabelAiOff', { name: user.username, role: roleText(user), reason: badgeReasonText(badge.reason) })
-        : t('nav.accountLabel', { name: user.username, role: roleText(user) });
+    : badge.kind === 'on' ? t('nav.accountLabelAi', { name: shownName(user), role: roleText(user) })
+      : badge.kind === 'off' ? t('nav.accountLabelAiOff', { name: shownName(user), role: roleText(user), reason: badgeReasonText(badge.reason) })
+        : t('nav.accountLabel', { name: shownName(user), role: roleText(user) });
   // v1.1 (BT-6): no native title on the button (it would cover the badge's tip); on touch the badge tip is a tap-and-hold
   // v2.2: on a phone the account button opens no menu (the menu button does): a tap shows a tip with the signed-in name, the
   // role and the AI+ state, the same tip look as the AI+ badge (components/tooltip.ts `.tip-tap`; a tap elsewhere or Esc closes it)
@@ -322,7 +327,7 @@ function accountControl(open: boolean): HTMLElement | null {
     },
   },
   icon(ICONS.user, 'ico acct-ico'),
-  h('span', { class: 'acct-name' }, user.username),
+  h('span', { class: 'acct-name' }, shownName(user)),
   aiBadge(badge, { inButton: true, off }),
   // Phones show the short form ("Admin"), so the username keeps its room; the full role is in the label and in the menu
   admin ? h('span', { class: 'tag b acct-role' },
@@ -376,10 +381,19 @@ export function shell(content: HTMLElement): HTMLElement {
 
   // Who is signed in, and Sign out: the bottom of the menu, under a hairline
   const account = user ? h('div', { class: 'nav-account' },
-    h('div', { class: 'nav-who' },
-      icon(ICONS.user),
-      h('span', { class: 'nav-who-name', title: user.username }, user.username),
-      h('span', { class: 'nav-who-tags' }, roleTags(user), aiBadge(badge, { off }))),
+    // v2.6: the whole row is a link to the Profile page (account, username, password)
+    h('a', {
+      class: 'nav-link nav-who' + (active === 'profile' ? ' on' : ''), href: HREF.profile, 'aria-current': active === 'profile' ? 'page' : null,
+      'aria-label': `${t('nav.profileLink', { name: shownName(user) })}, ${badge.kind === 'on' ? t('nav.accountLabelAi', { name: shownName(user), role: roleText(user) }) : badge.kind === 'off' ? t('nav.accountLabelAiOff', { name: shownName(user), role: roleText(user), reason: badgeReasonText(badge.reason) }) : t('nav.accountLabel', { name: shownName(user), role: roleText(user) })}`,
+      onclick: (e: MouseEvent) => {
+        if (e.ctrlKey || e.metaKey || e.shiftKey || e.button !== 0) return;
+        e.preventDefault();
+        navigate({ name: 'profile' });
+      },
+    },
+    icon(ICONS.user),
+    h('span', { class: 'nav-who-name', title: shownName(user) }, shownName(user)),
+    h('span', { class: 'nav-who-tags' }, roleTags(user), aiBadge(badge, { off, inButton: true }))),
     // MN-4: the dark badge's reason in words under the name; a tooltip is not reachable on a touch screen
     badge.kind === 'off' && badge.reason === 'suspended' ? h('p', { class: 'nav-paused' }, t('nav.aiPaused')) : null,
     h('button', { class: 'nav-link nav-signout', type: 'button', onclick: () => void signOut() },
@@ -420,6 +434,7 @@ export function shell(content: HTMLElement): HTMLElement {
     },
   }, icon(open ? ICONS.close : ICONS.menu));
 
+  const handBtn = user ? handButton() : null;
   const themeBtn = user ? themeButton() : null;
   const accountBtn = accountControl(open);
 
@@ -431,7 +446,7 @@ export function shell(content: HTMLElement): HTMLElement {
     + (pinned && window.scrollY > 0 ? ' topbar-scrolled' : '');
   const header = h('header', { class: barClass },
     h('a', { class: 'top-brand', href: '#/', onclick: (e: MouseEvent) => { e.preventDefault(); navigate({ name: 'home' }); } }, brand()),
-    h('div', { class: 'menu-wrap' }, themeBtn, accountBtn, menuBtn, menu));
+    h('div', { class: 'menu-wrap' }, handBtn, themeBtn, accountBtn, menuBtn, menu));
 
   if (open && focusMenuOnOpen) {
     focusMenuOnOpen = false;
@@ -483,6 +498,8 @@ export function installShellHandlers(): void {
   if (typeof window.matchMedia === 'function') window.matchMedia(PHONE_MQ).addEventListener('change', refreshAccountControl);
   // The bar is measured again once the web fonts are in (A-OWNER-83)
   void document.fonts?.ready.then(afterShellRender);
+  // A web font that loads later (the hand face on its first use) changes the widths again
+  document.fonts?.addEventListener?.('loadingdone', () => afterShellRender());
   document.addEventListener('focusin', (e) => {
     if (e.target instanceof Node && barEl()?.contains(e.target)) showBar();
     // Tab leaving the menu closes it without moving focus (otherwise focus lands under the open menu)
@@ -504,8 +521,8 @@ function pathOf(node: Node): number[] | null {
 }
 
 /** The text of the phone account tip: who is signed in with the role, then the AI+ state line when there is one */
-export function accountTipText(user: Pick<AuthUser, 'username' | 'role' | 'canManageBanks'>, aiTip: string | null): string {
-  const who = t('nav.accountLabel', { name: user.username, role: roleText(user) });
+export function accountTipText(user: Pick<AuthUser, 'username' | 'displayName' | 'role' | 'canManageBanks'>, aiTip: string | null): string {
+  const who = t('nav.accountLabel', { name: shownName(user), role: roleText(user) });
   return joinAccountTip(who, aiTip);
 }
 
@@ -529,6 +546,26 @@ export function themeButton(extraClass = ''): HTMLButtonElement {
         .catch((e: unknown) => toast(t('act.settings.saveFailed', { reason: e instanceof Error ? e.message : String(e) }), 6000));
     },
   }, icon(dark ? ICONS.moon : ICONS.sun));
+}
+
+/** v2.6 preview: the blackboard-mode switch left of the theme toggle: "Aa" in the normal font, or hand-written when the mode
+ *  is on (html[data-hand]); like the theme toggle, its label names the action a press does */
+export function handButton(): HTMLButtonElement {
+  const on = handMode();
+  const label = t(on ? 'nav.handOff' : 'nav.handOn');
+  const btn = h('button', {
+    class: 'icon-btn hand-btn', id: 'hand-btn', type: 'button', 'aria-label': label, title: label,
+    onclick: () => {
+      const now = toggleHandMode();
+      const l = t(now ? 'nav.handOff' : 'nav.handOn');
+      btn.setAttribute('aria-label', l);
+      btn.setAttribute('title', l);
+      // Settings › Text shows the same choice: redraw that page so its cards follow
+      if (S.route.name === 'settings') render();
+      else afterShellRender(); // the hand font is wider: measure the top bar again
+    },
+  }, h('span', { class: 'hand-aa', 'aria-hidden': 'true' }, 'Aa')) as HTMLButtonElement;
+  return btn;
 }
 
 /** Redraws the top bar's theme toggle in place (the system theme changed while "follow system" is saved); no page render */

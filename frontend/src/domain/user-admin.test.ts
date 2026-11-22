@@ -62,6 +62,7 @@ test('filterUsers: case-insensitive part of the name; empty query keeps everyone
   const list = [{ username: 'Alex' }, { username: 'riley' }, { username: 'alexa.b' }];
   assert.deepEqual(filterUsers(list, ' ALE ').map((u) => u.username), ['Alex', 'alexa.b']);
   assert.equal(filterUsers(list, '').length, 3);
+  assert.deepEqual(filterUsers([{ username: 'a@x.test', displayName: 'Sunny' }, { username: 'b@x.test' }], 'sun').map((u) => u.username), ['a@x.test']);
   assert.equal(filterUsers(list, 'zzz').length, 0);
   assert.equal(SEARCH_FROM, 10);
 });

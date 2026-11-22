@@ -46,6 +46,8 @@ pub struct UserRow {
     /// v0.8: the identity stamp (`users.uid`, 32 lower-case hex digits; `""` only for a user an older binary created and
     /// the next open has not stamped yet)
     pub uid: String,
+    /// v2.6: the public display name (`users.display_name`); `None` = not chosen yet (the user is asked at the next sign-in)
+    pub display_name: Option<String>,
 }
 
 /// A session to store ([`Store::create_session`]).
@@ -159,6 +161,8 @@ pub struct SessionUser {
     pub username: String,
     pub role: Role,
     pub must_change_password: bool,
+    /// v2.6: the public display name; `None` = not chosen yet
+    pub display_name: Option<String>,
     /// May import banks and update / delete their own: always true for administrators (whatever is stored), else the stored
     /// permission. Read from the database on every request, so a change applies at once.
     pub can_manage_banks: bool,
@@ -176,12 +180,19 @@ impl SessionUser {
     pub fn is_admin(&self) -> bool {
         self.role == Role::Admin
     }
-    /// `{"id", "username", "role", "mustChangePassword", "canManageBanks", "canDownloadBanks", "aiAllowed"}` (`GET /api/auth/state` and
-    /// friends). The identity stamp is not part of it.
+    /// The account must finish its setup before anything else: a pending password change, or no display name yet. Such a
+    /// session may only reach the routes flagged `during_password_change` and is refused by every AI-internal call.
+    pub fn setup_required(&self) -> bool {
+        self.must_change_password || self.display_name.is_none()
+    }
+    /// `{"id", "username", "displayName", "needsName", "role", "mustChangePassword", "canManageBanks", "canDownloadBanks",
+    /// "aiAllowed"}` (`GET /api/auth/state` and friends). The identity stamp is not part of it.
     pub fn to_json(&self) -> Value {
         json!({
             "id": self.id,
             "username": self.username,
+            "displayName": self.display_name,
+            "needsName": self.display_name.is_none(),
             "role": self.role.as_str(),
             "mustChangePassword": self.must_change_password,
             "canManageBanks": self.can_manage_banks,
@@ -198,6 +209,7 @@ impl From<&UserRow> for SessionUser {
             username: u.username.clone(),
             role: u.role,
             must_change_password: u.must_change_password,
+            display_name: u.display_name.clone(),
             can_manage_banks: u.role == Role::Admin || u.can_manage_banks,
             can_download_banks: u.role == Role::Admin || u.can_download_banks,
             ai_allowed: u.role == Role::Admin || u.ai_enabled,
@@ -281,10 +293,10 @@ pub struct UpdatedUser {
 }
 
 /// Number of columns in [`USER_COLUMNS`] (the next column of a query that appends one is at this index).
-const USER_COLUMN_COUNT: usize = 13;
+const USER_COLUMN_COUNT: usize = 14;
 
 const USER_COLUMNS: &str = "id, username, password_hash, role, disabled, created_at, last_login_at, must_change_password, \
-     new_banks, can_manage_banks, ai_enabled, uid, can_download_banks";
+     new_banks, can_manage_banks, ai_enabled, uid, can_download_banks, display_name";
 
 fn user_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<UserRow> {
     let role: String = r.get(3)?;
@@ -303,6 +315,7 @@ fn user_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<UserRow> {
         ai_enabled: r.get::<_, i64>(10)? != 0,
         uid: r.get(11)?,
         can_download_banks: r.get::<_, i64>(12)? != 0,
+        display_name: r.get(13)?,
     })
 }
 
@@ -356,12 +369,37 @@ fn user_by_name(c: &Connection, name: &str) -> Result<Option<UserRow>, DbError> 
     .optional()?)
 }
 
+/// Whether another user (not `except`) already uses this text as a login or as a display name (v2.6: logins and display
+/// names are exclusive across all users, so nobody can sign up as, or be shown as, somebody else).
 fn name_taken(c: &Connection, name: &str, except: i64) -> Result<bool, DbError> {
     Ok(c.query_row(
-        "SELECT EXISTS(SELECT 1 FROM users WHERE username=?1 AND id<>?2)",
+        "SELECT EXISTS(SELECT 1 FROM users WHERE (username=?1 OR display_name=?1 COLLATE NOCASE) AND id<>?2)",
         params![name, except],
         |r| r.get::<_, bool>(0),
     )?)
+}
+
+/// Whether another user (not `except`) already has this display name or uses it as a login, ignoring ASCII letter case.
+fn display_name_taken(c: &Connection, name: &str, except: i64) -> Result<bool, DbError> {
+    Ok(c.query_row(
+        "SELECT EXISTS(SELECT 1 FROM users WHERE (display_name=?1 COLLATE NOCASE OR username=?1) AND id<>?2)",
+        params![name, except],
+        |r| r.get::<_, bool>(0),
+    )?)
+}
+
+/// What [`Store::change_own_password_as`] did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PasswordChange {
+    /// Written; `old_name` is the display name before (when one was sent with the password)
+    Done {
+        user: SessionUser,
+        old_name: Option<String>,
+    },
+    /// The user is gone or disabled, or the password hash is not the one the caller verified (nothing written)
+    Stale,
+    /// The display name sent with the password belongs to someone else (nothing written)
+    NameTaken,
 }
 
 /// Enabled administrators other than `except`.
@@ -546,6 +584,7 @@ fn users_json(c: &Connection) -> Result<Value, DbError> {
         out.push(json!({
             "id": u.id,
             "username": u.username,
+            "displayName": u.display_name,
             "role": u.role.as_str(),
             "disabled": u.disabled,
             "createdAt": u.created_at,
@@ -686,7 +725,7 @@ impl Store {
         let found: Option<(i64, i64, UserRow)> = g
             .query_row(
                 "SELECT s.last_seen_at, s.expires_at, u.id, u.username, u.password_hash, u.role, u.disabled, u.created_at, \
-                 u.last_login_at, u.must_change_password, u.new_banks, u.can_manage_banks, u.ai_enabled, u.uid, u.can_download_banks \
+                 u.last_login_at, u.must_change_password, u.new_banks, u.can_manage_banks, u.ai_enabled, u.uid, u.can_download_banks, u.display_name \
                  FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash=?1",
                 params![token_hash],
                 |r| {
@@ -704,6 +743,7 @@ impl Store {
                         ai_enabled: r.get::<_, i64>(12)? != 0,
                         uid: r.get(13)?,
                         can_download_banks: r.get::<_, i64>(14)? != 0,
+                        display_name: r.get(15)?,
                     };
                     Ok((r.get(0)?, r.get(1)?, user))
                 },
@@ -745,7 +785,7 @@ impl Store {
             .query_row(
                 "SELECT s.user_id, s.started_at, s.last_seen_at, s.expires_at, s.remember, s.ip, s.ua, \
                  u.id, u.username, u.password_hash, u.role, u.disabled, u.created_at, u.last_login_at, \
-                 u.must_change_password, u.new_banks, u.can_manage_banks, u.ai_enabled, u.uid, u.can_download_banks \
+                 u.must_change_password, u.new_banks, u.can_manage_banks, u.ai_enabled, u.uid, u.can_download_banks, u.display_name \
                  FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash=?1",
                 params![token_hash],
                 |r| {
@@ -772,6 +812,7 @@ impl Store {
                         ai_enabled: r.get::<_, i64>(17)? != 0,
                         uid: r.get(18)?,
                         can_download_banks: r.get::<_, i64>(19)? != 0,
+                        display_name: r.get(20)?,
                     };
                     Ok((user, row))
                 },
@@ -984,48 +1025,111 @@ impl Store {
         new_token_hash: &str,
         now: i64,
     ) -> Result<Option<SessionUser>, DbError> {
-        self.change_own_password_as(
-            user_id,
-            expected_hash,
-            new_hash,
-            &NewSession {
-                token_hash: new_token_hash,
+        Ok(
+            match self.change_own_password_as(
                 user_id,
-                now,
-                expires_at: now.saturating_add(SESSION_TTL_SECS),
-                remember: true,
-                ip: None,
-                ua: None,
+                expected_hash,
+                new_hash,
+                &NewSession {
+                    token_hash: new_token_hash,
+                    user_id,
+                    now,
+                    expires_at: now.saturating_add(SESSION_TTL_SECS),
+                    remember: true,
+                    ip: None,
+                    ua: None,
+                },
+                None,
+            )? {
+                PasswordChange::Done { user, .. } => Some(user),
+                PasswordChange::Stale | PasswordChange::NameTaken => None,
             },
         )
     }
 
     /// [`Store::change_own_password`] with the full new session (`s.user_id` is the user): the caller passes the old
     /// session's `remember`, the deadline of the user's role and the address / device, so a password change does not turn
-    /// a browser session into a remember session.
+    /// a browser session into a remember session. v2.6: `display_name` (already cleaned) is written in the same
+    /// transaction; a taken name refuses the whole change before anything is written.
     pub fn change_own_password_as(
         &self,
         user_id: i64,
         expected_hash: &str,
         new_hash: &str,
         s: &NewSession<'_>,
-    ) -> Result<Option<SessionUser>, DbError> {
+        display_name: Option<&str>,
+    ) -> Result<PasswordChange, DbError> {
         let at = self.clock.now();
         let g = self.lock();
         run_tx(&g, |c| {
+            let Some(before) = user_by_id(c, user_id)? else {
+                return Ok(PasswordChange::Stale);
+            };
+            if before.disabled || before.password_hash != expected_hash {
+                return Ok(PasswordChange::Stale);
+            }
+            if let Some(name) = display_name {
+                if display_name_taken(c, name, user_id)? {
+                    return Ok(PasswordChange::NameTaken);
+                }
+            }
             let n = c.execute(
                 "UPDATE users SET password_hash=?1, password_changed_at=?2, must_change_password=0                  WHERE id=?3 AND password_hash=?4 AND disabled=0",
                 params![new_hash, at, user_id, expected_hash],
             )?;
             if n == 0 {
-                return Ok(None);
+                return Ok(PasswordChange::Stale);
+            }
+            if let Some(name) = display_name {
+                c.execute(
+                    "UPDATE users SET display_name=?1 WHERE id=?2",
+                    params![name, user_id],
+                )?;
             }
             delete_sessions_of(c, user_id)?;
             c.execute(
                 "INSERT INTO sessions(token_hash, user_id, created_at, last_seen_at, expires_at, started_at, remember, ip, ua)                  VALUES(?1,?2,?3,?4,?5,?4,?6,?7,?8)",
                 params![s.token_hash, user_id, at, s.now, s.expires_at, s.remember, s.ip, s.ua],
             )?;
-            Ok(user_by_id(c, user_id)?.as_ref().map(SessionUser::from))
+            Ok(
+                match user_by_id(c, user_id)?.as_ref().map(SessionUser::from) {
+                    Some(user) => PasswordChange::Done {
+                        user,
+                        old_name: before.display_name,
+                    },
+                    None => PasswordChange::Stale,
+                },
+            )
+        })
+    }
+
+    /// `POST /api/auth/name` (v2.6): sets or changes the display name (already cleaned). `Done` carries the previous name
+    /// (`None` = first time) and the user as the session now sees them. Uniqueness is checked inside the write
+    /// transaction, case-insensitively (SQLite folds ASCII letters only, like `username`); another user's name is
+    /// `Taken`, your own name in another letter case is allowed (it changes the capitals).
+    pub fn set_display_name(
+        &self,
+        user_id: i64,
+        name: &str,
+    ) -> Result<UserChange<(Option<String>, SessionUser)>, DbError> {
+        let g = self.lock();
+        run_tx(&g, |c| {
+            let Some(before) = user_by_id(c, user_id)?.filter(|u| !u.disabled) else {
+                return Ok(UserChange::NotFound);
+            };
+            if display_name_taken(c, name, user_id)? {
+                return Ok(UserChange::Taken);
+            }
+            c.execute(
+                "UPDATE users SET display_name=?1 WHERE id=?2",
+                params![name, user_id],
+            )?;
+            Ok(
+                match user_by_id(c, user_id)?.as_ref().map(SessionUser::from) {
+                    Some(user) => UserChange::Done((before.display_name, user)),
+                    None => UserChange::NotFound,
+                },
+            )
         })
     }
 

@@ -355,7 +355,7 @@ function renderList(): HTMLElement {
   if (filters.bank !== 'all' && !banks.some((b) => String(b.id) === filters.bank)) filters.bank = 'all';
 
   // Filter controls: changing one updates the summary and the list in place (no full re-render, focus stays put)
-  const bankSel = h('select', null,
+  const bankSel = h('select', { class: 'rec-bank-sel' },
     h('option', { value: 'all' }, t('records.filter.allBanks')),
     banks.map((b) => h('option', { value: String(b.id) }, b.deleted ? t('common.deletedBank', { name: b.name }) : b.name)));
   bankSel.value = filters.bank;
@@ -547,12 +547,12 @@ function detailView(d: RecordDetail): HTMLElement {
   const kind = kindOf(rec);
   const hasDetail = rec.detail && items.length > 0;
 
-  const pair = (label: string, value: string): HTMLElement[] => [h('dt', null, label), h('dd', null, value)];
+  const pair = (label: string, value: string, cls?: string): HTMLElement[] => [h('dt', null, label), h('dd', cls ? { class: cls } : null, value)];
   const meta = h('dl', { class: 'rec-meta props' },
     pair(t('records.detail.time'), rec.at),
     [h('dt', null, t('records.detail.kind')), h('dd', null, kindTag(kind))],
-    pair(t('records.detail.banks'), recordBankNames(rec.banks)),
-    rec.sheets.length ? pair(t('records.detail.sheets'), rec.sheets.join(t('common.listSep'))) : null,
+    pair(t('records.detail.banks'), recordBankNames(rec.banks), 'rec-bnames'),
+    rec.sheets.length ? pair(t('records.detail.sheets'), rec.sheets.join(t('common.listSep')), 'rec-bnames') : null,
     modeName(rec.mode) ? pair(t('records.detail.mode'), modeName(rec.mode)) : null,
     pair(t('records.detail.duration'), rec.limit != null ? `${fmtTime(rec.seconds)} · ${t('result.limitMeta', { min: Math.round(rec.limit / 60) })}` : fmtTime(rec.seconds)),
     pair(t('records.detail.answered'), t('records.detail.answeredValue', { answered: rec.answered ?? t('common.none'), total: rec.total })));
@@ -757,7 +757,7 @@ function renderWrong(): HTMLElement {
 
   let bankFilter: HTMLElement | null = null;
   if (bankIds.length > 1) {
-    const sel = h('select', null,
+    const sel = h('select', { class: 'rec-bank-sel' },
       h('option', { value: 'all' }, t('records.wrong.bankOption', { name: t('records.filter.allBanks'), n: all.length })),
       bankIds.map((id) => h('option', { value: String(id) }, t('records.wrong.bankOption', { name: bankName(id), n: all.filter((q) => q.bank === id).length }))));
     sel.value = String(wrongBank);

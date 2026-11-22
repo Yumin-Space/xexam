@@ -957,12 +957,13 @@ pub async fn summary_saved(ctx: Ctx) -> Answer {
 
 // —— POST /api/ai/assess/ask —————————————————————————————————————————————————————————————————————————————————————————
 
-/// The study assessment: advice from the numbers of the user's records (never questions). It shares the summary
-/// feature end to end (switch, slot, caps, pacing, strength) and is stored as a `summary` chat `assess@<day>`.
+/// The study assessment: advice from the numbers of the user's records (never questions). Its own feature since v2.6
+/// (switch, model slot, strength, per-day limit); the calls count toward the caps and pacing like every AI call. It is
+/// stored as a `summary` chat `assess@<day>`.
 pub async fn assess_ask(ctx: Ctx) -> Answer {
     only_keys(&ctx.body, &["lang"])?;
     let lang_opt = body_lang(&ctx.body)?;
-    let route = require_ai_user(&ctx.app, &ctx.who, crate::route::Slot::Summary)?;
+    let route = require_ai_user(&ctx.app, &ctx.who, crate::route::Slot::Assess)?;
     let target = ctx.app.0.target(&route)?;
     let app = &ctx.app.0;
     let who = &ctx.who;
@@ -974,19 +975,30 @@ pub async fn assess_ask(ctx: Ctx) -> Answer {
     let lang = lang_opt.unwrap_or(reply.ui_lang);
     let (system, user) = assess_prompt(&reply.basis, lang);
     let user_content = assess_line(&reply.latest_at, &reply.basis);
-    let chat_ref = assess_ref(&reply.today);
-
+    // at most `assessPerDay` successful runs per local day (administrators exempt when the limit says so); refused before
+    // any place is taken (a failed answer writes nothing). The day of the check is also the day of the chat ref and title,
+    // so the saved row keeps the day it was asked on.
+    let today = crate::util::local_today().to_string();
+    let chat_ref = assess_ref(&today);
+    let (per_day, remaining) = assess_quota(app, who, &today)?;
+    // 0 per day = the assessment is off (not "come back tomorrow")
+    if per_day == Some(0) {
+        return Err(ApiError::feature_off(crate::features::Feature::Assess));
+    }
+    if per_day.is_some() && remaining == Some(0) {
+        return Err(ApiError::assess_daily());
+    }
     let chat_opt = app
         .store
         .read(|c| data::chat_by_ref(c, who.id, "summary", &chat_ref))?;
-    let (slot, permit) = places(&ctx, chat_opt, crate::features::Feature::Summary)?;
+    let (slot, permit) = places(&ctx, chat_opt, crate::features::Feature::Assess)?;
     app.study_hold_point().await;
     let limits = app.limits();
     let model = route.model.clone();
     let insert = StudyInsert {
         chat_kind: "summary",
         chat_ref: &chat_ref,
-        title: &reply.today,
+        title: &today,
         record_id: None,
         kind: "summary",
         question_id: None,
@@ -1045,47 +1057,50 @@ pub async fn assess_ask(ctx: Ctx) -> Answer {
     launch(&ctx, &route, target, slot, permit, l)
 }
 
-// —— GET /api/ai/assess/saved ————————————————————————————————————————————————————————————————————————————————————————
+// —— GET /api/ai/assess/latest ———————————————————————————————————————————————————————————————————————————————————————
 
-/// The saved assessment when it was made for the record set whose newest record is `at` (`YYYYMMDDHHMM`); otherwise
-/// the empty answer, as `summary_saved` gives for a record without one.
-pub async fn assess_saved(ctx: Ctx) -> Answer {
-    let q = ctx.query.as_deref();
-    let at = query_text(q, "at")?
-        .and_then(at_digits_to_at)
-        .ok_or_else(ApiError::bad_request)?;
-    let who = &ctx.who;
-    let found = ctx
-        .app
-        .0
+/// `(perDay, remaining)` of the viewer for the local day `today`: both `None` when the viewer is not limited (an
+/// administrator while `assessAdminsExempt` is on). Counts the successful runs kept in `assess_latest`.
+fn assess_quota(
+    app: &crate::app::App,
+    who: &crate::identity::Identity,
+    today: &str,
+) -> Result<(Option<i64>, Option<i64>), ApiError> {
+    let l = app.limits();
+    if who.is_admin() && l.assess_admins_exempt == 1 {
+        return Ok((None, None));
+    }
+    let used = app
         .store
-        .read(|c| data::assess_saved(c, who.id, &at))?;
-    let mut v = match found {
-        Some(f) => {
-            let mut v = f.saved.to_json(true);
-            if let Some(o) = v.as_object_mut() {
-                o.insert("date".into(), json!(f.date));
-                o.insert(
-                    "basis".into(),
-                    json!({
-                        "days": f.line.days,
-                        "records": f.line.records,
-                        "answered": f.line.answered,
-                        "latestAt": f.line.latest_at,
-                    }),
-                );
-            }
-            v
-        }
-        None => {
-            let mut v = empty_saved();
-            if let Some(o) = v.as_object_mut() {
-                o.insert("date".into(), Value::Null);
-                o.insert("basis".into(), Value::Null);
-            }
-            v
-        }
-    };
+        .read(|c| data::assess_latest(c, who.id))?
+        .filter(|a| a.day == today)
+        .map_or(0, |a| a.runs);
+    Ok((
+        Some(l.assess_per_day),
+        Some((l.assess_per_day - used).max(0)),
+    ))
+}
+
+/// The user's latest study assessment (the Home capsule) and how many runs the viewer has left today. Any signed-in user may read it
+/// (no AI+ needed); the model is only sent to administrators.
+pub async fn assess_latest(ctx: Ctx) -> Answer {
+    let who = &ctx.who;
+    let today = crate::util::local_today().to_string();
+    let latest = ctx.app.0.store.read(|c| data::assess_latest(c, who.id))?;
+    let (per_day, remaining) = assess_quota(&ctx.app.0, who, &today)?;
+    // A run still writing today's assessment (a reload or a second tab does not know it): the capsule shows the wait
+    let app = &ctx.app.0;
+    let chat = app
+        .store
+        .read(|c| data::chat_by_ref(c, who.id, "summary", &assess_ref(&today)))?;
+    let running = chat.is_some_and(|c| app.chat_running(c));
+    let mut v = json!({
+        "assess": latest.as_ref().map(data::AssessLatest::to_json),
+        "today": today,
+        "running": running,
+        "perDay": per_day,
+        "remaining": remaining,
+    });
     super::hide::for_viewer(who.is_admin(), &mut v);
     ok(v)
 }

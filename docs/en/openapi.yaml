@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Xexam API
-  version: "2.0"
+  version: "2.6"
   description: |
     The REST API of Xexam. The endpoints that existed in the legacy Python implementation behave as it did, and the Rust
     backend stays consistent with it (172 golden responses compared item by item, see tests/baseline/). The intentional
@@ -23,7 +23,9 @@ info:
     Without a valid session every non-public route, known or not, answers 401 `请先登录。`. While the account must choose a new
     password, every route except the public ones (`GET /api/info`, `GET /api/auth/state`, `POST /api/auth/login`) and
     `POST /api/auth/password` and `POST /api/auth/logout`
-    answers 403 `请先设置新密码。`. Admin routes answer 403 `只有管理员可以进行这个操作。` and bank manager routes 403
+    answers 403 `请先设置新密码。`. (v2.6) An account without a username (`needsName`) is held the same way with 403
+    `请先设置用户名。`; it reaches `POST /api/auth/name` as well (which itself answers `请先设置新密码。` while a password
+    change is pending). Admin routes answer 403 `只有管理员可以进行这个操作。` and bank manager routes 403
     `你没有管理题库的权限，请联系管理员。` to users without the access, and bank downloader routes 403
     `你没有下载题库的权限，请联系管理员。`.
 
@@ -154,7 +156,7 @@ paths:
               schema: { $ref: "#/components/schemas/UserEnvelope" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401":
-          description: "`用户名或密码不对。` (The username or password is not correct.)"
+          description: "`邮箱或密码不对。` (The e-mail or password is not correct; `用户名或密码不对。` before v2.6)"
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -196,6 +198,10 @@ paths:
         `请求的格式不对。`; a password outside 8–128 characters → `密码需要 8–128 个字符。`; the same password as before →
         `新密码不能和原来的一样。`. 401 `请先登录。` when the account was disabled or deleted, or its password changed elsewhere
         while the request ran (nothing is written).
+
+        (v2.6) `displayName` (the username) is required while the account has none (`needsName`), optional otherwise; it is
+        cleaned and checked as in `POST /api/auth/name` and written in the same transaction as the password (400
+        `请输入用户名。` / `用户名最多 20 个字，不能包含 @ 或控制字符。`, 409 `这个用户名已经有人用了。`; nothing is written then).
       requestBody:
         required: true
         content:
@@ -214,8 +220,53 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: "(v2.6) `这个用户名已经有人用了。` (the display name is another account's display name or login)"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "415": { $ref: "#/components/responses/BadContentType" }
         "429": { $ref: "#/components/responses/TooManyLogins" }
+  /api/auth/name:
+    post:
+      tags: [auth]
+      summary: "(v2.6) Set or change your own username (display name)"
+      x-access: SignedIn
+      description: |
+        Reachable while the account only lacks a username; while a password change is pending it answers 403 `请先设置新密码。`
+        (use `POST /api/auth/password` with `displayName`). The name is trimmed and every run of whitespace becomes one space;
+        then it must have 1–20 characters (Unicode scalar values, any script) without `@`, control characters or invisible
+        format characters (zero-width, bidirectional controls, soft hyphen, byte order mark and the like). It must not be another
+        account's display name or login, ignoring the case of ASCII letters; your own name in another case is allowed. The
+        session is kept. Activity `auth.name` with the note `{"oldName", "newName"}`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [displayName]
+              properties:
+                displayName: { type: string, example: "Ann" }
+      responses:
+        "200":
+          description: Saved; the user object with the new `displayName` and `needsName` false
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserEnvelope" }
+        "400":
+          description: "`请输入用户名。` (missing, null or blank), `用户名最多 20 个字，不能包含 @ 或控制字符。` (the rule), `请求的格式不对。` (not a string)"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: "`这个用户名已经有人用了。` (This username is already taken.)"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "415": { $ref: "#/components/responses/BadContentType" }
 
   /api/users:
     get:
@@ -433,16 +484,18 @@ paths:
   /api/dashboard:
     get:
       tags: [progress]
-      summary: "(v2.5) The Home dashboard: the leaderboard and the most practised questions"
+      summary: "(v2.5) The Home dashboard: the leaderboard and (v2.6) the caller's most missed questions"
       x-access: SignedIn
       description: |
         Read only; nothing is written. `ranking` is all-time and comes from the per-question statistics: enabled users with at least
         one answer, administrators included, every bank, ordered by correct answers descending, then answers ascending, then user id.
         `top` holds at most 3 entries and `me` (always present) the caller's own position. A user's `name` is decided on the server
-        for every viewer: the caller's own row has the full user name (`self: true`); another user's name is shown in full unless it
-        is an e-mail address, and then only a masked local part is sent. The domain, the user id and the e-mail address are never
-        sent. `popular` covers the last 30 days: answered items of all users, of active questions in the banks the caller may see,
-        at most 3. Only question ids and counts leave; the page reads the stems from /api/bank.
+        for every viewer: (v2.6) a user's display name when set, as it is; otherwise the caller's own row has the full login
+        (`self: true`) and another user's login is shown in full unless it is an e-mail address, and then only a masked local part
+        is sent. The domain, the user id and an e-mail address are never sent. (v2.6) `wrongTop` replaces `popular`: the caller's
+        own questions with at least one wrong answer (all time, the caller's own statistics only), active questions in the banks the
+        caller may see, at most 5, ordered by wrong answers descending, then correct ascending, then attempts descending, then bank
+        and position. Only question ids and counts leave; the page reads the stems from /api/bank.
       responses:
         "200":
           description: OK
@@ -1369,10 +1422,15 @@ paths:
       summary: "(v2.5) Ask for the AI study assessment of the Home dashboard; the answer arrives as an event stream"
       x-access: AiUser
       description: |
-        The summary feature applied to the caller's own study habits. ai-service asks the backend for numbers only (counts and
-        averages of the caller's records of the last 30 days; never a question, bank, sheet or user name) and writes advice for the
-        next 7 days from them. The same AI+ gate, daily caps, pacing, thinking strength and Nginx start limit as /api/ai/summary/ask.
-        Errors: as /api/ai/study/ask, plus 409 `ai.assessFew` (fewer than 3 saved study records). The chat is a `summary` chat with the
+        Advice from the caller's own study habits. ai-service asks the backend for numbers only (counts and averages of the
+        caller's records of the last 30 days; never a question, bank, sheet or user name) and writes a short, encouraging paragraph (a prose-poem image, then advice from the numbers)
+        sentences of plain text from them (v2.6; about 300 words with headings before). (v2.6) Its own feature `assess` (switches,
+        per-user bit, 403 `ai.featureOff`), model slot `assess` and usage row; it counts toward the per-user request caps and has
+        the Nginx start limit of /api/ai/summary/ask. At most `assessPerDay` (default 3) successful assessments per user per local
+        day of ai-service, administrators exempt while `assessAdminsExempt` is 1; refused with 409 `ai.assessDaily` before any place
+        is taken (`assessPerDay` 0: 403 `ai.featureOff`). A failed or stopped answer does not count.
+        Errors: as /api/ai/study/ask, plus 409 `ai.assessFew` (fewer than 3 saved study records) and 409 `ai.assessDaily`. A
+        finished, non-empty answer also becomes the caller's latest assessment (/api/ai/assess/latest). The chat is a `summary` chat with the
         reference `assess@<local date>`, titled with that date, one per day (asking again the same day adds a pair), listed with
         the kind `assess`. The `start` event has `chatKind` and `kind` `assess`, `questionId`, `questionNo`, `source`, `recordId`
         and `sample` null, `lang`, and `basis` ({days, records, answered, latestAt}). The stored user message is the machine line
@@ -1397,39 +1455,41 @@ paths:
         "429": { $ref: "#/components/responses/AiCallLimit" }
         "502": { $ref: "#/components/responses/AiUnavailable" }
         "503": { $ref: "#/components/responses/AiBackendDown" }
-  /api/ai/assess/saved:
+  /api/ai/assess/latest:
     get:
       tags: [ai]
-      summary: "(v2.5) The saved AI study assessment, when it was made for the caller's newest study record"
+      summary: "(v2.6) The caller's latest AI study assessment and how many runs are left today (replaces /api/ai/assess/saved of v2.5)"
       x-access: AiSigned
       description: |
-        Needs no AI+ feature and does not call the backend. The caller's newest `assess@` chat is returned only when its stored
-        line names the same newest record time as `at`; otherwise `latest` and `lastGood` are null. `date` and `basis` are
-        null when nothing matches.
-      parameters:
-        - { name: at, in: query, required: true, description: "The time of the caller's newest study record without punctuation: 2026-11-22 09:10 is 202611220910", schema: { type: string, pattern: "^[0-9]{12}$" } }
+        Needs no AI+ feature and does not call the backend. `assess` is the latest finished assessment (kept apart from the chat:
+        deleting chats does not remove it), or null. `model` is sent to administrators only. `perDay` and `remaining` are null
+        when the caller is not limited (an administrator while `assessAdminsExempt` is 1). `running` is true while an
+        assessment of today is still being written.
       responses:
         "200":
           description: OK
           content:
             application/json:
               schema:
-                allOf:
-                  - { $ref: "#/components/schemas/AiSummarySaved" }
-                  - type: object
-                    required: [date, basis]
+                type: object
+                required: [assess, today, running, perDay, remaining]
+                properties:
+                  assess:
+                    type: object
+                    nullable: true
+                    required: [text, day, createdAt, latestAt, records, answered]
                     properties:
-                      date: { type: string, nullable: true, example: "2026-11-22", description: "The day of the assessment" }
-                      basis:
-                        type: object
-                        nullable: true
-                        required: [days, records, answered, latestAt]
-                        properties:
-                          days: { type: integer, example: 30 }
-                          records: { type: integer }
-                          answered: { type: integer }
-                          latestAt: { type: string, example: "2026-11-22 09:10" }
-        "400": { $ref: "#/components/responses/AiError" }
+                      text: { type: string }
+                      day: { type: string, example: "2026-11-22", description: "The local day of ai-service it was asked on" }
+                      createdAt: { type: integer, description: "Unix seconds when it finished" }
+                      latestAt: { type: string, example: "2026-11-22 09:10", description: "The newest study record it was written for" }
+                      records: { type: integer }
+                      answered: { type: integer }
+                      model: { type: string, nullable: true, description: "Administrators only" }
+                  today: { type: string, example: "2026-11-22", description: "The local day of ai-service" }
+                  running: { type: boolean }
+                  perDay: { type: integer, nullable: true, example: 3 }
+                  remaining: { type: integer, nullable: true, example: 2 }
         "401": { $ref: "#/components/responses/AiSignIn" }
         "502": { $ref: "#/components/responses/AiUnavailable" }
         "503": { $ref: "#/components/responses/AiBackendDown" }
@@ -1702,7 +1762,7 @@ paths:
       tags: [ai-admin]
       summary: "(v0.8) Usage statistics: calls, tokens, cached tokens and errors by user, model and period (never content)"
       x-access: AiAdmin
-      description: "(v0.9) `byPurpose` splits the calls of the range into seven rows since v1.1 (four before), always in the order chat, hint, explain, summary, generate, import, other (zeros kept). `chat` is AI Chat and every call recorded before v0.9; `other` is the model list and the connection tests."
+      description: "(v0.9) `byPurpose` splits the calls of the range into seven rows since v1.1 (four before) and eight since v2.6, always in the order chat, hint, explain, summary, assess, generate, import, other (zeros kept; `assess` = the AI study assessment, whose calls are stored with the purpose summary and the mark `usage.assess`; those of v2.5 stay under summary). `chat` is AI Chat and every call recorded before v0.9; `other` is the model list and the connection tests."
       parameters:
         - name: days
           in: query
@@ -2599,7 +2659,7 @@ paths:
               required: [page]
               additionalProperties: false
               properties:
-                page: { type: string, enum: [home, study, banks, users, logs, records, record, wrong, settings, about, quiz, result, ai, aiSettings] }
+                page: { type: string, enum: [home, study, banks, users, logs, records, record, wrong, settings, profile, about, quiz, result, ai, aiSettings], description: "(v2.6) profile added" }
       responses:
         "200": { description: "`{\"ok\": true}`" }
         "400": { $ref: "#/components/responses/BadRequest" }
@@ -2870,7 +2930,7 @@ paths:
         `slots.<slot>.effortFamily` (v2.2) is the family of the connection the slot targets (also when that connection is switched
         off), so the page can list that family's levels.
 
-        `slot` is one of seven names: `default`, `chat`, `hint`, `explain`, `summary`, `generate`, `import` (`study` is a 400).
+        `slot` is one of seven names: `default`, `chat`, `hint`, `explain`, `summary`, `generate`, `import` (`study` is a 400); (v2.6) eight, with `assess`.
         A request that carries the parameter and is refused with HTTP 400 or 422 is sent again without it, and that connection + model + level is
         remembered as not supporting it (in memory; cleared on any strength or connection change). Activity event `ai.settings.effort`. The settings answer also carries
         `effortLevels` (the level list per family).
@@ -2883,7 +2943,7 @@ paths:
               required: [slot, level]
               additionalProperties: false
               properties:
-                slot: { type: string, enum: [default, chat, hint, explain, summary, generate, import] }
+                slot: { type: string, enum: [default, chat, hint, explain, summary, assess, generate, import] }
                 level: { type: string, nullable: true, description: "A level of the slot connection's family, or null for Default (no strength parameter sent)" }
       responses:
         "200": { description: "OK; the answer is `{settings}` (GET /api/ai/admin/settings)" }
@@ -2896,7 +2956,7 @@ paths:
       summary: "(v1.3) Assign a model to a slot (tested first unless it passed within 10 minutes)"
       x-access: AiAdmin
       description: |
-        `{slot, connectionId, model, manual}` or `{slot, clear: true}` (the default slot cannot be cleared: 400). (v1.9) `slot` is one of the seven names (`study` is a 400); a connection that is off is a 409 `ai.connectionOff` (also for the default pick of `/api/ai/admin/enable`). A failed test changes no slot and answers `{"ok": false, "code", …}`. Never switches AI+ off.
+        `{slot, connectionId, model, manual}` or `{slot, clear: true}` (the default slot cannot be cleared: 400). (v1.9) `slot` is one of the seven names (v2.6: eight, with `assess`; `study` is a 400); a connection that is off is a 409 `ai.connectionOff` (also for the default pick of `/api/ai/admin/enable`). A failed test changes no slot and answers `{"ok": false, "code", …}`. Never switches AI+ off.
       requestBody:
         required: true
         content:
@@ -2905,7 +2965,7 @@ paths:
               type: object
               required: [slot]
               properties:
-                slot: { type: string, enum: [default, chat, hint, explain, summary, generate, import] }
+                slot: { type: string, enum: [default, chat, hint, explain, summary, assess, generate, import] }
                 connectionId: { type: integer }
                 model: { type: string }
                 manual: { type: boolean }
@@ -2967,7 +3027,7 @@ paths:
       summary: "(v1.3, v1.9) Switch features on or off for everyone (administrators included since v1.9)"
       x-access: AiAdmin
       description: |
-        Any subset of the six keys. (v1.9) Each key moves alone (`hint` and `explain` are no longer paired) and a switched-off
+        Any subset of the six keys (v2.6: seven, with `assess`). (v1.9) Each key moves alone (`hint` and `explain` are no longer paired) and a switched-off
         feature is off for everyone, administrators included: running calls of that feature are cancelled for everyone and a new
         request is a 403 `ai.featureOff`. The per-user feature bits are unchanged (they never apply to administrators, and
         `hint` and `explain` stay paired there). `GET /api/ai/status` `features` for an administrator now reflect these switches.
@@ -2982,6 +3042,7 @@ paths:
                 hint: { type: boolean }
                 explain: { type: boolean }
                 summary: { type: boolean }
+                assess: { type: boolean }
                 generate: { type: boolean }
                 import: { type: boolean }
       responses:
@@ -3090,7 +3151,8 @@ components:
           schema: { $ref: "#/components/schemas/Error" }
     Forbidden:
       description: |
-        Rejected by the Host / Origin guard; or the account must choose a new password (`请先设置新密码。`); or the access level
+        Rejected by the Host / Origin guard; or the account must choose a new password (`请先设置新密码。`) or (v2.6) set a
+        username (`请先设置用户名。`); or the access level
         of the route is not met (`只有管理员可以进行这个操作。` for Admin routes, `你没有管理题库的权限，请联系管理员。` for
         BankManager routes).
       content:
@@ -3152,7 +3214,7 @@ components:
     UserConflict:
       description: |
         (v0.6) `不能对自己的账户做这个操作。` (not on your own account), `至少要保留一个启用的管理员。` (the last enabled
-        administrator stays), `这个用户名已经有人用了。` (username taken), or (v0.8, round 2, update only) `ai.serviceOff`
+        administrator stays), `这个邮箱已经有人用了。` (v2.6: the login is another account's login or display name; `这个用户名已经有人用了。` before), or (v0.8, round 2, update only) `ai.serviceOff`
         (an `ai` key while AI+ is not available)
       content:
         application/json:
@@ -3169,7 +3231,7 @@ components:
           schema: { $ref: "#/components/schemas/AiError" }
     AiForbidden:
       description: |
-        (v0.8) From the auth step (Nginx): `auth.password` (a new password is required) or `auth.guard` (Host / Origin not
+        (v0.8) From the auth step (Nginx): `auth.password` (a new password is required), (v2.6) `auth.name` (a username is required) or `auth.guard` (Host / Origin not
         allowed); `ai.badRequest` for a method other than GET / POST. From ai-service: `ai.disabled` (the AI+ feature is not available right now),
         `ai.notAllowed` (no AI+), `ai.suspended` (an administrator paused the user, round 2), `ai.adminOnly` (an administrator route, including
         `POST /api/ai/free`).
@@ -3295,10 +3357,12 @@ components:
     SessionUser:
       type: object
       description: "(v0.6) The signed-in user. Key order as listed."
-      required: [id, username, role, mustChangePassword, canManageBanks, canDownloadBanks, aiAllowed]
+      required: [id, username, displayName, needsName, role, mustChangePassword, canManageBanks, canDownloadBanks, aiAllowed]
       properties:
         id: { type: integer }
-        username: { type: string }
+        username: { type: string, description: "The login (v2.6: an e-mail address for accounts the screens create; older logins such as admin stay valid)" }
+        displayName: { type: string, nullable: true, description: "(v2.6) The user's own username, shown to everyone; null while not set" }
+        needsName: { type: boolean, description: "(v2.6) True while displayName is null: the session is held at the setup pages (403 请先设置用户名。 on other routes)" }
         role: { type: string, enum: [admin, user] }
         mustChangePassword: { type: boolean }
         canManageBanks: { type: boolean, description: "(v0.7) True for every administrator, and for a plain user with the bank manager permission" }
@@ -3358,6 +3422,7 @@ components:
       properties:
         current: { type: string, description: "Required unless the account must choose a new password" }
         password: { type: string, minLength: 8, maxLength: 128 }
+        displayName: { type: string, nullable: true, description: "(v2.6) The username; required while the account has none (needsName), written in the same transaction" }
 
     BankAccess:
       description: '(v0.7) Written by /api/users/create and /api/users/update: a list of the ids of the existing banks the user sees (`[]` = none; duplicates ignored), or `"all"`, a shorthand for every bank that exists now (it also sets `newBanks: true` unless `newBanks` is given). GET /api/users always returns a list.'
@@ -3379,10 +3444,11 @@ components:
     User:
       type: object
       description: "(v0.6) One account in GET /api/users. Key order as listed."
-      required: [id, username, role, disabled, createdAt, lastLoginAt, mustChangePassword, records, banks, newBanks, canManageBanks, canDownloadBanks, ai, ownedBanks, lock, aiSuspended]
+      required: [id, username, displayName, role, disabled, createdAt, lastLoginAt, mustChangePassword, records, banks, newBanks, canManageBanks, canDownloadBanks, ai, ownedBanks, lock, aiSuspended]
       properties:
         id: { type: integer }
-        username: { type: string }
+        username: { type: string, description: "The login" }
+        displayName: { type: string, nullable: true, description: "(v2.6) The username the user chose; null while not set. Read only for administrators" }
         role: { type: string, enum: [admin, user] }
         disabled: { type: boolean }
         createdAt: { type: string, description: "Local time YYYY-MM-DD HH:MM" }
@@ -3407,7 +3473,7 @@ components:
       type: object
       required: [username, password, role]
       properties:
-        username: { type: string, pattern: "^[A-Za-z0-9._@-]{1,40}$" }
+        username: { type: string, pattern: "^[A-Za-z0-9._@-]{1,40}$", description: "The login. (v2.6) The User management page asks for an e-mail address; the server keeps this rule. Must not be another account's login or display name (409 这个邮箱已经有人用了。)" }
         password: { type: string, minLength: 8, maxLength: 128 }
         role: { type: string, enum: [admin, user] }
         banks: { allOf: [{ $ref: "#/components/schemas/BankAccess" }], description: "(v0.7) Default `[]`: no bank until an administrator chooses some" }
@@ -3420,7 +3486,7 @@ components:
       required: [id]
       properties:
         id: { type: integer }
-        username: { type: string, pattern: "^[A-Za-z0-9._@-]{1,40}$" }
+        username: { type: string, pattern: "^[A-Za-z0-9._@-]{1,40}$", description: "The login. (v2.6) The User management page asks for an e-mail address; the server keeps this rule. Must not be another account's login or display name (409 这个邮箱已经有人用了。)" }
         role: { type: string, enum: [admin, user] }
         disabled: { type: boolean }
         banks: { $ref: "#/components/schemas/BankAccess" }
@@ -3574,7 +3640,7 @@ components:
       required: [rank, name, answered, correct, self]
       properties:
         rank: { type: integer, minimum: 1 }
-        name: { type: string, description: "The full user name for the caller's own row and for plain user names; an e-mail user name is shown as a masked local part only (a***e), never with its domain" }
+        name: { type: string, description: "(v2.6) The user's display name when set, as it is. Otherwise the full login for the caller's own row and for plain logins; an e-mail login is shown as a masked local part only (a***e), never with its domain" }
         answered: { type: integer, minimum: 0 }
         correct: { type: integer, minimum: 0 }
         self: { type: boolean, description: "True for the caller's own row" }
@@ -3586,19 +3652,19 @@ components:
         rank: { type: integer, nullable: true, minimum: 1, description: "Null when the caller has no answers" }
         answered: { type: integer, minimum: 0 }
         correct: { type: integer, minimum: 0 }
-    PopularItem:
+    WrongItem:
       type: object
-      description: "(v2.5) One of the most practised questions. Only ids and counts: the page reads the stem from /api/bank"
-      required: [questionId, bankId, times, correct]
+      description: "(v2.6) One of the caller's most missed questions. Only ids and counts: the page reads the stem and the answer from /api/bank"
+      required: [questionId, bankId, wrong, attempts]
       properties:
         questionId: { type: string }
         bankId: { type: integer }
-        times: { type: integer, minimum: 1, description: "How often it was answered, by all users, in the window" }
-        correct: { type: integer, minimum: 0 }
+        wrong: { type: integer, minimum: 1, description: "The caller's wrong answers to it, all time" }
+        attempts: { type: integer, minimum: 1, description: "The caller's answers to it, all time" }
     Dashboard:
       type: object
-      description: "(v2.5) GET /api/dashboard"
-      required: [ranking, popular]
+      description: "(v2.5) GET /api/dashboard; (v2.6) `wrongTop` replaces `popular`"
+      required: [ranking, wrongTop]
       properties:
         ranking:
           type: object
@@ -3607,13 +3673,11 @@ components:
             users: { type: integer, minimum: 0, description: "The number of ranked users (enabled, at least one answer)" }
             top: { type: array, maxItems: 3, items: { $ref: "#/components/schemas/RankEntry" } }
             me: { $ref: "#/components/schemas/RankMe" }
-        popular:
+        wrongTop:
           type: object
-          required: [days, since, items]
+          required: [items]
           properties:
-            days: { type: integer, example: 30 }
-            since: { type: string, example: "2026-10-23 14:05", description: "The start of the window" }
-            items: { type: array, maxItems: 3, items: { $ref: "#/components/schemas/PopularItem" } }
+            items: { type: array, maxItems: 5, items: { $ref: "#/components/schemas/WrongItem" } }
     Progress:
       type: object
       required: [version, questions, history, masterStreak]
@@ -3723,7 +3787,7 @@ components:
         theme: { type: string, enum: [system, light, dark], default: system }
         uiLang: { type: string, enum: [en, zh, ja], default: en }
         autoAdvance: { type: boolean, default: false, description: "Go to the next question automatically after a single-choice pick (or the last hotspot choice); never in practice" }
-        questionLang: { type: string, enum: [ja, zh, en], default: ja }
+        questionLang: { type: string, enum: [ja, zh, en], default: en, description: "The default question language (every exam or practice starts in it); default en since v2.6 (ja before)" }
     SettingsPatch:
       type: object
       description: "(v0.5) Any subset of Settings; unknown keys are ignored"
@@ -4034,7 +4098,7 @@ components:
               effortFamily: { type: string, enum: [anthropic, openai, google, responses], description: "(v2.1) Thinking-strength family of the connection" }
         slots:
           type: object
-          description: "Per slot name (default, chat, hint, explain, summary, generate, import)"
+          description: "Per slot name (default, chat, hint, explain, summary, (v2.6) assess, generate, import)"
           additionalProperties:
             type: object
             properties:
@@ -4128,15 +4192,15 @@ components:
               - { $ref: "#/components/schemas/AiUsageSums" }
         byPurpose:
           type: array
-          minItems: 7
-          maxItems: 7
-          description: "(v0.9, seven rows since v1.1) The calls of the range by feature: exactly seven rows in the order chat, hint, explain, summary, generate, import, other, zeros kept; the rows add up to the total calls. `chat` = AI Chat and every call recorded before v0.9; `generate` = AI bank generation; `import` = AI file import (recognition and writing); `other` = the model list and the connection tests"
+          minItems: 8
+          maxItems: 8
+          description: "(v0.9, seven rows since v1.1, eight since v2.6) The calls of the range by feature: exactly eight rows in the order chat, hint, explain, summary, assess, generate, import, other, zeros kept; the rows add up to the total calls. `chat` = AI Chat and every call recorded before v0.9; `generate` = AI bank generation; `import` = AI file import (recognition and writing); `other` = the model list and the connection tests"
           items:
             allOf:
               - type: object
                 required: [purpose]
                 properties:
-                  purpose: { type: string, enum: [chat, hint, explain, summary] }
+                  purpose: { type: string, enum: [chat, hint, explain, summary, assess, generate, import, other] }
               - { $ref: "#/components/schemas/AiUsageSums" }
     AiAdminUserRow:
       type: object
@@ -4171,7 +4235,7 @@ components:
     AiLimits:
       type: object
       additionalProperties: false
-      description: "The safety limits (all integers). POST: any subset; GET: all 36 keys (v1.9 added paceOn, paceRpm and paceTpm, the provider pacing of AI generation and import; v1.0 ten, v1.1 and v1.2 seventeen more: the generation and import settings, with defaults as in section 5.7 of api.md, and v1.3 six more: callsAdminsExempt, studyShare, studyShareDays, genMaxChunks, summaryMaxItems and dailyTokenBudget). messageChars is not a key any more."
+      description: "The safety limits (all integers). POST: any subset; GET: all 38 keys (v2.6 added assessPerDay and assessAdminsExempt; v1.9 added paceOn, paceRpm and paceTpm, the provider pacing of AI generation and import; v1.0 ten, v1.1 and v1.2 seventeen more: the generation and import settings, with defaults as in section 5.7 of api.md, and v1.3 six more: callsAdminsExempt, studyShare, studyShareDays, genMaxChunks, summaryMaxItems and dailyTokenBudget). messageChars is not a key any more."
       properties:
         perUserRunning: { type: integer, minimum: 1, maximum: 4, default: 1 }
         globalRunning: { type: integer, minimum: 1, maximum: 64, default: 16 }
@@ -4208,6 +4272,8 @@ components:
         paceOn: { type: integer, minimum: 0, maximum: 1, default: 1, description: "(v1.9) 1 = send AI generation and import calls evenly within paceRpm and paceTpm (the values are used exactly as entered: one call every 60 / paceRpm s over a sliding 60 s; paces AI generation and AI import only)" }
         paceRpm: { type: integer, minimum: 1, maximum: 10000, default: 13, description: "(v1.9) Provider requests per minute" }
         paceTpm: { type: integer, minimum: 1000, maximum: 100000000, default: 230000, description: "(v1.9) Provider tokens per minute (input plus output; default 240000 before v2.2)" }
+        assessPerDay: { type: integer, minimum: 0, maximum: 50, default: 3, description: "(v2.6) Successful AI study assessments per user per local day of ai-service; 0 = none (403 ai.featureOff)" }
+        assessAdminsExempt: { type: integer, minimum: 0, maximum: 1, default: 1, description: "(v2.6) 1 = administrators are not limited by assessPerDay" }
     AiLimitsAnswer:
       type: object
       required: [limits, defaults, ranges]

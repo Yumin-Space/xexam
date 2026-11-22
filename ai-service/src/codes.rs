@@ -237,6 +237,10 @@ impl ApiError {
     pub fn assess_few() -> ApiError {
         ApiError::new(409, "ai.assessFew", text_of("ai.assessFew"))
     }
+    /// More study assessments than `assessPerDay` allows on one local day
+    pub fn assess_daily() -> ApiError {
+        ApiError::new(409, "ai.assessDaily", text_of("ai.assessDaily"))
+    }
     pub fn too_long(n: i64) -> ApiError {
         ApiError::new(
             400,
@@ -567,6 +571,7 @@ pub fn text_of(code: &str) -> &'static str {
         "ai.noUsable" => "这些答错的题已经不可用（题库已删除或没有访问权限），无法总结。",
         "ai.noDetail" => "这条记录没有逐题记录，无法总结。",
         "ai.assessFew" => "学习记录太少，至少需要 3 条。",
+        "ai.assessDaily" => "今天的 AI 学习评估次数已用完，明天再来吧。",
         "ai.featureOff" => "你没有权限使用这个功能。",
         "ai.genCount" => "每次生成的题数（单选 + 多选）必须在 1 到 100 之间。",
         "ai.gen.badName" => "名称不能为空，不能太长，也不能含有控制字符。",
@@ -742,6 +747,7 @@ mod tests {
             ApiError::no_usable(),
             ApiError::no_detail(),
             ApiError::assess_few(),
+            ApiError::assess_daily(),
         ] {
             assert_eq!(text_of(e.code), e.text, "{}", e.code);
             assert_eq!(e.status.as_u16(), 409);

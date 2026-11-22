@@ -27,16 +27,28 @@
 
 # Xexam
 
-Xexam 是一个自己部署、在浏览器里用的刷题程序。你导入自己的 Excel 题库，用它们考试或练习，再复习答错的题。如果管理员接入了 AI 服务商并为用户开通了 **AI+ 功能**，用户还可以在 **AI 对话** 里向 AI 模型提问，并在学习时得到 AI 帮助：练习中的 AI 提示、练习中和成绩页上对每道题的 AI 解析，以及对答错题目的 AI 总结。电脑和手机（iPhone）都能用。
+Xexam 是一个自己部署、在浏览器里用的刷题程序。你导入自己的 Excel 题库，用它们考试或练习，再复习答错的题。如果管理员接入了 AI 服务商并为用户开通了 **AI+ 功能**，用户还可以在 **AI 对话** 里向 AI 模型提问，并在学习时得到 AI 帮助：练习中的 AI 提示、练习中和成绩页上对每道题的 AI 解析，对答错题目的 AI 总结，以及主页上简短的 AI 学习状态评估。主页有学习排行和你最常错的题；整个程序是手写风格，一个按钮就能切换回普通文字。电脑和手机（iPhone）都能用。
 
-![答题页：一道显示成中文的热点题、English / 中文 / 日本語 切换按钮，以及带「完成考试」按钮的答题卡](../docs/zh-CN/screenshots/desktop-2-quiz.png)
+<p align="center">
+  <img src="../docs/zh-CN/screenshots/desktop-1-home.png" alt="主页：考试&练习、各页面按钮、学习排行、最常错的题和 AI 学习状态评估" width="420">
+  <img src="../docs/zh-CN/screenshots/desktop-3-result.png" alt="成绩页：每道题用红笔画圈或打叉，附答案和解析" width="420">
+</p>
+<p align="center">
+  <img src="../docs/zh-CN/screenshots/desktop-14-ai-chat.png" alt="AI 对话" width="420">
+  <img src="../docs/zh-CN/screenshots/desktop-2-quiz.png" alt="答题页：English / 中文 / 日本語 切换和答题卡" width="420">
+</p>
+<p align="center">
+  <img src="../docs/zh-CN/screenshots/iphone-1-home.png" alt="手机上的主页" width="220">
+  <img src="../docs/zh-CN/screenshots/iphone-2-quiz.png" alt="手机上的答题页" width="220">
+  <img src="../docs/zh-CN/screenshots/iphone-7-ai-chat.png" alt="手机上的 AI 对话" width="220">
+</p>
 
 仓库里**没有题目**。Xexam 只提供导入、整理和练习题目的工具；题库是你自己的 Excel 文件，不会被提交（`.gitignore` 已排除）。截图里用的是虚构的演示题库，不是任何真实考试的内容。
 
 | | |
 |---|---|
-| 当前版本 | **v2.3.1**（见 [更新日志](../docs/zh-CN/changelog.md)，也可以在仓库的 [Releases](../../../releases) 页看；在程序里：菜单 → **Xexam v2.3.1**） |
-| 镜像 | 共三个，在 Docker Hub 上（公开，不用登录）：`docker.io/yuminspace/xexam-frontend`、`docker.io/yuminspace/xexam-backend` 和 `docker.io/yuminspace/xexam-ai-service`，标签 `latest` / `v2.3.1` / `sha-<提交>`（`sha-` 标签用来排查问题）。镜像副本：`ghcr.io/yumin-space/xexam-frontend`、`ghcr.io/yumin-space/xexam-backend` 和 `ghcr.io/yumin-space/xexam-ai-service`（私有，标签相同） |
+| 当前版本 | **v2.6**（见 [更新日志](../docs/zh-CN/changelog.md)，也可以在仓库的 [Releases](../../../releases) 页看；在程序里：菜单 → **Xexam v2.6**） |
+| 镜像 | 共三个，在 Docker Hub 上（公开，不用登录）：`docker.io/yuminspace/xexam-frontend`、`docker.io/yuminspace/xexam-backend` 和 `docker.io/yuminspace/xexam-ai-service`，标签 `latest` / `v2.6` / `sha-<提交>`（`sha-` 标签用来排查问题）。镜像副本：`ghcr.io/yumin-space/xexam-frontend`、`ghcr.io/yumin-space/xexam-backend` 和 `ghcr.io/yumin-space/xexam-ai-service`（私有，标签相同） |
 | CPU 架构 | `linux/amd64`、`linux/arm64`（同一个标签里自动选对的） |
 | 端口 | `8765`（默认只绑定本机） |
 | 许可证 | [MIT](../LICENSE) |
@@ -100,7 +112,7 @@ docker compose up -d
 | 操作 | 命令 |
 |---|---|
 | 更新到最新版本 | 先 `docker compose pull`，再 `docker compose up -d`（请先看 [升级](#升级)） |
-| 固定在某个版本 | 把 `docker-compose.yml` 里三个镜像的 `:latest` 都改成 `:v2.3.1`，再 `docker compose up -d` |
+| 固定在某个版本 | 把 `docker-compose.yml` 里三个镜像的 `:latest` 都改成 `:v2.6`，再 `docker compose up -d` |
 | 查看状态 | `docker compose ps`（三个容器都应该是 `healthy`） |
 | 停止 / 再启动 | `docker compose stop` / `docker compose start` |
 | 看日志 | `docker compose logs -f backend` 和 `docker compose logs -f ai-service`（管理员也可以在菜单里打开 **系统日志**；那里也显示 AI 服务的日志） |

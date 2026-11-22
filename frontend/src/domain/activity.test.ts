@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { actionFilter, addressText, deviceLabel, detailText, hardSoonMinutes, looksLikeProxy, mergeNewer, userFilter } from './activity.ts';
+import { actionFilter, activityPage, addressText, deviceLabel, detailText, hardSoonMinutes, looksLikeProxy, mergeNewer, userFilter } from './activity.ts';
 
 test('deviceLabel: browser and system, unknown agents cut, none = null', () => {
   assert.equal(deviceLabel('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36'), 'Chrome · Windows');
@@ -59,4 +59,14 @@ test('addressText: IP, place and device while the eye is open; the device alone 
   // eye closed: no IP and no place, whatever the row holds
   assert.equal(addressText('203.0.113.5', 'Example City', 'Safari · macOS', false), 'Safari · macOS');
   assert.equal(addressText(null, null, null, false), '—');
+});
+
+test('activityPage: clamps the page, counts from / to, an empty list is one empty page', () => {
+  assert.deepEqual(activityPage(0, 1), { page: 1, pages: 1, start: 0, end: 0, from: 0, to: 0 });
+  assert.deepEqual(activityPage(45, 1, 20), { page: 1, pages: 3, start: 0, end: 20, from: 1, to: 20 });
+  assert.deepEqual(activityPage(45, 3, 20), { page: 3, pages: 3, start: 40, end: 45, from: 41, to: 45 });
+  assert.equal(activityPage(45, 9, 20).page, 3);
+  assert.equal(activityPage(45, 0, 20).page, 1);
+  assert.equal(activityPage(45, Number.NaN, 20).page, 1);
+  assert.equal(activityPage(40, 2, 20).pages, 2);
 });

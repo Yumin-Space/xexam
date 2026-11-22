@@ -15,7 +15,7 @@ use std::collections::HashMap;
 /// The wire format of a route's requests (`settings::Format`).
 pub type WireFormat = Format;
 
-/// The seven model slots. `Default` is the model every other slot falls back to.
+/// The eight model slots. `Default` is the model every other slot falls back to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Slot {
     Default,
@@ -23,23 +23,25 @@ pub enum Slot {
     Hint,
     Explain,
     Summary,
+    Assess,
     Generate,
     Import,
 }
 
 impl Slot {
     /// Every slot, in the order of `store::conn::SLOT_NAMES`.
-    pub const ALL: [Slot; 7] = [
+    pub const ALL: [Slot; 8] = [
         Slot::Default,
         Slot::Chat,
         Slot::Hint,
         Slot::Explain,
         Slot::Summary,
+        Slot::Assess,
         Slot::Generate,
         Slot::Import,
     ];
 
-    /// `default | chat | hint | explain | summary | generate | import`
+    /// `default | chat | hint | explain | summary | assess | generate | import`
     pub fn as_str(self) -> &'static str {
         match self {
             Slot::Default => "default",
@@ -47,6 +49,7 @@ impl Slot {
             Slot::Hint => "hint",
             Slot::Explain => "explain",
             Slot::Summary => "summary",
+            Slot::Assess => "assess",
             Slot::Generate => "generate",
             Slot::Import => "import",
         }
@@ -64,8 +67,9 @@ impl Slot {
             Slot::Hint => 2,
             Slot::Explain => 3,
             Slot::Summary => 4,
-            Slot::Generate => 5,
-            Slot::Import => 6,
+            Slot::Assess => 5,
+            Slot::Generate => 6,
+            Slot::Import => 7,
         }
     }
 }
@@ -79,6 +83,7 @@ impl crate::features::Feature {
             Feature::Hint => Slot::Hint,
             Feature::Explain => Slot::Explain,
             Feature::Summary => Slot::Summary,
+            Feature::Assess => Slot::Assess,
             Feature::Generate => Slot::Generate,
             Feature::Import => Slot::Import,
         }
@@ -225,9 +230,9 @@ pub struct View {
     pub conns: Vec<ConnRow>,
     pub pool: Vec<PoolRow>,
     /// Pool id of each slot, in [`Slot::ALL`] order
-    pub slots: [Option<i64>; 7],
+    pub slots: [Option<i64>; 8],
     /// Thinking strength of each slot, in [`Slot::ALL`] order
-    pub efforts: [Option<Effort>; 7],
+    pub efforts: [Option<Effort>; 8],
     pub keys: HashMap<i64, KeyState>,
 }
 
@@ -423,7 +428,7 @@ impl View {
         self.resolve(slot, None).is_ok()
     }
 
-    /// `true` when at least one of the seven slots resolves.
+    /// `true` when at least one of the eight slots resolves.
     pub fn any(&self) -> bool {
         Slot::ALL.iter().any(|s| self.exists(*s))
     }
@@ -496,8 +501,8 @@ mod tests {
                 model(11, 1, "demo-large", "ok"),
                 model(20, 2, "demo-claude", "ok"),
             ],
-            slots: [Some(10), None, Some(20), None, None, None, None],
-            efforts: [None; 7],
+            slots: [Some(10), None, Some(20), None, None, None, None, None],
+            efforts: [None; 8],
             keys: HashMap::new(),
         };
         v.keys.insert(1, keys(false, false, true));
@@ -513,7 +518,7 @@ mod tests {
         let mut v = view();
         v.conns[1].effort_family = "anthropic".into();
         // default: md (wrong family for its connection), chat: hi (falls back to the default model), hint: lo (own model)
-        v.efforts = [md, hi, lo, None, None, None, None];
+        v.efforts = [md, hi, lo, None, None, None, None, None];
         let tag = |r: &Route| r.effort.map(Effort::tag);
         // own model: the slot's effort
         let r = v.resolve(Slot::Hint, None).expect("study");
@@ -576,7 +581,7 @@ mod tests {
         assert_eq!(t(Slot::Hint), Some((2, 20)));
         assert_eq!(t(Slot::Chat), Some((1, 10)));
         let mut none = view();
-        none.slots = [None; 7];
+        none.slots = [None; 8];
         assert!(none.slot_target(Slot::Chat).is_none());
     }
 
@@ -597,6 +602,7 @@ mod tests {
         assert_eq!(Feature::Summary.slot(), Slot::Summary);
         assert_eq!(Feature::Generate.slot(), Slot::Generate);
         assert_eq!(Feature::Import.slot(), Slot::Import);
+        assert_eq!(Feature::Assess.slot(), Slot::Assess);
     }
 
     #[test]
@@ -626,7 +632,7 @@ mod tests {
         assert_eq!(r.fallback, Fallback::None);
         // no default and no own model: nothing resolves, and other pool models are never picked up
         let mut none = view();
-        none.slots = [None; 7];
+        none.slots = [None; 8];
         for s in Slot::ALL {
             assert_eq!(
                 none.resolve(s, None).err().map(|e| e.code),
@@ -717,7 +723,7 @@ mod tests {
         assert_eq!(r.fallback, Fallback::Default);
         // nothing resolves even without the pick
         let mut none = view();
-        none.slots = [None; 7];
+        none.slots = [None; 8];
         assert!(none.resolve(Slot::Chat, Some(&gone)).is_err());
     }
 
@@ -769,7 +775,7 @@ mod tests {
         assert_eq!(v.resolve(Slot::Chat, None).expect("own").connection_id, 2);
         // nothing at all: still plain disabled
         let mut none = view();
-        none.slots = [None; 7];
+        none.slots = [None; 8];
         assert_eq!(
             none.resolve(Slot::Chat, None).err().map(|e| e.code),
             Some("ai.disabled")

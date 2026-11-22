@@ -2,8 +2,8 @@
 
 # 数据库
 
-> 数据库是 SQLite，**只有一个文件 `xexam.db`**。Rust 后端从旧 Python 版的数据库起步：原来的建表语句（schema v1）一字不差地保留，直到 v10 的每个 schema 都只是往上加东西（新表和新列）：**schema v2**（v0.5：题库、考试详情、设置）、**schema v3**（v0.6：用户和登录）、**schema v4**（v0.7：按用户设置题库、题库所有者、练习记录）、**schema v5**（v0.8：每个用户的 AI+ 功能授权和一个身份标记）和 **schema v6**（v0.9：一条记录是从哪次练习或考试会话保存的，即那次会话的 key 和开始时间）。*v1.6* 起主数据库是 schema **10**（每用户的题库下载权限，第 6.16 节），*v2.0* 起是 schema **11**（数据库整理：九张表带外键重建，旧表删除，第 6.17 节）。新版本第一次启动时，会先写一份备份副本，再自动迁移已有的数据库（第 6 节）。从 v0.7 起，数据库以 **WAL 模式**运行（第 2 节）。
-> 从 v0.8 起，ai-service 有**第二个、独立的数据库** `xexam-ai.db`，放在它自己的卷里（第 8 节）；从 v2.0 起它的 schema 是 **10**（v1.9 是 9，v1.4 是 8，v1.3 是 7，v1.1 是 6，v1.0 是 4，v0.9 是 3）。两个服务从不打开对方的数据库。**v1.1 把主数据库升级到 schema v7**（第 6 节）；AI 数据库不影响它。
+> 数据库是 SQLite，**只有一个文件 `xexam.db`**。Rust 后端从旧 Python 版的数据库起步：原来的建表语句（schema v1）一字不差地保留，直到 v10 的每个 schema 都只是往上加东西（新表和新列）：**schema v2**（v0.5：题库、考试详情、设置）、**schema v3**（v0.6：用户和登录）、**schema v4**（v0.7：按用户设置题库、题库所有者、练习记录）、**schema v5**（v0.8：每个用户的 AI+ 功能授权和一个身份标记）和 **schema v6**（v0.9：一条记录是从哪次练习或考试会话保存的，即那次会话的 key 和开始时间）。*v1.6* 起主数据库是 schema **10**（每用户的题库下载权限，第 6.16 节），*v2.0* 起是 schema **11**（数据库整理：九张表带外键重建，旧表删除，第 6.17 节），*v2.6* 起是 schema **12**（用户的显示名 `users.display_name`，第 6.19 节）。新版本第一次启动时，会先写一份备份副本，再自动迁移已有的数据库（第 6 节）。从 v0.7 起，数据库以 **WAL 模式**运行（第 2 节）。
+> 从 v0.8 起，ai-service 有**第二个、独立的数据库** `xexam-ai.db`，放在它自己的卷里（第 8 节）；从 v2.1 起它的 schema 是 **11**（v2.0 是 10，v1.9 是 9，v1.4 是 8，v1.3 是 7，v1.1 是 6，v1.0 是 4，v0.9 是 3）。两个服务从不打开对方的数据库。**v1.1 把主数据库升级到 schema v7**（第 6 节）；AI 数据库不影响它。
 > 依据：[audit/database.md](history/audit/database.md)；黄金测试：`backend/tests/db_golden.rs`（对着 `tests/baseline/fixtures/sample.db`（由旧的 Python 实现生成）和已提交的快照运行）。迁移和它们的备份在 `backend/tests/v05_banks_records_settings.rs`（v2）、`v06_users_and_sign_in.rs`（v3）、`v065_bank_access_and_practice.rs`（v4）、`v07_bank_access_and_layouts.rs`（v4 的题库权限、预发布版数据库的转换、旧格式题目的下架）、`v07_wal_and_logs.rs`（WAL 模式）、`v08_ai_link.rs`（v5）、`v09_ai_study.rs`（v6，后端的学习路由）和 `v20_db.rs`（v11，整理）里测试；AI 数据库在 `ai-service/tests/`（schema 3 见 `v09_store.rs`，schema 10 见 `v20_schema.rs`）和 `ai-service/src/store/` 的单元测试里测试。
 
 ## 1. 文件在哪里
@@ -104,6 +104,7 @@ erDiagram
         INTEGER can_manage_banks "1 = 可管理题库（v4）"
         INTEGER ai_enabled "1 = 开启了 AI+ 功能（v5）"
         TEXT uid "身份标记，32 位十六进制，永不改变（v5）"
+        TEXT display_name "别人看到的用户名，NULL = 还没设置；不区分大小写地唯一（v12）"
     }
     sessions {
         TEXT token_hash PK "Cookie 值的 SHA-256（v3）"
@@ -241,9 +242,9 @@ sha1( 工作表名 + "\n" + 去空白(题干)[:300] + "|" + 去空白(第一个�
 - **可管理题库的用户**（`users.can_manage_banks = 1`）在拥有这个权限期间，还能看到自己拥有的题库（`banks.owner_id`），也只能更新和删除这些题库。作为新题库导入的题库属于导入它的用户；v0.7 之前的题库，以及没有登录用户时新建的题库（命令行的 `import`），属于第一个管理员。
 - 删除用户会删除他的会话、学习记录（含详情）、统计、设置和 `user_banks` 行；他拥有的题库转到删除他的那位管理员名下。他的 AI 对话和记忆在 AI 数据库里：AI 服务会在下一次对账时删除它们（第 8.3 节）。
 
-### 4.9 仪表盘的查询（v2.5，只读）
+### 4.9 仪表盘的查询（v2.5，v2.6，只读）
 
-`GET /api/dashboard` 不写任何东西，也不改任何表。排行是 `user_stats` 联结 `users` 的一条汇总（至少答过一题的未停用用户，按答对数降序、再答题数升序、再用户 id 排序）；用逐题统计，是因为它在旧记录被清理到 500 条后依然保留。最常练的题是对最近 30 天的 `attempts`（按时间筛选）、`attempt_items` 和 `questions` 的一条汇总：只算有所属题库的有效题，并且不算没有作答的项目（`answer IS NULL AND correct = 0`）。查看者的题库范围随后在代码里应用。返回的只有题目编号和次数，没有题目文字、用户 id 和邮箱域名。
+`GET /api/dashboard` 不写任何东西，也不改任何表。排行是 `user_stats` 联结 `users` 的一条汇总（至少答过一题的未停用用户，按答对数降序、再答题数升序、再用户 id 排序）；用逐题统计，是因为它在旧记录被清理到 500 条后依然保留。从 v2.6 起它也读 `users.display_name`：设置了的名字原样发出，为 NULL 时退回登录名（对别的查看者，邮箱登录名会隐去中间部分）。**最常错的题**（v2.6，取代了 v2.5 对 `attempts` 和 `attempt_items` 汇总的「最常练的题」）只读查看者自己在 `user_stats` 里的行（`user_id = 查看者 AND wrong > 0`），联结 `questions`（有效、有所属题库），按 `wrong` 降序、`correct` 升序、`attempts` 降序、再题库和位置排序，最多 5 道；`user_stats` 里从不存没有作答的考试项目。查看者的题库范围随后在代码里应用（所有题库都可见时，查询本身带 `LIMIT 5`）。返回的只有题目编号和次数，没有题目文字、用户 id 和邮箱域名。
 
 ## 5. 备份和恢复
 
@@ -283,10 +284,10 @@ docker compose start
 
 ## 6. schema 迁移和回退
 
-`meta.schema` 表示一个数据库是哪个 schema（v0.4 及以前是 `1`，v0.5 是 `2`，v0.6 是 `3`，v0.7 和 v0.7.5 是 `4`，v0.8 是 `5`，从 v0.9 起是 `6`，v1.1 是 `7`，v1.3 是 `8`，v1.4 是 `9`，v1.6 是 `10`，v2.0 是 `11`）。一个版本打开 schema 更旧的数据库时，会一次性把它升级到自己的 schema：
+`meta.schema` 表示一个数据库是哪个 schema（v0.4 及以前是 `1`，v0.5 是 `2`，v0.6 是 `3`，v0.7 和 v0.7.5 是 `4`，v0.8 是 `5`，从 v0.9 起是 `6`，v1.1 是 `7`，v1.3 是 `8`，v1.4 是 `9`，v1.6 是 `10`，v2.0 是 `11`，v2.6 是 `12`；见第 6.12 到 6.19 节）。一个版本打开 schema 更旧的数据库时，会一次性把它升级到自己的 schema：
 
 1. **备份。** 如果数据库里有任何数据，就用 SQLite 的 `VACUUM INTO` 往 `xexam.db` 旁边的 `backups/xexam-schema<N>-<YYYYmmdd-HHMMSS>.db` 写一份一致的副本，`<N>` 是这次启动之前文件的 schema（已有的文件永远不会被覆盖，而是依次加上 `-2`、`-3`……）。即使后面有好几步，也总是只写**一份**备份。副本是一个独立的、旧 schema 的文件；当时还在 `-wal` 文件里的修改也包含在内。`VACUUM INTO` 写的是一个完整的文件，所以升级之前请**留出大约和数据库一样大的可用磁盘空间**（升到 schema 11 还要重建表，要**大约两倍**，6.17）；副本从不清理，而且它会保留你以后删除的东西（记录、题库、用户），所以在这有关系时请自己删掉旧副本。**副本写不出来时**（磁盘满、没有权限），程序拒绝启动，什么都不改；日志里写明原因。
-2. **迁移**，在**一个** `BEGIN IMMEDIATE` 事务里完成：从旧 schema 到当前 schema 的每一步（6.1、6.4、6.5、6.8、6.10、6.17，以及预发布版 v4 数据库的转换），然后设置 `meta.schema`。
+2. **迁移**，在**一个** `BEGIN IMMEDIATE` 事务里完成：从旧 schema 到当前 schema 的每一步（6.1、6.4、6.5、6.8、6.10、6.17、6.19，以及预发布版 v4 数据库的转换），然后设置 `meta.schema`。
 3. **日志模式。** 这之后，后端才把文件切换到 WAL（第 2.1 节）。
 
 日志里会写出副本的名字：`Upgraded the database to schema 6. A copy of the previous version was saved first: /data/backups/xexam-schema5-….db (restore it if you ever go back to an older version).`（意思是：数据库已升级到 schema 6，升级前先保存了旧版本的副本；以后回到旧版本时请恢复它。）全新的数据库也走同样的步骤（没有备份，也没有旧题库），所以新建的和迁移过来的数据库结构相同。
@@ -456,6 +457,21 @@ v0.7.5 也能直接打开 schema 5 的文件（它把 schema `5` 当作更新的
 **主数据库不用恢复**：v1.9 的后端能原样打开 schema 11 的文件（它把更新的 schema 当作当前的）。外键现在会强制执行，而它的删除路径本来就先删子行。它启动时会执行 v1 的 `SCHEMA`，所以会重新建出一张空的 `stats` 表；v2.0 下次启动时再把它删掉（里面有行就保留并给出警告，6.6）。恢复 `backups/xexam-schema10-….db` 也行，但会丢掉之后写入的所有东西；**只有回到比 v1.9 更早的版本才必须这样做**。
 
 **AI 数据库不一样**：v1.9 的 ai-service 拒绝 schema 10，所以回退要恢复 AI 备份 `backups/xexam-ai-schema9-<日期时间>.db`（第 8.4 节，[migration.md](migration.md)），升级之后写入的所有设置、对话、记忆和用量行都会丢。
+
+### 6.19 Schema v12（v2.6）
+
+主数据库在 v2.6 后端第一次启动时，先写一份备份副本 `backups/xexam-schema11-<日期时间>.db`，再从 schema 11 升到 **schema 12**，只升一次（从更老的 schema 升级时，只写那个更老 schema 的一份备份，一步升到 12；6.17 的 v11 那一步在同一事务里先运行）。这一步只增加：
+
+- **`users.display_name TEXT`**（可为空，没有默认值）：用户自己选的**用户名**，也就是其他所有人看到的名字（排行、问候、顶栏、菜单）。`NULL` = 还没选；从不保存空字符串。已有的每个用户都得到 `NULL`，下次登录时会被要求设置名字；在那之前，这个账户只能完成设置（[api.md](api.md) 第 3 节）。`users.username` 仍然是**登录名**（从 v2.6 起，界面创建的每个账户都是邮箱地址；已有的登录名从不改写）。
+- **`idx_users_display_name`**：`CREATE UNIQUE INDEX … ON users(display_name COLLATE NOCASE) WHERE display_name IS NOT NULL`。设置了的名字在不区分 ASCII 字母大小写的情况下唯一（SQLite 的 `NOCASE` 只折叠 A–Z；其他文字按原样比较）。在索引之外，代码还在写入事务里检查：新的显示名不是别的用户的登录名，新的登录名也不是别的用户的显示名，所以两者永远不会冲突。
+
+这一列由 `POST /api/auth/name` 和 `POST /api/auth/password`（和密码一起，在一个事务里）写入；管理员从不写它。文字清理后保存（去掉首尾空白，连续的空白合成一个空格，1–20 个字符，不含 `@`，不含控制字符或不可见的格式字符）。日志行是 `system.migrate`，带 `{"from": 11, "to": 12}`（只有一行，从更老的 schema 升级时也是 `"to": 12`，只在文件里有数据时写），日志里写 `Upgraded the database to schema 12. A copy of the previous version was saved first: <path> …`。和每次升级一样，它在一个事务里运行；出现任何意外，文件都留在 schema 11，备份已经写好。
+
+测试在 `backend/tests/v26_display_name.rs`（规则、不区分大小写的唯一性、登录名和用户名互斥、设置关口、schema 11 文件的升级）和 `backend/tests/v20_db.rs`（每个更老的 schema 现在都升到 12）。
+
+### 6.20 回到 v2.5
+
+v2.5 的后端能原样打开 schema 12 的文件：它把更新的 schema 当作当前的，从不读取 `users.display_name`，也不碰新索引（它自己插入的行这一列为 `NULL`）。所以回退**不需要恢复**：改掉镜像标签再启动即可。这期间在 v2.5 下新建的账户没有用户名，再次运行 v2.6 时会被要求设置。恢复 `backups/xexam-schema11-….db` 也行，能回到升级前的确切状态，但会丢掉之后写入的所有东西（记录、账户、用户名）。
 
 ## 7. 旧的 `progress.json`
 
@@ -725,6 +741,18 @@ AI 数据库仍是 **schema 11**，主数据库也不变。和 v2.1 相比有三
 
 AI 库仍是 schema 11。主页仪表盘的学习状态评估存在现有的表里，是 `ref` 为 `assess@<YYYY-MM-DD>`（用户的本地日期；每个用户每天一个对话，同一天再问一次就追加一对用户消息和助手消息）的 `summary` 对话；`title` 是这个日期，`record_id` 为空。保存的用户消息是机器行 `[AI assessment] latest=<YYYY-MM-DD HH:MM> 30d <n>r <n>q`，用量用途是 `summary`。`chats.kind`、`messages.kind` 和 `usage.purpose` 的 CHECK 是列约束，而 `chats` 又被外键引用，增加一种类型就要重建表；所以改成由读取对话和消息的 SELECT 把 `ref` 以 `assess@` 开头的 `kind = 'summary'` 映射成对外的类型 `assess`，而按记录查找总结时不会看到这些对话。保留期限、每个用户的对话数上限和删除对话都和其他对话一样。
 
+### 8.2k v2.6（没有 schema 变化）
+
+AI 库仍是 **schema 11**；v2.6 只是在每次启动时用 `IF NOT EXISTS` 和列检查加上下面这些（没有备份副本，不改版本号）：
+
+- **`assess_latest`**（新表）：每个用户一行，即最新一次**完成**的 AI 学习评估：`user_id`（PK，`REFERENCES users(id) ON DELETE CASCADE`）、`content`、`lang`、`model`（可为空）、`latest_at`（它针对的最新学习记录）、`records`、`answered`、`day`（`YYYY-MM-DD`，ai-service 接受请求那天的本地日期）、`created_at`（unix 秒）和 `runs`（`day` 那天成功的次数，默认 1）。它在结束一个回答的同一事务里写入，只在回答属于评估对话（`ref` 以 `assess@` 开头的 `summary` 对话）、以 `done` 结束并且有文字时才写；同一天再成功一次 `runs` 加 1，新的一天设为 1。失败、停止和空的回答什么都不写。删除对话、「删除全部对话」、管理员的清除和保留期限都从不影响它；删除用户时它也被删除。每日上限（`limits.assess_per_day`）在 `day` 是今天时对照 `runs` 检查。
+- **`usage.assess INTEGER NOT NULL DEFAULT 0 CHECK (assess IN (0, 1))`**：`1` 表示一次学习评估调用。不重建表就改不了 `usage.purpose` 的 `CHECK`，所以这样的调用保留 `purpose = 'summary'`，按功能统计的用量把它报成 `assess`；v2.5 的行保持 `0`，仍算在 `summary` 下。
+- **`limits.assess_per_day`**（0 到 50，默认 3）和 **`limits.assess_admins_exempt`**（0 或 1，默认 1）；已有的那一行取默认值。
+- **`model_slots`** 增加第八个槽位 `assess`：表重建一次（它对 `slot` 的 `CHECK` 必须允许新名字；做法和 8.2f 相同），新行复制 `summary` 行的模型、强度和 `updated_by`。
+- **功能位**：`assess` 是 `settings.features_off` 和 `users.features_off` 的第 64 位（已知的位现在是 0 到 127）。位为 0 表示允许，所以每个用户和全局开关一开始都开启评估。
+
+**回到 v2.5** 不需要恢复：v2.5 能打开这个文件（schema 11），忽略新表、新列、多出来的 `model_slots` 行和功能位，它插入的行取列的默认值。它写的评估不会复制进 `assess_latest`。只有一点要注意：如果全局的「AI 学习评估」开关是关着的，回退之前先把它打开，因为 v2.5 下次修改全局开关时，会把保存的开关位限制在它的六个功能（0 到 63）以内，这时保存着的第 64 位会让所有功能都关闭。
+
 ### 8.3 服务怎样使用它
 
 - **打开**：创建表（`IF NOT EXISTS`），用默认值加上 `settings` 和 `limits` 两行，新数据库把 `meta.schema` 设为 `4`。`meta.schema` 为 `1`、`2` 或 `3` 的数据库会被升级（见下面的迁移）。更新的 ai-service 写的数据库（`meta.schema` 大于 `4`）会被拒绝：服务记一行日志，不启动，所以旧镜像永远不会打开更新的文件。因崩溃或被强行终止而停在 `streaming` 的回答会被标记为 `error`，错误码 `ai.interrupted`（只在有这样的回答时；`idx_messages_streaming` 负责找出它们）。
@@ -798,6 +826,7 @@ erDiagram
     int can_download_banks
     int ai_enabled
     text uid
+    text display_name
     text created_at
     text last_login_at
     text last_active_at
@@ -938,12 +967,12 @@ erDiagram
 
 | 功能域 | 表 | 备注 |
 |---|---|---|
-| AI 设置 | `settings`（单行）、`limits`（单行）、`connections`、`connection_secrets`、`models`、`model_slots`、`geo_settings`（单行） | `model_slots` 有七行：`default`、`chat`、`hint`、`explain`、`summary`、`generate`、`import` |
+| AI 设置 | `settings`（单行）、`limits`（单行）、`connections`、`connection_secrets`、`models`、`model_slots`、`geo_settings`（单行） | `model_slots` 从 v2.6 起有八行：`default`、`chat`、`hint`、`explain`、`summary`、`assess`、`generate`、`import` |
 | 身份 | `users` | 主数据库用户的镜像，加每个用户的 AI 状态 |
-| 对话和学习会话 | `chats`、`messages`、`memories` | `chats.kind` 是 `chat`、`practice`、`exam` 或 `summary` |
+| 对话和学习会话 | `chats`、`messages`、`memories`、`assess_latest`（v2.6） | `chats.kind` 是 `chat`、`practice`、`exam` 或 `summary`；`assess_latest` 把每个用户最新的学习评估和它的对话分开保存 |
 | 共享的提示和解析 | `study_shared` | 跨用户复用，不带用户 id |
 | AI 出题和 AI 导入 | `tasks`、`gen_items`、`gen_calls` | `tasks.kind` 两者都是 `bank_gen`，靠 payload 区分 |
-| 计量 | `usage`（对话、提示、解析、总结、校验）、`gen_calls`（出题和导入） | 故意分成两张：每用户的调用上限只读 `usage` |
+| 计量 | `usage`（对话、提示、解析、总结、学习评估、校验）、`gen_calls`（出题和导入） | 故意分成两张：每用户的调用上限只读 `usage` |
 | 系统 | `meta`、`audit_outbox` | |
 
 实线是声明了的外键；虚线是故意不加外键、由代码维持的关系（消息分支、对话选的连接、用量历史）。
@@ -1181,10 +1210,11 @@ erDiagram
 | `chats` | AI 对话（含管理员选的强度 `pick_effort`），以及每次练习、考试或记录总结的会话 | PK `id`；`user_id` → `users`（CASCADE） | `leaf_id` 和 `pick_conn` 故意没有外键 |
 | `messages` | 消息及其分支版本；提示、解析和总结也存在这里 | PK `id`；`chat_id` → `chats`（CASCADE） | 有些列只对某一种 `kind` 有意义 |
 | `memories` | 每个用户的记忆 | PK `id`；`user_id` → `users`（CASCADE） | |
+| `assess_latest` | （v2.6）每个用户最新一次完成的 AI 学习评估：文字、语言、模型、它的依据、日期和当天成功的次数 | PK `user_id`，→ `users`（CASCADE） | 删除对话、「删除全部对话」和保留期限都不影响它 |
 | `tasks` | 后台任务：AI 出题和 AI 导入 | PK `id`；`user_id` → `users`（CASCADE） | `job_key` 是部分唯一索引 |
 | `gen_items` | 正在进行的任务里已接受的题（断点续跑） | PK `(task_id, no)`；指向 `tasks`（CASCADE） | |
 | `gen_calls` | 出题和导入的每次模型调用（token、耗时、结果） | PK `id`；`task_id`、`user_id`（SET NULL） | |
-| `usage` | 其他所有模型调用，只有 token、耗时和状态，没有内容 | PK `id`；`user_id`（SET NULL） | |
+| `usage` | 其他所有模型调用，只有 token、耗时和状态，没有内容 | PK `id`；`user_id`（SET NULL） | `assess = 1`（v2.6）表示学习评估调用，它的 `purpose` 仍是 `summary` |
 | `audit_outbox` | 等着发给后端的活动行 | PK `id` | 临时队列 |
 | `connections` | AI 连接：地址、格式、网关认证、思考强度家族 `effort_family`、状态，以及启用开关 `enabled` | PK `id`；`name` 唯一，不分大小写 | `format` 只允许 `openai` 和 `anthropic`；OpenAI Responses 是 `openai` 加 `responses = 1` |
 | `connection_secrets` | 连接的加密密钥 | PK `(connection_id, name)`；指向 `connections`（CASCADE） | |

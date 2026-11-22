@@ -10,14 +10,17 @@ import { miniSwitch } from './mini-switch.ts';
 import { iconButton } from './icon-button.ts';
 import { miniIcon } from './mini-icons.ts';
 import { holdTip } from './tooltip.ts';
-import { ACTIVITY_GROUPS, ACTIVITY_REFRESH_MS, actionFilter, addressText, detailText, deviceLabel, looksLikeProxy, mergeNewer, userFilter } from '../domain/activity.ts';
+import { ACTIVITY_GROUPS, ACTIVITY_PAGE_SIZE, ACTIVITY_REFRESH_MS, activityPage, actionFilter, addressText, detailText, deviceLabel, looksLikeProxy, mergeNewer, userFilter } from '../domain/activity.ts';
+import { pageList } from '../domain/paged-table.ts';
 import { countryNameIn, placeText, shortPlace } from '../domain/geo.ts';
 import { errorText } from '../i18n/errors.ts';
 import { localizeServerMessage } from '../i18n/server-messages.ts';
-import { hasKey, t, uiLang, type MsgKey } from '../i18n/index.ts';
+import { hasKey, localeTag, t, uiLang, type MsgKey } from '../i18n/index.ts';
 import type { ActivityEntry, ActivityPage, ActivitySettings } from '../types/api.ts';
+import { matches, PHONE_MQ } from '../utils/media.ts';
 import { toast } from '../utils/toast.ts';
 import { h } from '../utils/dom.ts';
+import '../styles/paged-table.css';
 
 // ---------------------------------------------------------------- state (kept while the app runs)
 
@@ -33,6 +36,8 @@ let paused = false;
 let settingsOpen = false;
 let settingsBusy = false;
 let proxyHint = false;
+/** The page of the list on screen (1-based; the entries are paged on the client, 20 a page); a new filter goes back to 1 */
+let page = 1;
 const filters = { user: '', action: '', result: '' as '' | 'ok' | 'fail' };
 const openIds = new Set<number>();
 /** v1.4 (owner): the green eye in the toolbar opens every entry's details, also of entries loaded later; an entry closed by
@@ -83,6 +88,7 @@ async function readFirst(redraw: () => void): Promise<void> {
   const mine = ++epoch;
   loading = true;
   readError = null;
+  page = 1;
   redraw();
   try {
     const a = await fetchActivity(query({ facets: true }));
@@ -110,8 +116,11 @@ async function readOlder(redraw: () => void): Promise<void> {
     const a = await fetchActivity(query({ before: next }));
     if (mine !== epoch) return;
     take(a);
+    const before = entries.length;
     entries = [...entries, ...a.entries.filter((e) => !entries.some((x) => x.id === e.id))];
     next = a.next;
+    // Step into the page that holds the first entry just read (stays on a partly filled last page)
+    page = Math.floor(before / ACTIVITY_PAGE_SIZE) + 1;
   } catch (e) {
     if (mine !== epoch) return;
     readError = e;
@@ -128,6 +137,11 @@ async function readNewer(redraw: () => void): Promise<void> {
     const a = await fetchActivity(query({ after: newest }));
     if (mine !== epoch) return;
     take(a);
+    // More than one window came in: reload from the top instead of merging with a hole
+    if (a.next != null) {
+      await readFirst(redraw);
+      return;
+    }
     if (a.entries.length) {
       entries = mergeNewer(entries, a.entries);
       newest = a.newest ?? entries[0]?.id ?? newest;
@@ -198,6 +212,30 @@ function row(e: ActivityEntry): HTMLElement {
   li.append(main);
   if (open) li.append(detail(e));
   return li;
+}
+
+/** The pager (the look and the texts of the AI settings tables): arrows + page numbers + "Page x / y"; the arrows stay in place */
+function pager(pages: number, cur: number, more: boolean, goTo: (p: number, key: string, keyboard: boolean) => void): HTMLElement {
+  const num = (n: number): string => n.toLocaleString(localeTag());
+  const step = (dir: -1 | 1): HTMLElement => {
+    const target = cur + dir;
+    const off = target < 1 || target > pages;
+    return h('button', {
+      type: 'button', id: `act-${dir < 0 ? 'prev' : 'next'}`, class: 'ptb-pg ptb-step', 'aria-disabled': off ? 'true' : null,
+      'aria-label': t(dir < 0 ? 'ai.set.tbl.prev' : 'ai.set.tbl.next'), onclick: (ev: MouseEvent) => !off && goTo(target, dir < 0 ? 'prev' : 'next', ev.detail === 0),
+    }, dir < 0 ? '‹' : '›');
+  };
+  // Phones: only the current page between the arrows (3 x 44 px + gaps fits at 320 px); the "Page x / y" text beside it
+  const list: (number | 'gap')[] = matches(PHONE_MQ) ? [cur] : pageList(cur, pages, 1);
+  const nums = list.map((p) => (p === 'gap'
+    ? h('span', { class: 'ptb-gap', 'aria-hidden': 'true' }, '…')
+    : h('button', {
+      type: 'button', id: `act-p${p}`, class: 'ptb-pg' + (p === cur ? ' on' : ''), 'aria-current': p === cur ? 'page' : null,
+      'aria-label': t('ai.set.tbl.goPage', { n: num(p) }), onclick: (ev: MouseEvent) => p !== cur && goTo(p, `p${p}`, ev.detail === 0),
+    }, num(p))));
+  return h('nav', { class: 'ptb-pager act-pager', 'aria-label': t('ai.set.tbl.pager') },
+    h('div', { class: 'ptb-btns' }, step(-1), ...nums, step(1)),
+    h('span', { class: 'ptb-of' }, t(more ? 'act.pageOfMore' : 'ai.set.tbl.pageOf', { p: num(cur), n: num(pages) })));
 }
 
 /** The green eye of the toolbar (the look of the sign-in eye in User management): pressed = every entry shows its details */
@@ -344,9 +382,38 @@ export function activityLog(): ActivityView {
       const filtered = filters.user !== '' || filters.action !== '' || filters.result !== '';
       kids.push(h('p', { class: 'act-empty' }, t(filtered ? 'act.noMatch' : 'act.empty')));
     } else {
-      kids.push(headRow(), h('ol', { class: 'act-list' }, entries.map((e) => row(e))));
-      if (next != null) {
-        kids.push(h('button', { type: 'button', class: 'btn act-more', disabled: loading, onclick: () => void readOlder(redraw) }, t('act.more')));
+      const pg = activityPage(entries.length, page);
+      page = pg.page;
+      kids.push(headRow(), h('ol', { class: 'act-list' }, entries.slice(pg.start, pg.end).map((e) => row(e))));
+      if (pg.pages > 1) {
+        kids.push(pager(pg.pages, pg.page, next != null, (p, key, keyboard) => {
+          page = p;
+          redraw();
+          // Back on page 1: catch up with what came in meanwhile (the refresh reads only while page 1 is shown), unless paused
+          if (p === 1 && !paused) void readNewer(redraw);
+          // Show the top of the new page whenever the list starts above the screen (every width; phones keep the sticky-bar padding)
+          if (root.getBoundingClientRect().top < 0) root.scrollIntoView({ block: 'start' });
+          // Focus only for keyboard use (a tap must not draw a focus ring on iPhone); the pressed control, or the current
+          // page number when that control is now disabled
+          if (keyboard) {
+            let el = document.getElementById(`act-${key}`);
+            if (!el || el.getAttribute('aria-disabled') === 'true') el = document.getElementById(`act-p${p}`);
+            el?.focus({ preventScroll: true });
+          }
+        }));
+      }
+      // Older entries are read only from the last page on: the pager then walks into them
+      if (next != null && pg.page === pg.pages) {
+        kids.push(h('button', { type: 'button', id: 'act-more', class: 'btn act-more', disabled: loading, onclick: (ev: MouseEvent) => {
+          // Reading older entries may step into a new page: show its top, and move focus only for keyboard use
+          const kb = ev.detail === 0;
+          const was = page;
+          void readOlder(redraw).then(() => {
+            if (page === was) return;
+            if (root.getBoundingClientRect().top < 0) root.scrollIntoView({ block: 'start' });
+            if (kb) document.getElementById(`act-p${page}`)?.focus({ preventScroll: true });
+          });
+        } }, t('act.more')));
       }
     }
     // A refresh (every few seconds, Older, a filter) redraws the list: keep the page where it is and the focus on the same
@@ -374,7 +441,8 @@ export function activityLog(): ActivityView {
         schedule();
         return;
       }
-      const go = document.visibilityState === 'hidden' ? Promise.resolve() : readNewer(redraw);
+      // Newer entries are merged in only on page 1, so the rows on page 2 and later never move under the reader
+      const go = document.visibilityState === 'hidden' || page !== 1 ? Promise.resolve() : readNewer(redraw);
       void go.then(schedule);
     }, ACTIVITY_REFRESH_MS);
   }

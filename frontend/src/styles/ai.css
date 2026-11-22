@@ -703,3 +703,49 @@ html.no-doc-scroll .ai-memwrap > .ai-notice-flow { padding-bottom: calc(6px + en
 @media (max-width: 719.98px) {
   .ai-box.compact .ai-effort-wrap { display: none; }
 }
+
+/* v2.6 preview, blackboard mode (html[data-hand], the top-bar "Aa" switch): the conversation itself is hand-written: the
+   AI's replies, the user's messages, the composer (typed text and its placeholder) and the greeting / hints of an empty chat.
+   The history, the menus and the buttons keep the page font; code in a reply keeps its monospace face. */
+html[data-hand] :is(.ai-msg .ai-md, .ai-msg.user .ai-bubble, .ai-welcome, .ai-input) { font-family: 'Xexam Hand', var(--en); }
+html[data-hand]:lang(zh-CN) :is(.ai-msg .ai-md, .ai-msg.user .ai-bubble, .ai-welcome, .ai-input) { font-family: 'Xexam Hand', var(--zh); }
+html[data-hand]:lang(ja) :is(.ai-msg .ai-md, .ai-msg.user .ai-bubble, .ai-welcome, .ai-input) { font-family: 'Xexam Hand', var(--jp); }
+
+/* Blackboard mode: the hand-drawn Xexam picture (logo, name, globe, pencil and ruler) above the empty chat's greeting */
+/* It hangs above the greeting from a zero-height anchor, so the greeting and the composer stay exactly where they were */
+.ai-welcome-anchor { display: none; }
+html[data-hand] .ai-welcome-anchor { display: block; position: relative; height: 0; }
+.ai-welcome-art { position: absolute; left: 50%; bottom: 10px; width: min(360px, 82vw); height: auto; transform: translateX(-50%); color: var(--ink); pointer-events: none; }
+/* Too little room above the greeting (a short window): no picture rather than one cut off at the top */
+@media (max-height: 620px) { html[data-hand] .ai-welcome-anchor { display: none; } }
+/* Typing on a touch screen: the keyboard takes the lower half and lifts the greeting, so the picture would climb over the
+   chat's top bar; it fades away while the composer has the focus and comes back when the keyboard closes */
+@media (pointer: coarse) {
+  /* A fade, not a jump: out quickly when the composer takes the focus, back in slowly and only after a short wait, so the
+     brief focus changes while the keyboard opens (the page is redrawn) never flash the picture */
+  /* The typing state lives on <html> (html.ai-typing, set by pages/ai.ts from the focus moves, cleared only after the focus
+     stayed out of the composer for a moment), so a redraw of the page neither replays nor flashes anything: the picture
+     simply stands still, and only fades when the keyboard opens or closes */
+  html[data-hand] .ai-welcome-art { transition: opacity .2s ease; }
+  html[data-hand].ai-typing .ai-welcome-art { opacity: 0; }
+}
+@media (pointer: coarse) and (prefers-reduced-motion: reduce) { html[data-hand] .ai-welcome-art { transition: none; } }
+.ai-welcome-art path { fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; }
+/* Pencil-sketch look: thinner outlines, a soft extra retrace (the drop shadow repeats every line a hair lower right) and
+   fine hatching for the shade */
+.ai-welcome-art .sk-main { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.ai-welcome-art .sk-faint { stroke-width: .7; opacity: .32; }
+.ai-welcome-art .sk-hatch { stroke-width: .6; opacity: .45; }
+/* Faces filled with what is behind the picture (the chat card; on phones the page itself), so a book or a sheet hides the
+   one under it */
+.ai-welcome-art { --sk-bg: var(--card); }
+html.no-doc-scroll .ai-welcome-art { --sk-bg: var(--page); }
+.ai-welcome-art .sk-face { fill: var(--sk-bg); stroke: none; }
+.ai-welcome-art .sk-crease { fill: none; stroke: currentColor; stroke-width: .6; opacity: .35; stroke-linecap: round; }
+.ai-welcome-art .sk-thin { fill: none; stroke: currentColor; stroke-width: .7; opacity: .7; stroke-linecap: round; }
+.ai-welcome-art .dash-doodle-tick { stroke-width: 1.5; }
+.ai-welcome-art .dash-doodle-shade { stroke-width: 1.2; opacity: .8; }
+/* The empty chat lays its parts out as one centred stack (greeting, composer); the picture joins it right above the
+   greeting instead of floating to the top */
+.ai-conv:has(.ai-greeting) .ai-welcome-anchor { order: 2; flex: none; align-self: stretch; margin-left: var(--ai-dock-pl, 0px); }
+.ai-welcome-name { fill: currentColor; font-family: 'Xexam Hand', var(--en); font-size: 42px; letter-spacing: .02em; }

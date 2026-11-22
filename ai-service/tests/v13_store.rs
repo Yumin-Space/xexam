@@ -256,7 +256,7 @@ fn a_schema_6_file_upgrades_to_7_keeping_every_row() {
                 ("demo-chat", "ok", 4096)
             );
             let slots = conn::slots(c)?;
-            assert_eq!(slots, [Some(pool[0].id), None, None, None, None, None, None]);
+            assert_eq!(slots, [Some(pool[0].id), None, None, None, None, None, None, None]);
             let enabled: i64 = c.query_row("SELECT enabled FROM settings", [], |r| r.get(0))?;
             assert_eq!(enabled, 1);
             Ok(())
@@ -302,7 +302,7 @@ fn custom_limits_stay_and_an_unconfigured_file_gets_no_connection() {
         .read(|c| {
             assert!(conn::connections(c)?.is_empty());
             assert!(conn::pool(c)?.is_empty());
-            assert_eq!(conn::slots(c)?, [None; 7]);
+            assert_eq!(conn::slots(c)?, [None; 8]);
             Ok(())
         })
         .expect("read");
@@ -350,7 +350,7 @@ fn an_upgraded_file_has_the_shape_of_a_fresh_one() {
     let slots: i64 = c
         .query_row("SELECT COUNT(*) FROM model_slots", [], |r| r.get(0))
         .expect("slots");
-    assert_eq!(slots, 7);
+    assert_eq!(slots, 8);
     assert!(!fresh.path().join("backups").exists());
     drop(c);
     assert_eq!(limits_of(fresh.path()), (100, 200, 30));
@@ -1120,7 +1120,7 @@ fn the_pool_slots_and_the_cascade_of_a_removed_connection() {
         .expect("slots");
     assert_eq!(
         store.read(conn::slots).expect("slots"),
-        [Some(m1), Some(m2), None, None, None, Some(m3), None]
+        [Some(m1), Some(m2), None, None, None, None, Some(m3), None]
     );
     assert!(store
         .write(|tx| conn::set_slot(tx, "bogus", Some(m1), "root"))
@@ -1129,7 +1129,7 @@ fn the_pool_slots_and_the_cascade_of_a_removed_connection() {
     store.write(|tx| conn::remove_pool(tx, m2)).expect("remove");
     assert_eq!(
         store.read(conn::slots).expect("slots"),
-        [Some(m1), None, None, None, None, Some(m3), None]
+        [Some(m1), None, None, None, None, None, Some(m3), None]
     );
     // removing the connection takes its models; the slot that pointed at one becomes empty
     store
@@ -1137,7 +1137,7 @@ fn the_pool_slots_and_the_cascade_of_a_removed_connection() {
         .expect("delete");
     assert_eq!(
         store.read(conn::slots).expect("slots"),
-        [Some(m1), None, None, None, None, None, None]
+        [Some(m1), None, None, None, None, None, None, None]
     );
     assert_eq!(store.read(conn::pool).expect("pool").len(), 1);
     // usage rows keep the id of a removed connection (no foreign key)
@@ -1167,7 +1167,7 @@ fn the_global_feature_switches_are_stored_in_the_settings_row() {
     store
         .write(|tx| conn::set_features_off(tx, 1000))
         .expect("clamped");
-    assert_eq!(store.read(conn::global_features_off).expect("read"), 63);
+    assert_eq!(store.read(conn::global_features_off).expect("read"), 127);
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -1669,7 +1669,7 @@ fn tokens_today_ignores_missing_counts() {
 // Limits
 
 #[test]
-fn all_36_limits_round_trip_through_their_own_columns() {
+fn all_38_limits_round_trip_through_their_own_columns() {
     let dir = tempfile::tempdir().expect("dir");
     let store = open(dir.path());
     let mut m = serde_json::Map::new();
@@ -1687,7 +1687,7 @@ fn all_36_limits_round_trip_through_their_own_columns() {
     for d in &DEFS {
         assert_eq!(back.get(d.key), l.get(d.key), "{}", d.key);
     }
-    assert_eq!(DEFS.len(), 36);
+    assert_eq!(DEFS.len(), 38);
 }
 
 #[test]

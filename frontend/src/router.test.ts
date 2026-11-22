@@ -18,3 +18,10 @@ test('home is the dashboard and unknown paths fall back to it', () => {
   assert.equal(routeHash({ name: 'home' }), '#/');
   assert.equal(sectionOf({ name: 'home' }), 'home');
 });
+
+test('profile parses, round-trips and has its own menu section (v2.6)', () => {
+  assert.deepEqual(parseHash('#/profile'), { name: 'profile' });
+  assert.equal(routeHash({ name: 'profile' }), '#/profile');
+  assert.equal(sectionOf({ name: 'profile' }), 'profile');
+  assert.ok(sameRoute(parseHash('#/profile/'), { name: 'profile' }));
+});

@@ -27,6 +27,7 @@
 // explanation are (i) tips, the facts are one per line), the AI+ switch sits in the action row (never under a button), the bank line
 // is one 44 px row that opens the bank dialog, a new user's row is scrolled into view and highlighted, and a paused AI+ tag links
 // to AI settings.
+import '../styles/paged-table.css';
 import '../styles/users.css';
 import { fetchBanks } from '../api/bank.ts';
 import { ApiError } from '../api/client.ts';
@@ -35,6 +36,7 @@ import { clearSigninInfo, createUser, deleteUser, fetchUsers, resetUserPassword,
 import { aiBadge, aiSetBadge } from '../components/ai-badge.ts';
 import { pageHead } from '../components/common.ts';
 import { field, passwordLengthOk, usernameOk } from '../components/fields.ts';
+import { looksLikeEmail } from '../domain/user-name.ts';
 import { iconButton, shortLabel, withReason } from '../components/icon-button.ts';
 import { miniIcon, type MiniIcon } from '../components/mini-icons.ts';
 import { miniSwitch } from '../components/mini-switch.ts';
@@ -48,12 +50,13 @@ import {
   placeLocation, presetDraft, type GeoForm, type GeoProblem,
 } from '../domain/geo-source.ts';
 import { USER_TABS, hashOfUserTab, userTabOfHash, type UserTab } from '../domain/users-tabs.ts';
-import { USER_SORTS, isOnline, sortUsers, type UserSort } from '../domain/users-sort.ts';
+import { USERS_PAGE_SIZE, USERS_PAGE_SIZE_PHONE, USER_SORTS, isOnline, pageOfUser, pageUsers, viewQuery, viewSort, type UserSort } from '../domain/users-sort.ts';
+import { pageList } from '../domain/paged-table.ts';
 import { lockNote, lockView } from '../domain/lock.ts';
-import { SEARCH_FROM, aiLineKind, createAi, factPlan, filterUsers, isServiceOff, lockUntilLabel, fullAt } from '../domain/user-admin.ts';
+import { SEARCH_FROM, aiLineKind, createAi, factPlan, isServiceOff, lockUntilLabel, fullAt } from '../domain/user-admin.ts';
 import { secondsLeft } from '../domain/wait.ts';
 import { errorText } from '../i18n/errors.ts';
-import { t, tn, uiLang, type MsgKey } from '../i18n/index.ts';
+import { localeTag, t, tn, uiLang, type MsgKey } from '../i18n/index.ts';
 import { onRouteChange, onSignedIn, refreshAi, refreshLibrary, render } from '../state/actions.ts';
 import {
   accessChange, accessOf, accessView, deselectAllBanks, draftOf, editChange, isTicked, ownedBankNames, ownerView, toggleAll,
@@ -64,7 +67,10 @@ import { S } from '../state/store.ts';
 import type { BankSummary, GeoPlace, GeoPresetId, GeoSource, GeoState, Role, UserRow } from '../types/api.ts';
 import { ask, formDialog } from '../utils/dialog.ts';
 import { h, scrollToY, type Child } from '../utils/dom.ts';
-import { TOUCH_MQ, matches } from '../utils/media.ts';
+import { PHONE_MQ, TOUCH_MQ, matches } from '../utils/media.ts';
+
+/** Users per page: fewer on phones, where a card is tall */
+const pageSize = (): number => (matches(PHONE_MQ) ? USERS_PAGE_SIZE_PHONE : USERS_PAGE_SIZE);
 import { toast } from '../utils/toast.ts';
 
 const ROLES: readonly Role[] = ['user', 'admin'];
@@ -113,6 +119,8 @@ let newRowId: number | null = null;
 let newRowShown = false;
 /** US-11: the search text (a list of more than SEARCH_FROM users has a search field) */
 let searchText = '';
+/** v2.6: the page of the user list (1-based; clamped when drawn, so deleting users never leaves an empty page) */
+let listPage = 1;
 /** User id → when their sign-in lock ends (performance.now() milliseconds), for the users whose lock runs */
 const lockEnds = new Map<number, number>();
 /** User id → when the shorter lock of their other browsers ends, while both are locked (the note then changes) */
@@ -135,6 +143,7 @@ onRouteChange((from, to) => {
     resetAdd();
     actionError = null;
     searchText = '';
+    listPage = 1;
     geoReset();
     stopTicker();
     stopPoller();
@@ -266,7 +275,9 @@ function adopt(answer: UsersList): void {
   loadError = null;
   // The signed-in administrator may have renamed themselves
   const me = S.user && list.find((u) => u.id === S.user?.id);
-  if (me && S.user && me.username !== S.user.username) S.user = { ...S.user, username: me.username };
+  if (me && S.user && (me.username !== S.user.username || (me.displayName ?? null) !== (S.user.displayName ?? null))) {
+    S.user = { ...S.user, username: me.username, displayName: me.displayName ?? null };
+  }
 }
 
 /** A refused change about a user that no longer exists: show the real list */
@@ -532,8 +543,9 @@ function aiBox(): { el: HTMLElement; setRole: (r: Role) => void } | null {
 async function submitAdd(): Promise<void> {
   if (add.busy) return;
   const name = add.username.trim();
-  if (!usernameOk(name)) {
-    add.error = t('users.check.username');
+  // v2.6: the login is an e-mail address (the server keeps accepting the old plain names; this form asks for the e-mail shape)
+  if (!usernameOk(name) || !looksLikeEmail(name)) {
+    add.error = t(usernameOk(name) ? 'users.check.email' : 'users.check.username');
     focusNext = 'us-add-name';
     render();
     return;
@@ -565,6 +577,8 @@ async function submitAdd(): Promise<void> {
     newRowId = answer.users.find((u) => u.username === name)?.id ?? null;
     newRowShown = false;
     searchText = '';
+    // The new user may be on another page: show that page
+    listPage = newRowId == null ? 1 : pageOfUser(answer.users, { query: '', sort: sortBy, page: 1 }, newRowId, pageSize());
     focusNext = newRowId == null ? 'us-add-btn' : null;
   } catch (e) {
     add.error = errorText(e);
@@ -582,7 +596,7 @@ async function submitAdd(): Promise<void> {
 
 function addForm(): HTMLElement {
   const name = field({
-    id: 'us-add-name', label: t('users.field.username'), value: add.username, hint: t('users.field.usernameHint'), maxlength: 40,
+    id: 'us-add-name', label: t('users.field.username'), value: add.username, hint: t('users.field.usernameHint'), inputmode: 'email', maxlength: 40,
     autocomplete: 'off', disabled: add.busy,
     onInput: (v) => {
       add.username = v;
@@ -689,7 +703,7 @@ async function change(u: UserRow, run: () => Promise<UsersList>, done: string, c
   render();
   // (the AI+ switch disappears with the list that is being read again: the row's name keeps the focus)
   const target = serviceOff ? `us-name-${u.id}` : focusAfterChange(u.id, before, control);
-  document.getElementById(target)?.focus({ preventScroll: true });
+  (document.getElementById(target) ?? document.getElementById('us-list-h'))?.focus({ preventScroll: true });
 }
 
 async function guarded(fn: () => Promise<void>): Promise<void> {
@@ -708,7 +722,7 @@ function editUser(u: UserRow, lim: Limits): Promise<void> {
     const draft = { username: u.username, role: u.role, enabled: !u.disabled, canManageBanks: u.canManageBanks };
     const locked = lim.self || lim.lastAdmin;
     const name = field({
-      id: 'us-edit-name', label: t('users.field.username'), value: u.username, hint: t('users.field.usernameHint'), maxlength: 40,
+      id: 'us-edit-name', label: t('users.field.username'), value: u.username, hint: t('users.field.usernameHint'), inputmode: 'email', maxlength: 40,
       onInput: (v) => {
         draft.username = v;
       },
@@ -737,6 +751,8 @@ function editUser(u: UserRow, lim: Limits): Promise<void> {
       submit: async () => {
         const next = draft.username.trim();
         if (!usernameOk(next)) return t('users.check.username');
+        // An unchanged legacy login (a plain name such as the default admin) may stay; a changed one must be an e-mail
+        if (next !== u.username && !looksLikeEmail(next)) return t('users.check.email');
         const body = editChange(u, { ...draft, username: next });
         if (!body) {
           saved = t('users.edit.nothing');
@@ -1353,7 +1369,9 @@ function sortSelect(): HTMLElement {
     h('span', null, t('users.sort')),
     h('select', {
       id: 'us-sort', onchange: (e: Event) => {
-        sortBy = (e.target as HTMLSelectElement).value as UserSort;
+        const v = viewSort({ query: searchText, sort: sortBy, page: listPage }, (e.target as HTMLSelectElement).value as UserSort);
+        sortBy = v.sort;
+        listPage = v.page;
         render();
         document.getElementById('us-sort')?.focus({ preventScroll: true });
       },
@@ -1587,6 +1605,8 @@ function userRow(u: UserRow, list: readonly UserRow[]): HTMLElement {
     h('div', { class: 'us-line' },
       h('h3', { class: 'us-name', id: `us-name-${u.id}`, tabindex: '-1', title: u.username }, u.username),
       h('span', { class: 'us-tags' }, tags)),
+    // v2.6: the display name the user chose, as a muted second line (the login above stays what the person signs in with)
+    u.displayName ? h('p', { class: 'us-disp', title: u.displayName }, u.displayName) : h('p', { class: 'us-disp none' }, t('users.display.unset')),
     factLines(u),
     bankLine(u, blocked)),
   h('div', { class: 'us-acts' },
@@ -1615,6 +1635,31 @@ function addButton(list: UsersList['users'] | null): HTMLElement {
   return b;
 }
 
+/** The pager (the look and texts of the AI settings tables): arrows + page numbers + "Page x / y"; the arrows stay in place */
+function usersPager(pages: number, cur: number, goTo: (p: number, key: string, keyboard: boolean) => void): HTMLElement {
+  const num = (n: number): string => n.toLocaleString(localeTag());
+  const step = (dir: -1 | 1): HTMLElement => {
+    const target = cur + dir;
+    const off = target < 1 || target > pages;
+    return h('button', {
+      type: 'button', id: `us-${dir < 0 ? 'prev' : 'next'}`, class: 'ptb-pg ptb-step', 'aria-disabled': off ? 'true' : null,
+      'aria-label': t(dir < 0 ? 'ai.set.tbl.prev' : 'ai.set.tbl.next'),
+      onclick: (ev: MouseEvent) => !off && goTo(target, dir < 0 ? 'prev' : 'next', ev.detail === 0),
+    }, dir < 0 ? '‹' : '›');
+  };
+  // Phones: only the current page between the arrows (3 x 44 px + gaps fits at 320 px)
+  const list: Array<number | 'gap'> = matches(PHONE_MQ) ? [cur] : pageList(cur, pages, 1);
+  const nums = list.map((p) => (p === 'gap'
+    ? h('span', { class: 'ptb-gap', 'aria-hidden': 'true' }, '…')
+    : h('button', {
+      type: 'button', id: `us-p${p}`, class: 'ptb-pg' + (p === cur ? ' on' : ''), 'aria-current': p === cur ? 'page' : null,
+      'aria-label': t('ai.set.tbl.goPage', { n: num(p) }), onclick: (ev: MouseEvent) => p !== cur && goTo(p, `p${p}`, ev.detail === 0),
+    }, num(p))));
+  return h('nav', { class: 'ptb-pager us-pager', 'aria-label': t('ai.set.tbl.pager') },
+    h('div', { class: 'ptb-btns' }, step(-1), ...nums, step(1)),
+    h('span', { class: 'ptb-of' }, t('ai.set.tbl.pageOf', { p: num(cur), n: num(pages) })));
+}
+
 function listPanel(): HTMLElement {
   const list = users;
   const lead = infoTip('us-lead-tip', t('users.lead.aria'), t('users.lead'), 'us-tip');
@@ -1631,31 +1676,42 @@ function listPanel(): HTMLElement {
         h('div', { class: 'acts' }, h('button', { class: 'btn', type: 'button', onclick: () => void load() }, t('common.retry'))))
       : h('p', { class: 'dim', role: 'status' }, t('common.loading'));
   } else {
-    const rows = h('ul', { class: 'us-rows' }, sortUsers(list, sortBy).map((u) => userRow(u, list)));
+    const rows = h('ul', { class: 'us-rows' });
     const none = h('p', { class: 'empty us-nomatch', role: 'status', hidden: true }, t('users.search.none'));
-    // US-11: a search field above a long list; it hides rows in place (no redraw, the field keeps its focus)
-    const apply = (): void => {
-      const keep = new Set(filterUsers(list, searchText).map((u) => u.username.toLowerCase()));
-      let shown = 0;
-      for (const li of Array.from(rows.children) as HTMLElement[]) {
-        const on = keep.has(li.dataset.name ?? '');
-        li.hidden = !on;
-        if (on) shown += 1;
-      }
-      none.hidden = shown > 0;
+    const pagerHost = h('div', { class: 'us-pagerhost' });
+    // v2.6: search and order work across ALL users, then 10 per page (5 on phones). Typing redraws only the rows and the pager, so the
+    // search field keeps its focus; a pager press keeps the focus on the pressed control (keyboard only, no ring after a tap)
+    const paint = (): void => {
+      // the search only applies while its box is there (a list that shrank to SEARCH_FROM or fewer has no box to clear it)
+      const r = pageUsers(list, { query: list.length > SEARCH_FROM ? searchText : '', sort: sortBy, page: listPage }, pageSize());
+      listPage = r.page;
+      rows.replaceChildren(...r.items.map((u) => userRow(u, list)));
+      none.hidden = r.total > 0;
+      pagerHost.replaceChildren(...(r.pages > 1 ? [usersPager(r.pages, r.page, (p, key, keyboard) => {
+        listPage = p;
+        paint();
+        if (rows.getBoundingClientRect().top < 0) rows.scrollIntoView({ block: 'start' });
+        if (keyboard) {
+          let el = document.getElementById(`us-${key}`);
+          if (!el || el.getAttribute('aria-disabled') === 'true') el = document.getElementById(`us-p${p}`);
+          el?.focus({ preventScroll: true });
+        }
+      })] : []));
     };
+    paint();
     const search = list.length > SEARCH_FROM
       ? h('input', {
         type: 'search', class: 'us-search', id: 'us-search', value: searchText, placeholder: t('users.search'), 'aria-label': t('users.search'),
         autocomplete: 'off', spellcheck: 'false',
         oninput: (e: Event) => {
-          searchText = (e.target as HTMLInputElement).value;
-          apply();
+          const v = viewQuery({ query: searchText, sort: sortBy, page: listPage }, (e.target as HTMLInputElement).value);
+          searchText = v.query;
+          listPage = v.page;
+          paint();
         },
       })
       : null;
-    if (search && searchText) queueMicrotask(apply);
-    body = [search, rows, none];
+    body = [search, rows, none, pagerHost];
   }
   return h('section', { class: 'panel us-list', 'aria-labelledby': 'us-list-h', 'aria-busy': loading && !list ? 'true' : null },
     head,

@@ -104,9 +104,6 @@ export const sessionPart = (i: { key: string | null; recordId: number | null }):
 
 export const summaryKey = (recordId: number, atDigitsText: string | null): string => `${recordId}@${atDigitsText ?? ''}`;
 
-/** The runner key of the study assessment (v2.5): the newest record's time as digits */
-export const assessKey = (atDigitsText: string | null): string => `assess:${atDigitsText ?? ''}`;
-
 /** The cache bound of the panel (and the overlay): the oldest entries are dropped */
 export const MAX_ENTRIES = 200;
 

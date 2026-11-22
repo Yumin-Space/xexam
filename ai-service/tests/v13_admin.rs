@@ -1322,7 +1322,7 @@ async fn every_admin_post_leaves_exactly_one_event_and_never_a_secret() {
         t.post(
             "/api/ai/admin/features",
             &admin,
-            json!({"userId": sam_id, "features": {"chat": true, "hint": false, "explain": true, "summary": true, "generate": true, "import": true}})
+            json!({"userId": sam_id, "features": {"chat": true, "hint": false, "explain": true, "summary": true, "assess": true, "generate": true, "import": true}})
         )
     );
     step!(

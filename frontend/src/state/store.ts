@@ -5,6 +5,7 @@ import type {
 } from '../types/api.ts';
 import type { UnsavedState } from './unsaved.ts';
 import { poolOf, type Answer } from '../domain/grading.ts';
+import type { Lang } from '../domain/language.ts';
 import { type Route } from '../router.ts';
 import { firstPaintSettings } from './settings-cache.ts';
 import { resetAiStatus } from './ai.ts';
@@ -14,9 +15,9 @@ export type Phase = 'loading' | 'fatal' | 'ready';
 
 /**
  * A page shown instead of the app: the sign-in page, or "choose a new password" (the default or initial password must be
- * replaced before anything else works). null = the app itself.
+ * replaced before anything else works), or (v2.6) "set a username" (an existing user without a display name). null = the app itself.
  */
-export type AuthView = 'signin' | 'password' | null;
+export type AuthView = 'signin' | 'password' | 'name' | null;
 
 /** Why the sign-in page is shown, when there is something to say about it */
 export type AuthNote = 'signedOut' | 'expired' | null;
@@ -46,6 +47,8 @@ export interface Session {
   warned: boolean;
   /** The time ran out (TL-5); saved with the session, so a reload can never continue answering */
   timeUp: boolean;
+  /** v2.6: the language the questions are wanted in during this session (starts from the default setting; the quiz switch changes only this) */
+  lang: Lang;
 }
 
 export interface ResultRow {

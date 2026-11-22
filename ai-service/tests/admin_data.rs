@@ -736,6 +736,7 @@ async fn usage_statistics() {
             ("hint", 0),
             ("explain", 0),
             ("summary", 0),
+            ("assess", 0),
             ("generate", 0),
             ("import", 0),
             ("other", 1)

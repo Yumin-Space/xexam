@@ -1,4 +1,5 @@
-// Settings page: the account (username, role, change password), theme, interface language, auto-advance, reset to defaults.
+// Settings page: theme, interface language, default question language, auto-advance, reset to defaults. (v2.6: the account,
+// the username and "Change password" moved to the Profile page, pages/profile.ts.)
 // v1.0: "Change password" is one collapsed 44 px row that opens the three fields in place (ST-1); the theme is a segmented
 // control (icon + short label) under PHONE and the preview cards otherwise (ST-2); the page lead is an (i) tip and the
 // descriptions that only repeat their heading are gone (ST-3); "Saved" (check icon + text) appears next to the section that
@@ -6,25 +7,19 @@
 // AI+ users (one free-mode switch per administrator row).
 // Every change goes through updateSettings(): applied at once (optimistic), saved on the server (Xexam's data directory),
 // and rolled back with a toast when saving fails. The page is redrawn by render(); the focused control keeps the focus.
+import { handMode, setHandMode } from '../components/hand-mode.ts';
 import '../styles/settings.css';
-import { ApiError } from '../api/client.ts';
 import { pageHead } from '../components/common.ts';
-import { field, passwordLengthOk } from '../components/fields.ts';
-import { aiBadge, badgeReasonText } from '../components/ai-badge.ts';
 import { miniIcon } from '../components/mini-icons.ts';
-import { isBankManager, roleTags } from '../components/shell.ts';
 import { infoTip } from '../components/tooltip.ts';
-import { offList, readFeatures } from '../domain/ai-features.ts';
-import { ownBadgeState } from '../domain/badge-state.ts';
 import { localeTag, t, type MsgKey } from '../i18n/index.ts';
 import { UI_LANGS } from '../i18n/define.ts';
 import { errorText } from '../i18n/errors.ts';
-import { changeOwnPassword, onRouteChange, onSignedIn, render } from '../state/actions.ts';
-import { aiStatus } from '../state/ai.ts';
+import { render } from '../state/actions.ts';
 import { resetSettings, updateSettings } from '../state/preferences.ts';
 import { DEFAULT_SETTINGS } from '../state/settings-cache.ts';
 import { S } from '../state/store.ts';
-import type { Settings, Theme, UiLang } from '../types/api.ts';
+import type { QuestionLang, Settings, Theme, UiLang } from '../types/api.ts';
 import { ask } from '../utils/dialog.ts';
 import { h, type Child } from '../utils/dom.ts';
 import { toast } from '../utils/toast.ts';
@@ -85,7 +80,7 @@ function showStatus(): void {
 
 /** The section a changed setting belongs to */
 function sectionOf(patch: Partial<Settings>): SavedSection {
-  return 'theme' in patch ? 'appearance' : 'uiLang' in patch ? 'language' : 'answering';
+  return 'theme' in patch ? 'appearance' : 'uiLang' in patch || 'questionLang' in patch ? 'language' : 'answering';
 }
 
 /** The data-focus key of the focused control, so it gets the focus back after the page is redrawn */
@@ -102,21 +97,6 @@ function restoreFocus(root: HTMLElement, key: string | null): void {
     if (el && !(el instanceof HTMLButtonElement && el.disabled)) el.focus({ preventScroll: true });
   });
 }
-
-/** Settings > Account > Change password (what was typed survives a redraw; it is forgotten when the page is left) */
-const pw = { open: false, current: '', next: '', repeat: '', shown: new Set<string>(), busy: false, error: null as string | null, done: false };
-/** The password field to focus after the next render */
-let pwFocus: string | null = null;
-
-function forgetPasswords(): void {
-  Object.assign(pw, { open: false, current: '', next: '', repeat: '', shown: new Set<string>(), busy: false, error: null, done: false });
-}
-
-onRouteChange((from, to) => {
-  if (from.name === 'settings' && to.name !== 'settings') forgetPasswords();
-});
-// Signed in again after the session ended: nothing typed before (nor its error) is kept
-onSignedIn(forgetPasswords);
 
 const atDefaults = (s: Settings): boolean =>
   s.theme === DEFAULT_SETTINGS.theme && s.uiLang === DEFAULT_SETTINGS.uiLang && s.autoAdvance === DEFAULT_SETTINGS.autoAdvance;
@@ -175,109 +155,6 @@ async function reset(): Promise<void> {
   if (S.route.name === 'settings') forceFocus = ok ? 'set-reset-note' : 'set-reset';
   render();
   if (ok) toast(t('settings.reset.done'));
-}
-
-async function submitPassword(): Promise<void> {
-  if (pw.busy) return;
-  const fail = (key: 'settings.password.missing' | 'auth.check.length' | 'auth.check.mismatch' | 'auth.check.same', focus: string): void => {
-    pw.error = t(key);
-    pw.done = false;
-    pwFocus = focus;
-    render();
-  };
-  if (!pw.current) return fail('settings.password.missing', 'set-pw-current');
-  if (!passwordLengthOk(pw.next)) return fail('auth.check.length', 'set-pw-new');
-  if (pw.next !== pw.repeat) return fail('auth.check.mismatch', 'set-pw-repeat');
-  if (pw.next === pw.current) return fail('auth.check.same', 'set-pw-new');
-  pw.busy = true;
-  pw.error = null;
-  pw.done = false;
-  render();
-  try {
-    await changeOwnPassword(pw.current, pw.next);
-    forgetPasswords();
-    pw.done = true;
-    pwFocus = 'set-pw-done';
-  } catch (e) {
-    pw.busy = false;
-    pw.error = errorText(e);
-    // A wrong current password: type it again
-    if (e instanceof ApiError && e.status === 403) {
-      pw.current = '';
-      pwFocus = 'set-pw-current';
-    } else {
-      // Anything else (too many attempts, a network error): the submit button was redrawn, so keep keyboard and screen
-      // reader users in the form, on the message that says why
-      pwFocus = 'set-pw-err';
-    }
-  }
-  if (S.route.name === 'settings') render();
-}
-
-function accountSection(): HTMLElement | null {
-  const u = S.user;
-  if (!u) return null;
-  const input = (id: string, label: MsgKey, value: string, autocomplete: string, set: (v: string) => void, hint?: MsgKey): HTMLElement => field({
-    id, label: t(label), type: 'password', value, autocomplete, shown: pw.shown.has(id), disabled: pw.busy, hint: hint ? t(hint) : undefined,
-    onInput: (v) => {
-      set(v);
-      if (pw.done) {
-        pw.done = false;
-        document.getElementById('set-pw-done')?.remove();
-      }
-    },
-    onShow: (v) => {
-      if (v) pw.shown.add(id);
-      else pw.shown.delete(id);
-    },
-  }).el;
-  const ownBadge = ownBadgeState(u, aiStatus());
-  const ownSt = aiStatus();
-  const ownOff = ownSt.state === 'ready' && u.role !== 'admin' ? offList(readFeatures(ownSt.features)) : [];
-  return h('section', { class: 'panel set-sec set-account', 'aria-labelledby': 'set-account-h' },
-    h('h2', { id: 'set-account-h' }, t('settings.account')),
-    h('dl', { class: 'props set-props' },
-      h('dt', null, t('settings.account.username')), h('dd', { class: 'set-username' }, u.username),
-      h('dt', null, t('settings.account.role')), h('dd', { class: 'set-role' }, roleTags(u), aiBadge(ownBadge, { off: ownOff }))),
-    // The dark AI+ badge's reason in words too: a tap shows it as a tip on a phone, and this line needs no tap at all
-    ownBadge.kind === 'off' ? h('p', { class: 'set-desc set-ai-reason', id: 'set-ai-reason' }, badgeReasonText(ownBadge.reason)) : null,
-    // A bank manager: what the extra permission allows (v0.7)
-    isBankManager(u) ? h('p', { class: 'set-desc set-manager' }, t('settings.account.managerNote')) : null,
-    h('div', { class: 'set-pw' },
-      // ST-1: one 44 px row "Change password >" that opens the fields in place
-      h('h3', { id: 'set-pw-h', class: 'set-pw-h' }, h('button', {
-        class: 'set-pw-toggle', type: 'button', 'aria-expanded': String(pw.open), 'aria-controls': 'set-pw-form', 'data-focus': 'set-pw-toggle',
-        onclick: () => {
-          pw.open = !pw.open;
-          if (pw.open) pwFocus = 'set-pw-current';
-          else forceFocus = 'set-pw-toggle';
-          render();
-        },
-      }, h('span', null, t('settings.password')), miniIcon('fwd', 'set-pw-chev'))),
-      pw.done ? h('div', { class: 'callout ok set-pw-done', id: 'set-pw-done', role: 'status', tabindex: '-1' }, h('p', null, t('settings.password.done'))) : null,
-      h('form', {
-        id: 'set-pw-form', class: 'set-pw-form', novalidate: true, hidden: !pw.open, 'aria-labelledby': 'set-pw-h', 'aria-busy': pw.busy ? 'true' : null,
-        onsubmit: (e: SubmitEvent) => {
-          e.preventDefault();
-          void submitPassword();
-        },
-      },
-      h('p', { class: 'set-desc' }, t('settings.password.desc')),
-      // For password managers: the account the new password belongs to
-      h('input', { class: 'sr-only', type: 'text', name: 'username', autocomplete: 'username', value: u.username, readonly: true, tabindex: '-1', 'aria-hidden': 'true' }),
-      h('div', { class: 'set-pw-grid' },
-        input('set-pw-current', 'settings.password.current', pw.current, 'current-password', (v) => {
-          pw.current = v;
-        }),
-        input('set-pw-new', 'settings.password.new', pw.next, 'new-password', (v) => {
-          pw.next = v;
-        }, 'settings.password.rule'),
-        input('set-pw-repeat', 'settings.password.repeat', pw.repeat, 'new-password', (v) => {
-          pw.repeat = v;
-        })),
-      pw.error ? h('div', { class: 'err', id: 'set-pw-err', role: 'alert', tabindex: '-1' }, h('p', null, pw.error)) : null,
-      h('div', { class: 'acts' },
-        h('button', { class: 'btn', type: 'submit', disabled: pw.busy }, t(pw.busy ? 'settings.password.busy' : 'settings.password.submit'))))));
 }
 
 // ---------------------------------------------------------------- building blocks
@@ -342,8 +219,6 @@ function preview(theme: Theme): HTMLElement {
 export function renderSettings(): HTMLElement {
   const want = forceFocus ?? focusedKey();
   forceFocus = null;
-  const pwWant = pwFocus;
-  pwFocus = null;
   const s = S.settings;
 
   // The heading status stays for screen readers only; the visible "Saved" is next to the section that changed (ST-4)
@@ -357,9 +232,11 @@ export function renderSettings(): HTMLElement {
   const themeSeg = h('div', { class: 'seg set-themeseg', role: 'group', 'aria-label': t('settings.theme.label') }, THEME_SEG.map((o) => h('button', {
     type: 'button', 'aria-pressed': String(s.theme === o.theme), 'data-focus': `set-themeseg-${o.theme}`, onclick: () => pickTheme(o.theme),
   }, miniIcon(o.icon, 'set-seg-ic'), h('span', null, t(o.name)))));
+  // The cards carry a "Default" tag; the phone's segmented control says it in a quiet line under it
+  const themeSegDef = h('p', { class: 'dim set-themeseg-def' }, t('settings.theme.defaultIs', { name: t(THEME_NAME[DEFAULT_SETTINGS.theme]) }));
 
   const appearance = section('set-appearance', t('settings.appearance'), null, 'appearance',
-    themeSeg,
+    themeSeg, themeSegDef,
     h('div', { class: 'set-cards set-themecards', role: 'group', 'aria-label': t('settings.theme.label') }, THEMES.map((theme) => card({
       focus: `set-theme-${theme}`,
       pressed: s.theme === theme,
@@ -371,13 +248,42 @@ export function renderSettings(): HTMLElement {
     }))));
 
   const language = section('set-language', t('settings.language'), t('settings.language.desc'), 'language',
-    h('div', { class: 'set-cards set-langs', role: 'group', 'aria-label': t('settings.uiLang.label') }, UI_LANGS.map((code) => card({
+    h('h3', { class: 'set-sub', id: 'set-uilang-h' }, t('settings.uiLang.label')),
+    h('div', { class: 'set-cards set-langs', role: 'group', 'aria-labelledby': 'set-uilang-h' }, UI_LANGS.map((code) => card({
       focus: `set-lang-${code}`,
       pressed: s.uiLang === code,
       isDefault: code === DEFAULT_SETTINGS.uiLang,
       name: h('span', { lang: localeTag(code) }, t(LANG_NATIVE[code])),
       onPick: () => {
         if (S.settings.uiLang !== code) void save({ uiLang: code });
+      },
+    }))),
+    // v2.6: the language questions start in (the exam page can switch it for one session only)
+    h('h3', { class: 'set-sub', id: 'set-qlang-h' }, t('settings.qlang.label')),
+    h('div', { class: 'set-cards set-langs set-qlangs', role: 'group', 'aria-labelledby': 'set-qlang-h' }, UI_LANGS.map((code) => card({
+      focus: `set-qlang-${code}`,
+      pressed: s.questionLang === code,
+      isDefault: code === DEFAULT_SETTINGS.questionLang,
+      name: h('span', { lang: localeTag(code) }, t(LANG_NATIVE[code])),
+      onPick: () => {
+        if (S.settings.questionLang !== code) void save({ questionLang: code satisfies QuestionLang });
+      },
+    }))));
+
+  // v2.6 preview (owner): normal or hand-written text; hand-written is the default. Kept in this browser (domain/hand-mode.ts)
+  // and the same switch as the top bar's "Aa"
+  const hand = handMode();
+  const textSec = section('set-text', t('settings.text'), t('settings.text.desc'), undefined,
+    h('div', { class: 'set-cards set-langs set-texts', role: 'group', 'aria-labelledby': 'set-text' }, [false, true].map((isHand) => card({
+      focus: `set-text-${isHand ? 'hand' : 'normal'}`,
+      pressed: hand === isHand,
+      isDefault: isHand,
+      name: h('span', { class: isHand ? 'set-text-hand' : 'set-text-normal' }, t(isHand ? 'settings.text.hand' : 'settings.text.normal')),
+      onPick: () => {
+        if (handMode() !== isHand) {
+          setHandMode(isHand);
+          render();
+        }
       },
     }))));
 
@@ -412,17 +318,12 @@ export function renderSettings(): HTMLElement {
   const root = h('div', { class: 'page page-settings' },
     // ST-3: the page lead is an (i) tip next to the heading status
     pageHead(t('settings.title'), infoTip('set-lead-tip', t('settings.lead.tipBtn'), t('settings.lead')).el, statusEl),
-    accountSection(),
     appearance,
     language,
+    textSec,
     answering,
     resetSec);
   restoreFocus(root, want);
   showStatus();
-  if (pwWant) {
-    queueMicrotask(() => {
-      if (root.isConnected) document.getElementById(pwWant)?.focus({ preventScroll: true });
-    });
-  }
   return root;
 }

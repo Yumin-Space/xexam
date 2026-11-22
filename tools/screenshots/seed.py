@@ -11,7 +11,7 @@ prepare(base, banks, stub_base)
                        Users and AI settings show a bright and a dark badge, an Active and a Paused row. No AI chat is
                        seeded (the AI Chat scene makes its own).
 activity(base)         after the restart, so the System log page shows everyday lines with usernames: sign-ins (alex's
-                       first one, with the password change), an administrator who creates lee (administrator) and updates
+                       first one, with the password change and the display name), an administrator who creates lee (administrator) and updates
                        kim (disabled), and a made-up username without an account that is guessed until it locks. Then it
                        waits until ai-service has reported to the restarted backend (AI+ available again, at most 40 s).
                        Returns the administrator's session cookie for the browser.
@@ -41,7 +41,29 @@ COOKIE = 'xexam_session'
 # A made-up key that only the stub provider (tests/integration/ai_stub.py) accepts; AI settings shows it as "...9c21"
 AI_KEY = 'sk-demo-shots-7f3a9c21'
 AI_MODEL = 'demo-chat-small'
+# v2.6: every user signs in with an e-mail and has a display name ("username" in the UI). The tools keep the short role names
+# (sam, alex, ...) as handles in code; login_of() turns a handle into the e-mail login, name_of() into the display name.
+# example.com is the reserved sample domain; 'admin' is the login of a fresh install and stays as it is.
+LOGINS = {'sam': 'sam@example.com', 'alex': 'alex@example.com', 'kim': 'kim@example.com', 'lee': 'lee@example.com',
+          'riley': 'riley@example.com', 'jordan': 'jordan@example.com'}
+NAMES = {'admin': 'Admin', 'sam': 'Sam', 'alex': 'Alex', 'kim': 'Kim', 'lee': 'Lee', 'riley': 'Riley', 'jordan': 'Jordan'}
+NAME_MAX = 20                               # the server rule: 1..20 characters, no @, no control characters
 MEMORIES = ['I am preparing for a kitchen safety course.', 'Prefers short answers with one example.']
+
+
+def login_of(handle):
+    """The login (e-mail) of a handle such as 'sam'; anything else (admin, a full e-mail, a made-up name) is unchanged."""
+    return LOGINS.get(handle, handle)
+
+
+def name_of(handle):
+    """The display name a tool gives a user at the first sign-in: the table above, else the part before the @ (20 chars)."""
+    if handle in NAMES:
+        return NAMES[handle]
+    for short, login in LOGINS.items():
+        if handle == login:
+            return NAMES[short]
+    return handle.split('@', 1)[0][:NAME_MAX]
 
 
 class Session:
@@ -70,10 +92,24 @@ class Session:
             return json.load(r)
 
     def sign_in(self, username, password):
-        state = self.call('/api/auth/login', {'username': username, 'password': password})
-        if state['user'].get('mustChangePassword'):
-            self.call('/api/auth/password', {'password': DEMO_PASSWORD})
+        """Signs in as a handle or a login and passes the first-sign-in gate: a new password (with the display name when
+        the user has none) or just the display name (an existing user that still lacks one)."""
+        state = self.call('/api/auth/login', {'username': login_of(username), 'password': password})
+        user = state['user']
+        if user.get('mustChangePassword'):
+            body = {'password': DEMO_PASSWORD}
+            if user.get('needsName'):
+                body['displayName'] = name_of(username)
+            self.call('/api/auth/password', body)
+        elif user.get('needsName'):
+            self.call('/api/auth/name', {'displayName': name_of(username)})
         return self
+
+    def create_user(self, handle, **fields):
+        """POST /api/users/create for a handle (its e-mail login, the initial password, role user unless given)."""
+        body = {'username': login_of(handle), 'password': INITIAL, 'role': 'user'}
+        body.update(fields)
+        return self.call('/api/users/create', body)
 
     def import_new(self, path):
         with open(path, 'rb') as fh:
@@ -84,7 +120,8 @@ class Session:
         self.call('/api/import/confirm', {'token': pv['token']})
 
     def user_id(self, username):
-        return next(u['id'] for u in self.call('/api/users')['users'] if u['username'] == username)
+        login = login_of(username)
+        return next(u['id'] for u in self.call('/api/users')['users'] if u['username'] == login)
 
 
 def _results(questions, wrong):
@@ -107,15 +144,15 @@ def prepare(base, banks, stub_base):
     admin.import_new(banks[demo_banks.GENERAL])
     general = next(b['id'] for b in admin.call('/api/banks')['banks'] if b['name'].startswith('General'))
 
-    admin.call('/api/users/create', {'username': 'sam', 'password': INITIAL, 'role': 'user', 'banks': 'all',
-                                     'canManageBanks': True})
+    admin.create_user('sam', banks='all', canManageBanks=True)
     Session(base).sign_in('sam', INITIAL).import_new(banks[demo_banks.KITCHEN])
     for name in ('alex', 'kim'):
-        admin.call('/api/users/create', {'username': name, 'password': INITIAL, 'role': 'user', 'banks': [general]})
+        admin.create_user(name, banks=[general])
 
     # Two practice records of the administrator (the exams come from seed_exams and from the exam scene itself)
     bank = admin.call('/api/bank')['questions'][:6]
-    for wrong, seconds in (({0, 2}, 240), ({2}, 205)):
+    # v2.6: five different questions are wrong at least once, so the most-missed board of the Home shows all five places
+    for wrong, seconds in (({0, 1, 2, 3, 4}, 240), ({0, 1, 2}, 205)):
         admin.call('/api/attempt', {'results': _results(bank, wrong), 'sheets': sorted({q['sheet'] for q in bank}),
                                     'mode': 'all', 'seconds': seconds, 'kind': 'practice'})
     setup_ai(admin, stub_base)
@@ -225,7 +262,7 @@ def activity(base, pause=1.0):
     time.sleep(pause)
     Session(base).sign_in('alex', INITIAL)          # alex's first sign-in: chooses the demo password
     time.sleep(pause)
-    admin.call('/api/users/create', {'username': 'lee', 'password': INITIAL, 'role': 'admin'})
+    admin.create_user('lee', role='admin')
     time.sleep(pause)
     admin.call('/api/users/update', {'id': admin.user_id('kim'), 'disabled': True})
     time.sleep(pause)

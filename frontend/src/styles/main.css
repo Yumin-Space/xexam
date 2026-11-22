@@ -45,6 +45,11 @@
   --hover-strong: rgba(129, 139, 152, .2);      /* pressed / current item (the open menu button, the current page) */
   --fill: #EFF2F5;                            /* neutral soft fill on a block: tags, tiles, segmented tracks, quiet callouts */
   --seg-on: #FFFFFF;                          /* the selected option of a segmented control (a raised chip on the track) */
+  --board: #FFFFFF;                           /* v2.6 Home hand-drawn board (owner): white with black lines in light, black with white in dark */
+  --board-line: rgba(0, 0, 0, .14);           /* the board's edge (it sits on a white card in the light theme) */
+  --chalk: #111111;                           /* hand-drawn strokes and texts on the board */
+  --chalk-dim: #4A4A4A;                       /* quieter text on the board */
+  --chalk-hi: #0969DA;                        /* the ring around the picked point */
   --print-hover: #0550AE;                     /* the print blue, a little darker */
   --primary: #0A3069;                         /* primary button: navy (Primer blue-8) in the light theme */
   --primary-hover: #033D8B;
@@ -185,6 +190,11 @@
     --hover-strong: rgba(110, 118, 129, .3);
     --fill: #1A2029;
     --seg-on: #2A313C;
+    --board: #000000;
+    --board-line: rgba(255, 255, 255, .16);
+    --chalk: #F5F5F5;
+    --chalk-dim: #BDBDBD;
+    --chalk-hi: #8FAEF8;
     --print-hover: #8FAEF8;
     --primary: #3C6CF0;
     --primary-hover: #2F58D0;
@@ -253,6 +263,11 @@
   --hover-strong: rgba(110, 118, 129, .3);
   --fill: #1A2029;
   --seg-on: #2A313C;
+  --board: #000000;
+  --board-line: rgba(255, 255, 255, .16);
+  --chalk: #F5F5F5;
+  --chalk-dim: #BDBDBD;
+  --chalk-hi: #8FAEF8;
   --print-hover: #8FAEF8;
   --primary: #3C6CF0;
   --primary-hover: #2F58D0;
@@ -382,7 +397,24 @@ input, select, textarea { font: inherit; color: var(--ink); }
 @media (hover: hover) { .acct-btn:hover { background: var(--hover); color: var(--ink); } }
 .acct-btn[aria-expanded="true"] { color: var(--ink); }
 /* v2.1: light / dark toggle left of the account label; never dropped by the fitting steps */
-.theme-btn { color: var(--ink2); }
+/* v2.6 preview: the hand-written face of blackboard mode, a ~1.1 MB subset of Xiaolai (OFL, github.com/lxgw/kose-font; licence
+   in public/fonts/Xiaolai-OFL.txt, shipped as /fonts/Xiaolai-OFL.txt): every character of the UI texts, the 3755 common simplified Chinese characters (GB2312 level 1), the
+   2965 common Japanese kanji (JIS level 1), kana and ASCII. A browser fetches it only once a page uses it (blackboard mode). */
+@font-face { font-family: 'Xexam Hand'; src: url('../assets/fonts/xiaolai-hand.woff2') format('woff2'); font-display: swap; }
+.theme-btn, .hand-btn { color: var(--ink2); }
+.hand-aa { font-size: 16px; font-weight: 600; line-height: 1; letter-spacing: .01em; }
+/* v2.6: the correct / incorrect marks (utils/dom.ts svgMark): plain tick and cross, or in hand-written mode a teacher's red
+   pen — a hand-drawn circle for correct and a cross for wrong, both red */
+svg .mk-hand { display: none; }
+html[data-hand] svg .mk-plain { display: none; }
+html[data-hand] svg .mk-hand { display: inline; filter: url(#xexam-crayon); }
+html[data-hand] svg .mk-ink { fill: var(--danger); stroke: var(--danger); stroke-width: .5; }
+html[data-hand] svg .mk-dry { fill: none; stroke: var(--danger); stroke-width: .55; opacity: .8; }
+html[data-hand] svg .mk-ring { fill: none; stroke: var(--danger); stroke-width: 2.5; stroke-linecap: round; }
+html[data-hand] svg .mk-ring2 { stroke-width: 1.2; opacity: .5; }
+html[data-hand] .hand-aa { font-family: 'Xexam Hand', var(--en); font-weight: 400; font-size: 18px; }
+/* Blackboard mode: the Xexam name beside the logo is hand-written too (the Latin letters of the hand face) */
+html[data-hand] .brand-name { font-family: 'Xexam Hand', var(--en); font-weight: 400; font-size: 22px; letter-spacing: .02em; }
 .theme-btn .ico { width: 18px; height: 18px; }
 .acct-btn .acct-ico { width: 18px; height: 18px; flex: none; color: var(--ink3); }
 .acct-name { min-width: 0; max-width: 16em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

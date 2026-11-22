@@ -5,6 +5,7 @@ import type { AttemptKind, Bank, Mode, Question } from '../types/api.ts';
 import { kindOf } from '../domain/attempt.ts';
 import { readTimedFields, writeTimedFields, UNTIMED, type TimedFields } from '../domain/exam-timer.ts';
 import { stateOf, type Answer } from '../domain/grading.ts';
+import type { Lang } from '../domain/language.ts';
 import { paths, sessionKey, storageOwner } from './storage-keys.ts';
 
 /** The key of the signed-in user's saved exam (null when nobody is signed in) */
@@ -33,6 +34,8 @@ export interface SavedSession {
   startedAt: number;
   /** v1.1 (TL-6): the time limit of a timed exam and its flags (an untimed exam, a practice and a bad save read back as untimed) */
   timed: TimedFields;
+  /** v2.6: the wanted question language of the session; null = none saved (a save from before v2.6): the caller uses the default */
+  lang: Lang | null;
 }
 
 export interface SessionToSave {
@@ -49,9 +52,12 @@ export interface SessionToSave {
   startedAt: number;
   /** Absent = untimed */
   timed?: TimedFields;
+  /** v2.6: the session's wanted question language */
+  lang?: Lang;
 }
 
 const MODES: readonly string[] = ['all', 'weak', 'retry'];
+const LANGS: readonly string[] = ['ja', 'zh', 'en'];
 const KEY_RE = /^[0-9a-f]{32}$/;
 
 /** A new session key: 16 random bytes as 32 lower-case hex characters (v0.9: ties a session to its AI chat and its record) */
@@ -73,6 +79,8 @@ export function saveSession(se: SessionToSave): void {
       // v0.9 (still format v1: older versions ignore the two keys)
       key: se.key, startedAt: se.startedAt,
       // v1.1 (still format v1: older versions ignore the keys): limit / warned / timeUp of a timed exam, nothing otherwise
+      // v2.6 (still format v1: older versions ignore the key)
+      ...(se.lang ? { lang: se.lang } : {}),
       ...(se.kind === 'exam' ? writeTimedFields(se.timed ?? UNTIMED) : {}),
     }));
   } catch {
@@ -174,5 +182,6 @@ export function loadSaved(bank: Bank | null): SavedSession | null {
     kind,
     checked,
     timed: kind === 'exam' ? readTimedFields(d) : { ...UNTIMED },
+    lang: typeof d.lang === 'string' && LANGS.includes(d.lang) ? (d.lang as Lang) : null,
   };
 }

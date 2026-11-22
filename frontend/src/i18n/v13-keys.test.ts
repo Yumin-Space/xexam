@@ -11,7 +11,7 @@ afterEach(() => setUiLang('en'));
 const GROUPS = ['auth', 'users', 'banks', 'study', 'settings', 'visit', 'ai', 'system'];
 const SLOTS = ['default', 'chat', 'hint', 'explain', 'summary', 'generate', 'import'];
 const ACTIONS = [
-  'auth.signin', 'auth.signout', 'auth.expired', 'auth.password', 'auth.lock', 'users.create', 'users.update', 'users.password',
+  'auth.signin', 'auth.signout', 'auth.expired', 'auth.password', 'auth.name', 'auth.lock', 'users.create', 'users.update', 'users.password',
   'users.unlock', 'users.delete', 'users.signinInfo', 'users.signinInfoClear', 'bank.upload', 'bank.import', 'bank.importCancel', 'bank.delete',
   'bank.sheetsDelete', 'bank.download', 'study.submit', 'records.delete', 'progress.reset', 'settings.update', 'settings.reset', 'logs.settings',
   'system.shutdown', 'page.view', 'admin.request', 'system.start', 'system.stop', 'system.migrate', 'system.guard',

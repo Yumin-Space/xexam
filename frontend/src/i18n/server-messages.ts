@@ -133,9 +133,9 @@ const EXACT: ReadonlyMap<string, Texts> = new Map<string, Texts>([
     en: 'Only an administrator can do this.',
     ja: 'この操作は管理者だけが行えます。',
   }],
-  ['用户名或密码不对。', {
-    en: 'The username or password is not correct.',
-    ja: 'ユーザー名またはパスワードが正しくありません。',
+  ['邮箱或密码不对。', {
+    en: 'The e-mail or password is not correct.',
+    ja: 'メールアドレスまたはパスワードが正しくありません。',
   }],
   ['登录失败次数太多，请稍后再试。', {
     en: 'Too many failed attempts. Please try again later.',
@@ -149,17 +149,34 @@ const EXACT: ReadonlyMap<string, Texts> = new Map<string, Texts>([
     en: 'The new password must be different from the old one.',
     ja: '新しいパスワードは以前のものと別にしてください。',
   }],
-  ['用户名不对：1–40 个字符，只能用字母、数字和 . _ - @。', {
-    en: 'The username is not valid: it needs 1–40 characters, using only letters, digits and . _ - @.',
-    ja: 'ユーザー名が正しくありません。1〜40 文字で、英字・数字と . _ - @ だけが使えます。',
+  ['邮箱不对：1–40 个字符，只能用字母、数字和 . _ - @。', {
+    en: 'The e-mail is not valid: it needs 1–40 characters, using only letters, digits and . _ - @.',
+    ja: 'メールアドレスが正しくありません。1〜40 文字で、英字・数字と . _ - @ だけが使えます。',
   }],
   ['密码需要 8–128 个字符。', {
     en: 'The password needs 8 to 128 characters.',
     ja: 'パスワードは 8〜128 文字にしてください。',
   }],
+  ['这个邮箱已经有人用了。', {
+    en: 'This e-mail is already in use.',
+    ja: 'このメールアドレスはすでに使われています。',
+  }],
+  // v2.6, display name (MSG_NAME_EMPTY, MSG_NAME_BAD, MSG_NAME_TAKEN 409, MSG_NAME_REQUIRED 403)
+  ['请输入用户名。', {
+    en: 'Enter a username.',
+    ja: 'ユーザー名を入力してください。',
+  }],
+  ['用户名最多 20 个字，不能包含 @ 或控制字符。', {
+    en: 'The username can have up to 20 characters and no @ or control characters.',
+    ja: 'ユーザー名は 20 文字までで、@ や制御文字は使えません。',
+  }],
   ['这个用户名已经有人用了。', {
     en: 'This username is already taken.',
     ja: 'このユーザー名はすでに使われています。',
+  }],
+  ['请先设置用户名。', {
+    en: 'Please set a username first.',
+    ja: '先にユーザー名を設定してください。',
   }],
   // v0.8 round 2 (MSG_AI_SERVICE_OFF, 409 with code ai.serviceOff): a user's AI+ feature switched while AI+ is not available;
   // the same words as the catalog's ai.err.serviceOff

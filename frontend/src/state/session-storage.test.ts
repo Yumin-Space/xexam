@@ -1,5 +1,6 @@
 // Defensive tests for reading the saved exam: bad data is only dropped or corrected, never throws.
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { beforeEach, test } from 'node:test';
 import { adoptLegacySession, clearSaved, loadSaved, newSessionKey, saveSession } from './session-storage.ts';
 import { setStorageOwner } from './storage-keys.ts';
@@ -262,4 +263,29 @@ test('v1.1: a practice never carries a time limit, even when the save has one', 
   assert.equal('limit' in raw, false);
   put({ ids: ['s'], kind: 'practice', limit: 600 });
   assert.equal(loadSaved(bank)?.timed.limit, null);
+});
+
+test('v2.6: the session language round-trips; a save without it (or with a bad one) reads back as null (the default applies)', () => {
+  const base = { qs: [bank.questions[0]!], answers: {}, flags: new Set<string>(), idx: 0, elapsedSeconds: 0, mode: 'all' as const, sheets: [], checked: new Set<string>() };
+  for (const lang of ['zh', 'en', 'ja'] as const) {
+    saveSession({ ...base, kind: 'exam', key: K1, startedAt: T1, lang });
+    assert.equal(loadSaved(bank)?.lang, lang);
+  }
+  saveSession({ ...base, kind: 'exam', key: K1, startedAt: T1 });
+  assert.equal(loadSaved(bank)?.lang, null);
+  assert.equal(JSON.parse(mem.get(KEY) ?? '{}').lang, undefined);
+  put({ v: 1, ids: ['s'], lang: 'fr' });
+  assert.equal(loadSaved(bank)?.lang, null);
+  put({ v: 1, ids: ['s'], lang: 5 });
+  assert.equal(loadSaved(bank)?.lang, null);
+});
+
+test('v2.6: the quiz language switch changes only the session (no settings write); a new session starts from the default', () => {
+  const src = readFileSync(new URL('./actions.ts', import.meta.url), 'utf8');
+  const fn = src.slice(src.indexOf('export function setSessionLang'), src.indexOf('function syncQuiz'));
+  assert.ok(fn.includes('se.lang = code') && fn.includes('persistSession()'));
+  assert.ok(!fn.includes('updateSettings'), 'the switch must not write the settings');
+  assert.ok(!src.includes('export function setQuestionLang'));
+  assert.match(src, /lang: S\.settings\.questionLang,\r?\n  \};\r?\n  persistSession\(\);/);
+  assert.match(src, /lang: sv\.lang \?\? S\.settings\.questionLang/);
 });

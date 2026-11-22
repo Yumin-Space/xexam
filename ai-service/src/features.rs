@@ -16,6 +16,8 @@ pub enum Feature {
     Explain,
     /// AI summary of a record
     Summary,
+    /// AI study assessment (Home capsule)
+    Assess,
     /// AI bank generation (Bank management action and both Home buttons)
     Generate,
     /// AI file import (upload and confirm)
@@ -23,17 +25,18 @@ pub enum Feature {
 }
 
 /// Every feature, in the order of the JSON object.
-pub const ALL: [Feature; 6] = [
+pub const ALL: [Feature; 7] = [
     Feature::Chat,
     Feature::Hint,
     Feature::Explain,
     Feature::Summary,
+    Feature::Assess,
     Feature::Generate,
     Feature::Import,
 ];
 
 /// The bits that exist; a stored value may only use these.
-pub const KNOWN_BITS: i64 = 63;
+pub const KNOWN_BITS: i64 = 127;
 
 impl Feature {
     pub fn bit(self) -> i64 {
@@ -44,6 +47,7 @@ impl Feature {
             Feature::Summary => 8,
             Feature::Generate => 16,
             Feature::Import => 32,
+            Feature::Assess => 64,
         }
     }
 
@@ -53,6 +57,7 @@ impl Feature {
             Feature::Hint => "hint",
             Feature::Explain => "explain",
             Feature::Summary => "summary",
+            Feature::Assess => "assess",
             Feature::Generate => "generate",
             Feature::Import => "import",
         }
@@ -92,7 +97,7 @@ pub fn allowed(off: i64, f: Feature) -> bool {
     off & f.bit() == 0
 }
 
-/// `{"chat": true, …}` with the six keys in order; `off` = the stored bits.
+/// `{"chat": true, …}` with the seven keys in order; `off` = the stored bits.
 pub fn to_json(off: i64) -> Value {
     let mut m = Map::new();
     for f in ALL {
@@ -106,11 +111,11 @@ pub fn all_on_json() -> Value {
     to_json(0)
 }
 
-/// An object that is not exactly the six boolean keys.
+/// An object that is not exactly the seven boolean keys.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BadFeatures;
 
-/// The stored bits for a JSON object with exactly the six keys, all booleans; anything else is refused.
+/// The stored bits for a JSON object with exactly the seven keys, all booleans; anything else is refused.
 pub fn from_json(m: &Map<String, Value>) -> Result<i64, BadFeatures> {
     if m.len() != ALL.len() {
         return Err(BadFeatures);
@@ -148,13 +153,13 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn six_bits_and_keys() {
+    fn seven_bits_and_keys() {
         let bits: Vec<i64> = ALL.iter().map(|f| f.bit()).collect();
-        assert_eq!(bits, vec![1, 2, 4, 8, 16, 32]);
+        assert_eq!(bits, vec![1, 2, 4, 8, 64, 16, 32]);
         let keys: Vec<&str> = ALL.iter().map(|f| f.key()).collect();
         assert_eq!(
             keys,
-            vec!["chat", "hint", "explain", "summary", "generate", "import"]
+            vec!["chat", "hint", "explain", "summary", "assess", "generate", "import"]
         );
         for f in ALL {
             assert_eq!(Feature::parse(f.key()), Some(f));
@@ -204,7 +209,7 @@ mod tests {
     fn json_round_trip_and_refusals() {
         assert_eq!(
             serde_json::to_string(&to_json(0)).expect("json"),
-            r#"{"chat":true,"hint":true,"explain":true,"summary":true,"generate":true,"import":true}"#
+            r#"{"chat":true,"hint":true,"explain":true,"summary":true,"assess":true,"generate":true,"import":true}"#
         );
         for off in 0..=KNOWN_BITS {
             let v = to_json(off);

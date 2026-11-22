@@ -1,7 +1,7 @@
 # Screenshot tool
 
-Retakes every screenshot of the READMEs and docs (`docs/<lang>/screenshots/`, 25 desktop and 8 iPhone images per
-language, 33 in all) from a throw-away Xexam instance that holds only made-up demo data. Every value the images show is
+Retakes every screenshot of the READMEs and docs (`docs/<lang>/screenshots/`, 28 desktop and 10 iPhone images per
+language, 38 in all) from a throw-away Xexam instance that holds only made-up demo data. Every value the images show is
 made up, also on the AI pages: the stub's address `http://ai-stub:9000/v1`, the fake key (shown as `…9c21`), the
 `demo-*` models, the demo users and banks. The tool never connects to any other instance, so real addresses, keys or
 model choices cannot appear. Run it from the repository root:
@@ -44,7 +44,9 @@ A full run of the three languages takes a few minutes, plus the image builds whe
    the backend first, as Nginx does. The tool waits until ai-service's `/healthz` answers and `/api/ai/status`
    answers 401 without a session (the whole chain works).
 4. `seed.py` signs in as the default administrator (who chooses a demo password), imports the banks, adds the users
-   alex, sam, kim and lee and some study records, sets up AI with the made-up provider and a made-up key (provider,
+   alex, sam, kim and lee and some study records (v2.6: every user signs in with an e-mail such as `sam@example.com` and
+   has a display name; `seed.Session.sign_in` passes the first-sign-in gate, `seed.login_of` / `seed.name_of` map the short
+   handles; the administrator's two practice records leave five questions with wrong answers, so the most-missed board of the Home has five places), sets up AI with the made-up provider and a made-up key (provider,
    key, model, test, the AI+ feature on) and saves two memories of the administrator. Because a user's AI+ feature can
    be switched only while AI+ is available, sam and alex get it only after that, and alex's AI+ feature is then
    paused: Users shows a bright (sam) and a dark (alex) badge, AI settings an Active and a Paused row. No AI chat
@@ -53,6 +55,13 @@ A full run of the three languages takes a few minutes, plus the image builds whe
    locks. Lines of ai-service (with the prefix `AI: `) may appear there too; they are real lines. After a restart the
    backend knows nothing about ai-service until its next report (every 25 s), so the tool then waits until
    `GET /api/users` says `aiAvailable: true` (at most 40 s) before the scenes.
+   The Home images (v2.6) show, in order: the hero and six tiles (3 per row on the phone; one row on the desktop, with the leaderboard and most-missed boards side by side), the leaderboard line chart, the most-missed
+   parabola board (place 1 tapped) and the AI assessment card last. The card is folded on every visit, so the scene opens it
+   for the image. So that every image shows a fixed sample text in the UI language without an AI call, the scenes answer
+   `GET /api/ai/assess/latest` inside the page with a made-up sample text of the UI language (a small `fetch` wrapper
+   installed for the Home scenes only, nothing is written to a database). `desktop-27-profile` and `iphone-10-profile` show
+   the Profile page as sam (an e-mail login; the fresh-install administrator logs in as `admin`, which is not an e-mail);
+   Settings has no account section any more.
 5. `scenes.py` opens one headless Chrome per language (temporary profile, UTC clock, light theme unless the scene is the
    dark one) and drives the real UI through DOM clicks. Tall pages are cut where no text line, control or card is
    split; the System log image is sized so its whole card (lead, filters, lines, note) is in view. Two pages are
@@ -116,7 +125,7 @@ first is retried with another one), and `npm ci` (only when `frontend/node_modul
 | `retake.py` | Entry point: options, backend and ai-service, frontend, seeding, the languages, clean-up |
 | `demo_banks.py` | The made-up demo question banks |
 | `seed.py` | Users, banks, records, the AI setup (with the AI+ feature of sam and alex, alex paused) and the System log activity, through the API |
-| `scenes.py` | The 33 scenes (the AI+ panel, result, summary, AI Chat, the AI settings tabs and safety limits included), the layout / feedback checks, and how each image is sized |
+| `scenes.py` | The 38 scenes (the AI+ panel, result, summary, AI Chat, the AI settings tabs and safety limits included), the layout / feedback checks, and how each image is sized |
 | `browser.py` | Finding and starting Chrome, a small DevTools (CDP) client, PNG metadata removal |
 | `../../tests/integration/ai_stub.py` | The made-up AI provider (shared with the stack check of CI) |
 

@@ -25,6 +25,7 @@
 //     into the composer under a banner, Send starts a new branch) and the switcher. Switching versions calls no model, so it also
 //     works read only. Administrators get a model menu in the composer (stored per chat) and see the connection of each answer;
 //     everyone else sees only "AI" and the time, never a model or connection (v1.3 sprint 2).
+import { aiWelcomeDoodle } from '../components/doodle.ts';
 import { githubLine } from '../components/github-line.ts';
 import '../styles/ai.css';
 import {
@@ -64,6 +65,25 @@ import { copyText } from '../utils/clipboard.ts';
 import { ask } from '../utils/dialog.ts';
 import { h, keepFocus, undoViewportPan, type Child } from '../utils/dom.ts';
 import { liftToastAbove, toast } from '../utils/toast.ts';
+
+// v2.6 (owner): the hand-drawn welcome picture steps aside while the composer is being typed in on a touch screen. The state
+// is a class on <html> rather than a :focus selector, so a redraw of the page (which briefly moves the focus) cannot make the
+// picture blink; it comes back only after the focus stayed out of the composer for a moment (the keyboard has closed).
+if (typeof document !== 'undefined') {
+  let typingOff = 0;
+  const inComposer = (el: Element | null): boolean => !!el?.closest('.ai-form');
+  document.addEventListener('focusin', (e) => {
+    if (!inComposer(e.target as Element)) return;
+    window.clearTimeout(typingOff);
+    document.documentElement.classList.add('ai-typing');
+  });
+  document.addEventListener('focusout', () => {
+    window.clearTimeout(typingOff);
+    typingOff = window.setTimeout(() => {
+      if (!inComposer(document.activeElement)) document.documentElement.classList.remove('ai-typing');
+    }, 350);
+  });
+}
 
 export type ChatMode = 'full' | 'readOnly';
 
@@ -238,7 +258,7 @@ function closeDrawer(after?: () => void, focusBack = true): void {
   const wasOpen = drawerOpen;
   drawerOpen = false;
   applyDrawer();
-  if (wasOpen && focusBack) document.getElementById('ai-drawer-btn')?.focus({ preventScroll: true });
+  if (wasOpen && focusBack) focusDrawerButton();
   if (!drawerPushed) {
     after?.();
     return;
@@ -460,7 +480,7 @@ function installOnce(): void {
       drawerOpen = false;
       reassertUrl();
       applyDrawer();
-      document.getElementById('ai-drawer-btn')?.focus({ preventScroll: true });
+      focusDrawerButton();
     }
   });
   window.addEventListener('hashchange', () => {
@@ -1484,6 +1504,20 @@ if (typeof document !== 'undefined') {
   document.addEventListener('keydown', () => { pointerInput = false; }, true);
 }
 
+/**
+ * The drawer closed: a keyboard user's focus goes back to the menu button. After a tap or click nothing is focused (the
+ * focus only leaves the hidden drawer): a focus moved by script shows the blue ring on Safari even after a tap.
+ */
+function focusDrawerButton(): void {
+  if (!pointerInput) {
+    document.getElementById('ai-drawer-btn')?.focus({ preventScroll: true });
+    return;
+  }
+  const at = document.activeElement;
+  const drawer = drawerEl();
+  if (at instanceof HTMLElement && drawer && (at === drawer || drawer.contains(at))) at.blur();
+}
+
 /** After a delete: a keyboard user's focus goes to `target`; after a tap or click the drawer keeps it (no ring) or, on a
  *  wide screen, nothing is focused */
 function focusAfterDelete(target: HTMLElement | null): void {
@@ -2303,7 +2337,8 @@ function msgsBody(): Child[] {
   }
   // A new chat with nothing in it yet: the greeting only (the composer and the admin notice are the footer's)
   if (full() && showsEmptyHint(view)) {
-    out.push(h('div', { class: 'ai-welcome' }, h('p', { class: 'ai-greeting', id: 'ai-greeting' }, t('ai.greeting'))));
+    // v2.6 preview: blackboard mode draws the hand-made Xexam picture above the greeting (hidden by the stylesheet otherwise)
+    out.push(h('div', { class: 'ai-welcome' }, h('div', { class: 'ai-welcome-anchor', 'aria-hidden': 'true' }, aiWelcomeDoodle()), h('p', { class: 'ai-greeting', id: 'ai-greeting' }, t('ai.greeting'))));
   }
   out.push(h('ol', { class: 'ai-msgs', id: 'ai-msgs', tabindex: '-1' }, view.messages.map((m, i) => messageEl(m, i))));
   return out;
@@ -2337,7 +2372,10 @@ function layoutBox(input: HTMLTextAreaElement): void {
   input.style.overflowY = 'hidden';
   const cs = window.getComputedStyle(input);
   const pad = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
-  const kind = composerLayout(input.value, input.scrollHeight, parseFloat(cs.lineHeight) || 22, pad);
+  // v2.6: the hand face (and its fallback glyphs) can make an empty box taller than one line: an empty box is always compact,
+  // and a typed text gets a little more room in hand mode before it counts as wrapping
+  // an empty box is always compact (a long placeholder may wrap and inflate scrollHeight, e.g. in Japanese at 320 px)
+  const kind = input.value === '' ? 'compact' : composerLayout(input.value, input.scrollHeight, parseFloat(cs.lineHeight) || 22, pad);
   if (kind === 'expanded') box.classList.remove('compact');
   // The strength choice lives in the brain picker while the box is compact on a phone (and on the button while expanded): the
   // layout switched, so the open picker / strength menu is drawn again consistently
@@ -2364,7 +2402,9 @@ function autoGrow(input: HTMLTextAreaElement): void {
   const room = window.visualViewport?.height ?? window.innerHeight;
   const lines = composerLines(window.matchMedia('(pointer: coarse)').matches, window.innerHeight, room, line, textRoom(input, pad));
   const max = line * lines + pad;
-  const want = input.scrollHeight + (parseFloat(cs.borderTopWidth) || 0) + (parseFloat(cs.borderBottomWidth) || 0);
+  // an empty box is one line high whatever its placeholder does (a wrapped placeholder counts in scrollHeight)
+  const want = (input.value === '' ? (parseFloat(cs.lineHeight) || 22) + (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0) : input.scrollHeight)
+    + (parseFloat(cs.borderTopWidth) || 0) + (parseFloat(cs.borderBottomWidth) || 0);
   input.style.height = `${Math.ceil(Math.min(want, max))}px`;
   input.style.overflowY = want > max ? 'auto' : 'hidden';
 }

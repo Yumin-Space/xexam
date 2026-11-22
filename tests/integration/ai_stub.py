@@ -43,7 +43,8 @@ and a knowledge-points list; when the user turn contains [leak] the hint ends wi
 "答案是 B。", "正解は B です。"; with the word "statements" in the user turn: "Statement 2 is true.", "第2项选是。",
 "2番目は「はい」です。") so the guard test can see it withheld. "asked for an EXPLANATION" answers "**Answer: <the text inside
 <answer_key>>**" and three short paragraphs. "answered wrong" (the summary) answers four Markdown headings and one line
-"Items: <n>" (n = the number of <item tags). [slow] in the last user turn keeps working for all of them.
+"Items: <n>" (n = the number of <item tags). "You are a study coach inside Xexam" (the Home assessment, v2.6) answers four
+plain sentences in the reply language. [slow] in the last user turn keeps working for all of them.
 
 AI banks (v1.1; the system text decides, by its first words):
 "You write new multiple-choice exam questions" (bank generation) and "You write exam questions from a user's study
@@ -340,6 +341,17 @@ EXPLAIN_TAIL = {
     'en': ('This is the reasoning behind the answer.', 'The other choices fail for a simple reason.', 'Remember the rule in one short sentence.'),
     'zh': ('这是得出答案的思路。', '其他选择不成立，原因很简单。', '用一句话记住这条规则。'),
     'ja': ('これが答えに至る考え方です。', '他の選択肢が成り立たない理由は単純です。', 'ルールを一文で覚えましょう。'),
+}
+# v2.6: the study assessment (Home AI card): four or five plain sentences, no Markdown, in the reply language
+ASSESS_TEXT = {
+    'en': ('You have answered a good number of questions lately and most of them were right. Your accuracy is steady, which is '
+           'a good sign. Short sessions on several days will help more than one long session. Spend your next study days on '
+           'the questions you missed and try one timed exam at the end of the week.'),
+    'zh': ('你最近答了不少题，大部分都答对了，正确率比较稳定，这是个好迹象。分几天做短时间练习，比一次学很久更有效。'
+           '接下来几天先把做错的题再练一遍，周末再安排一次限时考试。'),
+    'ja': ('最近はたくさんの問題に取り組んでいて、ほとんど正解できています。正答率も安定していて良い傾向です。'
+           '長時間まとめて学ぶより、数日に分けて短く学ぶほうが効果的です。'
+           'これからの数日は間違えた問題を中心に復習し、週末に時間を決めた模擬試験を一度受けてみましょう。'),
 }
 SUMMARY_HEADS = {
     'en': ('## Weak knowledge points', '## What to watch out for', '## How to approach such questions', '## Summary of the knowledge points'),
@@ -680,6 +692,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             m = ANSWER_KEY.search(last)
             key = m.group(1).strip() if m else '-'
             return ('**Answer: %s**' % key) + NL + NL + (NL + NL).join(EXPLAIN_TAIL[lang])
+        if system.startswith('You are a study coach inside Xexam'):     # the Home assessment (v2.5, v2.6)
+            return ASSESS_TEXT[lang]
         if 'answered wrong' in system:
             h = SUMMARY_HEADS[lang]
             return (NL + NL).join('%s%s- point %d' % (h[i], NL + NL, i + 1) for i in range(4)) + NL + NL + 'Items: %d' % last.count('<item')

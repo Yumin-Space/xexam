@@ -129,7 +129,7 @@ fn int_in(data: &Map<String, Value>, key: &str, lo: i64, hi: i64) -> Result<i64,
 async fn session_user(st: &AppState, sid: String) -> Result<Result<i64, Value>, AppError> {
     let found = super::auth::session_user_untouched(st, &sid).await?;
     Ok(match found {
-        Some(u) if !u.must_change_password => Ok(u.id),
+        Some(u) if !u.setup_required() => Ok(u.id),
         _ => Err(refused("session")),
     })
 }

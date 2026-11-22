@@ -70,6 +70,10 @@ pub struct Limits {
     pub pace_rpm: i64,
     /// The provider's tokens per minute, input + output (used exactly as entered)
     pub pace_tpm: i64,
+    /// Study assessments per user per local day (0 = none)
+    pub assess_per_day: i64,
+    /// 1 = administrators are not limited by `assess_per_day`
+    pub assess_admins_exempt: i64,
 }
 
 /// One limit: JSON key, database column, default, minimum, maximum.
@@ -81,11 +85,11 @@ pub struct LimitDef {
     pub max: i64,
 }
 
-/// The 36 limits, in the order of the JSON answers (the ten of v1.0, then the generation settings, then the import ones,
-/// then the six of v1.3, then the three pacing ones of v1.9).
+/// The 38 limits, in the order of the JSON answers (the ten of v1.0, then the generation settings, then the import ones,
+/// then the six of v1.3, then the three pacing ones of v1.9, then the two assessment ones of v2.6).
 /// The retired `limits` columns (`message_chars`, `memory_chars`, `reply_max_chars`, `gen_call_chars`,
 /// `import_max_questions`) are not listed: AI schema 10 dropped them.
-pub const DEFS: [LimitDef; 36] = [
+pub const DEFS: [LimitDef; 38] = [
     LimitDef {
         key: "perUserRunning",
         column: "per_user_running",
@@ -338,6 +342,20 @@ pub const DEFS: [LimitDef; 36] = [
         min: 1000,
         max: 100_000_000,
     },
+    LimitDef {
+        key: "assessPerDay",
+        column: "assess_per_day",
+        default: 3,
+        min: 0,
+        max: 50,
+    },
+    LimitDef {
+        key: "assessAdminsExempt",
+        column: "assess_admins_exempt",
+        default: 1,
+        min: 0,
+        max: 1,
+    },
 ];
 
 /// Tokens of one Chinese / Japanese character, as 3 / 2: the factor the generation planner uses to turn a call's token
@@ -436,6 +454,8 @@ impl Default for Limits {
             pace_on: 0,
             pace_rpm: 0,
             pace_tpm: 0,
+            assess_per_day: 0,
+            assess_admins_exempt: 0,
         };
         for d in &DEFS {
             l.set(d.key, d.default);
@@ -511,6 +531,8 @@ impl Limits {
             "paceOn" => self.pace_on,
             "paceRpm" => self.pace_rpm,
             "paceTpm" => self.pace_tpm,
+            "assessPerDay" => self.assess_per_day,
+            "assessAdminsExempt" => self.assess_admins_exempt,
             _ => 0,
         }
     }
@@ -553,6 +575,8 @@ impl Limits {
             "paceOn" => self.pace_on = v,
             "paceRpm" => self.pace_rpm = v,
             "paceTpm" => self.pace_tpm = v,
+            "assessPerDay" => self.assess_per_day = v,
+            "assessAdminsExempt" => self.assess_admins_exempt = v,
             _ => {}
         }
     }
@@ -755,10 +779,10 @@ mod tests {
         let s = serde_json::to_string(&a).expect("json");
         assert!(s.starts_with("{\"limits\":{\"perUserRunning\":1,\"globalRunning\":16,"));
         assert!(s.contains("\"ranges\":{\"perUserRunning\":[1,4]"));
-        // 36 keys: v1.0's ten (the call caps, then the answer length), then generation, import, the six of v1.3, then
+        // 38 keys: v1.0's ten (the call caps, then the answer length), then generation, import, the six of v1.3, then
         // the three pacing ones of v1.9
         let keys: Vec<&String> = a["limits"].as_object().expect("object").keys().collect();
-        assert_eq!(keys.len(), 36);
+        assert_eq!(keys.len(), 38);
         assert_eq!(
             &keys[5..],
             &[
@@ -792,7 +816,9 @@ mod tests {
                 "dailyTokenBudget",
                 "paceOn",
                 "paceRpm",
-                "paceTpm"
+                "paceTpm",
+                "assessPerDay",
+                "assessAdminsExempt"
             ]
         );
         assert_eq!(a["defaults"], a["limits"]);

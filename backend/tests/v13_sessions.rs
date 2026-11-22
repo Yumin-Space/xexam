@@ -78,7 +78,7 @@ fn app() -> App {
     }
     raw(&db)
         .execute(
-            "UPDATE users SET password_hash = ?1, must_change_password = 0",
+            "UPDATE users SET password_hash = ?1, must_change_password = 0, display_name = 'User ' || id",
             [pw_hash()],
         )
         .expect("prime");

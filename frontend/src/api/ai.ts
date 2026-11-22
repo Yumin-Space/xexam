@@ -7,6 +7,7 @@
 import { retryBody, suggestBody, type AiLang, type SendBody } from '../domain/ai-chat.ts';
 import type { StudyAskBody, ReplyLang } from '../domain/ai-plus.ts';
 import { parseSaved, type SavedPayload } from '../domain/ai-study.ts';
+import { parseAssessLatest, type AssessLatest } from '../domain/dash-assess.ts';
 import type { StudySavedQuery, StudyTransport } from '../domain/ai-spec.ts';
 import type {
   AiAdminUserDetail, AiAdminUserRow, AiChatDetail, AiChatSummary, AiMemoriesAnswer, AiMemory, AiStatusJson, ModelRef,
@@ -119,9 +120,12 @@ export const fetchSummarySaved = async (q: { record: number; at: string }): Prom
 export const askSummaryStream = (body: { recordId: number; lang: ReplyLang }, opts: StreamOptions): Promise<void> =>
   postStream('/api/ai/summary/ask', body, opts);
 
-/** v2.5: the saved study assessment (`at` = the newest record's time as 12 digits, YYYYMMDDHHMM) */
-export const savedAssess = async (at: string): Promise<SavedPayload> =>
-  parseSaved(await getJson<unknown>(`/api/ai/assess/saved?at=${at}`));
+/** v2.6: the viewer's latest saved study assessment and whether today's one is used (no AI+ needed to read it) */
+export const fetchAssessLatest = async (): Promise<AssessLatest> => {
+  const r = parseAssessLatest(await getJson<unknown>('/api/ai/assess/latest'));
+  if (!r) throw new Error('unexpected assessment answer');
+  return r;
+};
 
 /** v2.5: asks for the study assessment (streamed like a study answer) */
 export const askAssess = (body: { lang: ReplyLang }, opts: StreamOptions): Promise<void> => postStream('/api/ai/assess/ask', body, opts);
@@ -132,8 +136,6 @@ export const studyTransport: StudyTransport = {
   askStudy: (body, signal, on) => askStudyStream(body, { signal, onEvent: on }),
   savedSummary: fetchSummarySaved,
   askSummary: (body, signal, on) => askSummaryStream(body, { signal, onEvent: on }),
-  savedAssess,
-  askAssess: (body, signal, on) => askAssess(body, { signal, onEvent: on }),
   // always with a chat id, never `{}`; the answer does not matter
   stopChat: async (chatId) => {
     await stopAnswer(chatId);

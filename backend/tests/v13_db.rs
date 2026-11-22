@@ -126,7 +126,7 @@ fn a_v7_file_migrates_to_v8_with_a_backup_and_the_backfill() {
             &c,
             "SELECT actor || '|' || action || '|' || detail || '|' || result FROM activity_log"
         ),
-        "system|system.migrate|{\"from\":7,\"to\":11}|ok"
+        "system|system.migrate|{\"from\":7,\"to\":12}|ok"
     );
     // fresh == migrated
     assert_eq!(master(&db), master(&fresh));

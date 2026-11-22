@@ -137,7 +137,7 @@
 .lg-tabs { margin: 0 0 12px; }
 .lg-tabs button { min-height: var(--tab-h, 40px); }
 .act-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
-.act-sel { min-height: 38px; max-width: 100%; font-size: 15px; }
+.act-sel { min-height: 44px; max-width: 100%; font-size: 15px; }
 .act-tools { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; }
 /* v1.4 (owner): the "show all details" eye, the same look as the sign-in eye of User management (users.css .us-eye):
    light: a solid circle (green on, grey off) with a white eye; dark: no fill, a green or grey outline eye */
@@ -213,3 +213,6 @@
   .act-sel { flex: 1 1 40%; }
   .act-seg button { min-width: 44px; }
 }
+
+/* v2.6: the pager row never wraps (phones draw only arrows + the current page) */
+.act-pager .ptb-btns { flex-wrap: nowrap; }

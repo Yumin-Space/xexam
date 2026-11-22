@@ -18,3 +18,7 @@ test('the same name (another record, a redraw) and an unknown name are not repor
   assert.equal(visitToReport(true, 'home', 'nowhere'), null);
   assert.equal(visitToReport(true, 'home', 'study'), 'study');
 });
+
+test('the profile page is reported like the other pages (v2.6)', () => {
+  assert.equal(visitToReport(true, 'settings', 'profile'), 'profile');
+});

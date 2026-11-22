@@ -343,7 +343,7 @@ export const aiSuspended = (s: AiStatus = status): boolean => s.state === 'ready
 export interface RefreshOptions {
   /** Read now even when the last answer is recent */
   force?: boolean;
-  /** The user must choose a new password first: the status is not asked (it stays 'unavailable') */
+  /** The user must finish setup first (a new password, v2.6: or a display name): the status is not asked (it stays 'unavailable') */
   mustChangePassword: boolean;
   /** For the tests */
   now?: number;

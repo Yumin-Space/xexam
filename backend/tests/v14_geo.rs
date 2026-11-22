@@ -79,7 +79,7 @@ fn app() -> App {
     }
     raw(&db)
         .execute(
-            "UPDATE users SET password_hash = ?1, must_change_password = 0",
+            "UPDATE users SET password_hash = ?1, must_change_password = 0, display_name = 'User ' || id",
             [pw_hash()],
         )
         .expect("prime");
@@ -158,7 +158,7 @@ async fn admin_cookie(a: &App) -> String {
     if r.status != 200 {
         raw(&a.db)
             .execute(
-                "UPDATE users SET password_hash = ?1, must_change_password = 0 WHERE username = 'admin'",
+                "UPDATE users SET password_hash = ?1, must_change_password = 0, display_name = 'Admin' WHERE username = 'admin'",
                 [pw_hash()],
             )
             .expect("admin");
@@ -1124,7 +1124,7 @@ fn a_schema_8_file_with_data_migrates_to_9_with_one_backup_and_one_row() {
         .expect("query")
         .map(|r| r.expect("row"))
         .collect();
-    assert_eq!(rows, vec![r#"{"from":8,"to":11}"#.to_string()]);
+    assert_eq!(rows, vec![r#"{"from":8,"to":12}"#.to_string()]);
     // fresh == migrated, and the next open changes nothing
     assert_eq!(master(&db), master(&fresh));
     drop(c);
@@ -1167,7 +1167,7 @@ fn a_fresh_database_is_schema_9_without_a_migrate_row() {
         .map(|r| r.expect("row"))
         .collect();
     assert_eq!(
-        cols[cols.len() - 6..cols.len() - 1],
+        cols[cols.len() - 7..cols.len() - 2],
         [
             "last_active_ip",
             "last_active_country",

@@ -1,18 +1,21 @@
-// The sign-in page and the "choose a new password" page: one calm card in the middle of the sheet (logo, title, a short line,
+// The sign-in page, the "choose a new password" page (v2.6: with a username field while the user has none) and the small
+// "set a username" page (an existing user without a display name): one calm card in the middle of the sheet (logo, title, a short line,
 // the fields, the primary button). No shell: nothing else of the app is reachable before signing in.
 // Their language is the cached settings of the user who signed in last on this browser, else the browser's language; the
 // small language switch under the card changes it for this page only (after signing in, the user's own settings apply).
 // v1.0 (AU-1): the brand row is compact (the 32 px logo beside the app name and the title), the lead is short (two lines at most
 // on a phone), the focused field and the submit button stay in view while the on-screen keyboard is up (keepInView), the language
 // segments are 44 px on touch, and the page ends with the GitHub line under the language switch.
+import { signInNameOk } from '../domain/user-name.ts';
 import '../styles/auth.css';
-import { ApiError } from '../api/client.ts';
+import { ApiError, MSG_NAME_BAD, MSG_NAME_EMPTY } from '../api/client.ts';
 import { githubLine } from '../components/github-line.ts';
 import { field, passwordLengthOk } from '../components/fields.ts';
 import { UI_LANGS } from '../i18n/define.ts';
+import { cleanDisplayName, displayNameProblem } from '../domain/user-name.ts';
 import { errorText } from '../i18n/errors.ts';
 import { localeTag, t, type MsgKey } from '../i18n/index.ts';
-import { authEpoch, render, saveNewPassword, signIn, signOut } from '../state/actions.ts';
+import { authEpoch, render, saveFirstName, saveNewPassword, signIn, signOut } from '../state/actions.ts';
 import { applySettings } from '../state/preferences.ts';
 import { paths } from '../state/storage-keys.ts';
 import { S } from '../state/store.ts';
@@ -46,7 +49,9 @@ function saveRemember(on: boolean): void {
   }
 }
 /** "Choose a new password": each field remembers its own show / hide state */
-const choose = { password: '', repeat: '', shownNew: false, shownRepeat: false, busy: false, error: null as Child | null };
+const choose = { name: '', password: '', repeat: '', shownNew: false, shownRepeat: false, busy: false, error: null as Child | null };
+/** "Set a username" (v2.6) */
+const setName = { name: '', busy: false, error: null as Child | null };
 /** The field that gets the focus after the next render (an error points at the field to fix) */
 let focusNext: string | null = null;
 /** authEpoch() when the forms were last drawn: a change means another person may be at this page now */
@@ -56,7 +61,8 @@ let formsEpoch = authEpoch();
 function forgetForOtherPerson(): void {
   if (formsEpoch === authEpoch()) return;
   formsEpoch = authEpoch();
-  Object.assign(choose, { password: '', repeat: '', shownNew: false, shownRepeat: false, busy: false, error: null });
+  Object.assign(choose, { name: '', password: '', repeat: '', shownNew: false, shownRepeat: false, busy: false, error: null });
+  Object.assign(setName, { name: '', busy: false, error: null });
   signin.password = '';
   signin.shown = false;
 }
@@ -119,6 +125,14 @@ async function submitSignIn(): Promise<void> {
     render();
     return;
   }
+  // v2.6 (owner): sign in with the e-mail address only, never with the display name; the one exception is the default
+  // administrator `admin` of a fresh install (it has no e-mail yet)
+  if (!signInNameOk(name)) {
+    signin.error = t('auth.err.email');
+    focusNext = 'auth-user';
+    render();
+    return;
+  }
   signin.busy = true;
   signin.error = null;
   render();
@@ -153,7 +167,7 @@ export function renderSignIn(): HTMLElement {
     signin.error = null;
   }
   const user = field({
-    id: 'auth-user', label: t('auth.username'), value: signin.username, autocomplete: 'username', maxlength: 200,
+    id: 'auth-user', label: t('auth.username'), value: signin.username, autocomplete: 'username', inputmode: 'email', maxlength: 200, placeholder: 'name@example.com',
     onInput: (v) => {
       signin.username = v;
     },
@@ -210,8 +224,23 @@ export function renderSignIn(): HTMLElement {
 
 // ---------------------------------------------------------------- choose a new password
 
+/** The client-side text for a refused display name (the server applies the same rule) */
+function nameProblemText(raw: string): string | null {
+  const p = displayNameProblem(raw);
+  return p === 'empty' ? t('auth.check.nameEmpty') : p === 'bad' ? t('auth.check.nameBad') : null;
+}
+
 async function submitNewPassword(): Promise<void> {
   if (choose.busy) return;
+  // v2.6: a user without a username chooses it together with the password
+  const needsName = S.user?.needsName === true;
+  const nameProblem = needsName ? nameProblemText(choose.name) : null;
+  if (nameProblem) {
+    choose.error = nameProblem;
+    focusNext = 'auth-name';
+    render();
+    return;
+  }
   if (!passwordLengthOk(choose.password)) {
     choose.error = t('auth.check.length');
     focusNext = 'auth-new';
@@ -228,11 +257,13 @@ async function submitNewPassword(): Promise<void> {
   choose.error = null;
   render();
   try {
-    await saveNewPassword(choose.password);
-    Object.assign(choose, { password: '', repeat: '', shownNew: false, shownRepeat: false });
+    await saveNewPassword(choose.password, needsName ? cleanDisplayName(choose.name) : undefined);
+    Object.assign(choose, { name: '', password: '', repeat: '', shownNew: false, shownRepeat: false });
   } catch (e) {
     choose.error = errorText(e);
-    focusNext = 'auth-new';
+    // A taken name points back at the name field
+    const nameError = e instanceof ApiError && (e.status === 409 || (e.status === 400 && (e.serverMessage === MSG_NAME_BAD || e.serverMessage === MSG_NAME_EMPTY)));
+    focusNext = needsName && nameError ? 'auth-name' : 'auth-new';
   } finally {
     choose.busy = false;
   }
@@ -242,6 +273,13 @@ async function submitNewPassword(): Promise<void> {
 export function renderNewPassword(): HTMLElement {
   forgetForOtherPerson();
   const name = S.user?.username ?? '';
+  const needsName = S.user?.needsName === true;
+  const nameField = needsName ? field({
+    id: 'auth-name', label: t('auth.name.label'), value: choose.name, autocomplete: 'nickname', hint: t('auth.name.hint'),
+    onInput: (v) => {
+      choose.name = v;
+    },
+  }) : null;
   const pw = field({
     id: 'auth-new', label: t('auth.password.new'), type: 'password', value: choose.password, autocomplete: 'new-password',
     hint: t('auth.password.rule'), shown: choose.shownNew,
@@ -263,6 +301,7 @@ export function renderNewPassword(): HTMLElement {
     },
   });
   const submit = h('button', { class: 'btn primary big auth-submit', type: 'submit', disabled: choose.busy }, t(choose.busy ? 'auth.password.busy' : 'auth.password.submit'));
+  if (nameField) keepInView(nameField.input, submit);
   keepInView(pw.input, submit);
   keepInView(again.input, submit);
   const form = h('form', {
@@ -274,17 +313,72 @@ export function renderNewPassword(): HTMLElement {
   },
   // For password managers: the account the new password belongs to
   h('input', { class: 'sr-only', type: 'text', name: 'username', autocomplete: 'username', value: name, readonly: true, tabindex: '-1', 'aria-hidden': 'true' }),
-  pw.el, again.el,
+  nameField?.el ?? null, pw.el, again.el,
   h('div', { class: 'auth-acts' },
     submit,
     h('button', { class: 'btn quiet', type: 'button', disabled: choose.busy, onclick: () => void signOut() }, t('auth.password.signOut'))));
 
-  const lead = t('auth.password.lead', { name: '\u0000' }).split('\u0000');
-  const root = card(t('auth.password.title'),
+  const titleKey = needsName ? 'auth.setup.title' : 'auth.password.title';
+  const lead = t(needsName ? 'auth.setup.lead' : 'auth.password.lead', { name: '\u0000' }).split('\u0000');
+  const root = card(t(titleKey),
     [lead[0] ?? '', h('b', { class: 'auth-name' }, name), lead[1] ?? ''],
     errorBox(choose.error),
     form);
-  document.title = `${t('auth.password.title')} - ${t('app.name')}`;
-  focusLater(root, 'auth-new');
+  document.title = `${t(titleKey)} - ${t('app.name')}`;
+  focusLater(root, needsName ? 'auth-name' : 'auth-new');
+  return root;
+}
+
+// ---------------------------------------------------------------- set a username (v2.6)
+
+async function submitName(): Promise<void> {
+  if (setName.busy) return;
+  const problem = nameProblemText(setName.name);
+  if (problem) {
+    setName.error = problem;
+    focusNext = 'auth-name';
+    render();
+    return;
+  }
+  setName.busy = true;
+  setName.error = null;
+  render();
+  try {
+    await saveFirstName(cleanDisplayName(setName.name));
+    setName.name = '';
+  } catch (e) {
+    setName.error = errorText(e);
+    focusNext = 'auth-name';
+  } finally {
+    setName.busy = false;
+  }
+  render();
+}
+
+/** An existing user without a username (their password is fine): one field, Save, and a Sign out link */
+export function renderSetName(): HTMLElement {
+  forgetForOtherPerson();
+  const nameField = field({
+    id: 'auth-name', label: t('auth.name.label'), value: setName.name, autocomplete: 'nickname', hint: t('auth.name.hint'),
+    onInput: (v) => {
+      setName.name = v;
+    },
+  });
+  const submit = h('button', { class: 'btn primary big auth-submit', type: 'submit', disabled: setName.busy }, t(setName.busy ? 'auth.name.busy' : 'auth.name.submit'));
+  keepInView(nameField.input, submit);
+  const form = h('form', {
+    class: 'auth-form', method: 'post', action: '', novalidate: true, 'aria-busy': setName.busy ? 'true' : null,
+    onsubmit: (e: SubmitEvent) => {
+      e.preventDefault();
+      void submitName();
+    },
+  },
+  nameField.el,
+  h('div', { class: 'auth-acts' },
+    submit,
+    h('button', { class: 'btn quiet', type: 'button', disabled: setName.busy, onclick: () => void signOut() }, t('auth.password.signOut'))));
+  const root = card(t('auth.name.title'), t('auth.name.lead'), errorBox(setName.error), form);
+  document.title = `${t('auth.name.title')} - ${t('app.name')}`;
+  focusLater(root, 'auth-name');
   return root;
 }

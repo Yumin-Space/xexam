@@ -1,8 +1,10 @@
 //! v2.5 storage of the study assessment: a `summary` chat with an `assess@` ref is listed as the wire kind `assess`,
-//! a record summary stays `summary`, and the saved lookup of a record never returns an assessment chat.
+//! a record summary stays `summary`, and the saved lookup of a record never returns an assessment chat. v2.6: the
+//! latest-assessment row (the Home capsule) is written by the finish hook only and lives apart from the chats.
 use xexam_ai_service::config::JournalMode;
 use xexam_ai_service::identity::{Identity, Role};
 use xexam_ai_service::store::data::{self, StudyInsert};
+use xexam_ai_service::store::stats;
 use xexam_ai_service::store::Store;
 
 const NOW: i64 = 1_800_000_000;
@@ -156,220 +158,295 @@ fn the_record_summary_lookup_never_returns_an_assessment_chat() {
     assert!(none.chat_id.is_none());
 }
 
-#[test]
-fn assess_saved_matches_the_stored_line_and_the_owner() {
-    let dir = tempfile::tempdir().expect("dir");
-    let store = Store::open(dir.path(), JournalMode::Delete).expect("open");
-    let line = "[AI assessment] latest=2026-11-21 10:30 30d 3r 6q";
-    pair(
-        &store,
-        1,
-        &insert("assess@2026-11-22", "2026-11-22", None, line),
-        "advice",
-    );
-    let hit = store
-        .read(|c| data::assess_saved(c, 1, "2026-11-21 10:30"))
-        .expect("read")
-        .expect("hit");
-    assert_eq!(hit.date, "2026-11-22");
-    assert_eq!(hit.line.records, 3);
-    assert_eq!(hit.saved.latest.expect("latest").content, "advice");
-    for (user, at) in [(1, "2026-11-21 10:31"), (2, "2026-11-21 10:30")] {
-        let got = store
-            .read(|c| data::assess_saved(c, user, at))
-            .expect("read");
-        assert!(got.is_none(), "{user} {at}");
-    }
-    // a set without any attempt has nothing saved
-    let dir2 = tempfile::tempdir().expect("dir");
-    let store2 = Store::open(dir2.path(), JournalMode::Delete).expect("open");
-    assert!(store2
-        .read(|c| data::assess_saved(c, 1, "2026-11-21 10:30"))
-        .expect("read")
-        .is_none());
+const LINE: &str = "[AI assessment] latest=2026-11-21 10:30 30d 3r 6q";
+const DAY: &str = "2026-11-22";
+
+fn start(store: &Store, user: i64, day_ref: &str) -> data::StudyIds {
+    store
+        .write(|tx| {
+            data::prepare_study(
+                tx,
+                &who(user),
+                &insert(day_ref, "t", None, LINE),
+                &mut |_| true,
+            )
+        })
+        .expect("pair")
 }
 
-/// Writes a pair and leaves the answer as `status` (with `text`), as a running, stopped or failed attempt.
-fn attempt(
-    store: &Store,
-    user: i64,
-    s: &StudyInsert<'_>,
-    status: &str,
-    text: &str,
-) -> data::StudyIds {
-    let ids = store
-        .write(|tx| data::prepare_study(tx, &who(user), s, &mut |_| true))
-        .expect("pair");
+/// What the finish hook calls for one answer.
+fn finish(store: &Store, answer: i64, status: &str, text: &str, _day: &str) -> bool {
     store
         .write(|tx| {
             tx.execute(
                 "UPDATE messages SET content = ?2, status = ?3 WHERE id = ?1",
-                rusqlite::params![ids.answer, text, status],
+                rusqlite::params![answer, text, status],
+            )?;
+            data::save_assess_latest(tx, answer, status, text, "demo-model", NOW)
+        })
+        .expect("finish")
+}
+
+fn latest(store: &Store, user: i64) -> Option<data::AssessLatest> {
+    store.read(|c| data::assess_latest(c, user)).expect("read")
+}
+
+fn open() -> (tempfile::TempDir, Store) {
+    let dir = tempfile::tempdir().expect("dir");
+    let store = Store::open(dir.path(), JournalMode::Delete).expect("open");
+    (dir, store)
+}
+
+#[test]
+fn a_done_assessment_writes_the_capsule_with_the_numbers_of_its_line() {
+    let (_d, store) = open();
+    let ids = start(&store, 1, "assess@2026-11-22");
+    assert!(finish(&store, ids.answer, "done", "Keep going.", DAY));
+    let got = latest(&store, 1).expect("row");
+    assert_eq!(got.content, "Keep going.");
+    assert_eq!(got.lang, "en");
+    assert_eq!(got.model.as_deref(), Some("demo-model"));
+    assert_eq!(got.latest_at, "2026-11-21 10:30");
+    assert_eq!((got.records, got.answered), (3, 6));
+    assert_eq!((got.day.as_str(), got.created_at), (DAY, NOW));
+    // another user has none
+    assert!(latest(&store, 2).is_none());
+    // a newer done answer replaces it (one row per user)
+    let again = start(&store, 1, "assess@2026-11-23");
+    assert!(finish(
+        &store,
+        again.answer,
+        "done",
+        "Next day.",
+        "2026-11-23"
+    ));
+    let got = latest(&store, 1).expect("row");
+    assert_eq!(
+        (got.content.as_str(), got.day.as_str()),
+        ("Next day.", "2026-11-23")
+    );
+    let rows: i64 = store
+        .read(|c| c.query_row("SELECT COUNT(*) FROM assess_latest", [], |r| r.get(0)))
+        .expect("count");
+    assert_eq!(rows, 1);
+}
+
+#[test]
+fn failed_stopped_and_empty_answers_write_nothing_and_keep_the_old_text() {
+    let (_d, store) = open();
+    let first = start(&store, 1, "assess@2026-11-22");
+    assert!(finish(&store, first.answer, "done", "Old text.", DAY));
+    for (status, text) in [
+        ("error", "x"),
+        ("stopped", "partial"),
+        (
+            "done", "  
+",
+        ),
+        ("done", ""),
+    ] {
+        let ids = start(&store, 1, "assess@2026-11-23");
+        assert!(
+            !finish(&store, ids.answer, status, text, "2026-11-23"),
+            "{status}"
+        );
+        let got = latest(&store, 1).expect("row");
+        assert_eq!(
+            (got.content.as_str(), got.day.as_str()),
+            ("Old text.", DAY),
+            "{status}"
+        );
+    }
+    // a fresh user whose only attempt fails has no capsule
+    let ids = start(&store, 2, "assess@2026-11-22");
+    assert!(!finish(&store, ids.answer, "error", "", DAY));
+    assert!(latest(&store, 2).is_none());
+}
+
+#[test]
+fn other_answers_never_write_a_capsule() {
+    let (_d, store) = open();
+    // a record summary is a summary chat without the assess@ ref
+    let s = pair(
+        &store,
+        1,
+        &insert("r7@2026-11-21 10:30", "x", Some(7), "[AI summary] x"),
+        "text",
+    );
+    assert!(!finish(&store, s.answer, "done", "text", DAY));
+    // an assess chat whose stored line cannot be read writes nothing
+    let bad = store
+        .write(|tx| {
+            data::prepare_study(
+                tx,
+                &who(1),
+                &insert("assess@2026-11-22", "t", None, "not a line"),
+                &mut |_| true,
             )
         })
-        .expect("status");
-    ids
-}
-
-const LINE_X: &str = "[AI assessment] latest=2026-11-20 09:00 30d 2r 4q";
-const LINE_Y: &str = "[AI assessment] latest=2026-11-21 10:30 30d 3r 6q";
-const AT_X: &str = "2026-11-20 09:00";
-const AT_Y: &str = "2026-11-21 10:30";
-
-#[test]
-fn assess_saved_returns_a_running_stopped_or_failed_attempt_without_a_good_one() {
-    for status in ["streaming", "stopped", "error"] {
-        let dir = tempfile::tempdir().expect("dir");
-        let store = Store::open(dir.path(), JournalMode::Delete).expect("open");
-        let ids = attempt(
-            &store,
-            1,
-            &insert("assess@2026-11-22", "2026-11-22", None, LINE_Y),
-            status,
-            "partial",
-        );
-        let hit = store
-            .read(|c| data::assess_saved(c, 1, AT_Y))
-            .expect("read")
-            .unwrap_or_else(|| panic!("{status}: the attempt must be returned"));
-        let latest = hit.saved.latest.expect("latest");
-        assert_eq!(latest.message_id, ids.answer, "{status}");
-        assert_eq!(latest.status, status);
-        assert_eq!(latest.content, "partial");
-        assert!(hit.saved.last_good.is_none(), "{status}");
-        assert_eq!(hit.saved.chat_id, Some(ids.chat));
-        assert_eq!(hit.date, "2026-11-22");
-        assert_eq!(hit.line.latest_at, AT_Y);
-        // another record set still has nothing
-        assert!(store
-            .read(|c| data::assess_saved(c, 1, AT_X))
-            .expect("read")
-            .is_none());
-    }
+        .expect("pair");
+    assert!(!finish(&store, bad.answer, "done", "text", DAY));
+    assert!(latest(&store, 1).is_none());
 }
 
 #[test]
-fn assess_saved_follows_a_new_attempt_and_keeps_the_last_good_answer_of_the_same_set() {
-    let dir = tempfile::tempdir().expect("dir");
-    let store = Store::open(dir.path(), JournalMode::Delete).expect("open");
-    let done = pair(
-        &store,
-        1,
-        &insert("assess@2026-11-22", "2026-11-22", None, LINE_Y),
-        "advice",
-    );
-    let run = attempt(
-        &store,
-        1,
-        &insert("assess@2026-11-22", "2026-11-22", None, LINE_Y),
-        "streaming",
-        "",
-    );
-    let hit = store
-        .read(|c| data::assess_saved(c, 1, AT_Y))
-        .expect("read")
-        .expect("hit");
-    assert_eq!(hit.saved.latest.expect("latest").message_id, run.answer);
+fn the_capsule_survives_chat_deletes_and_the_retention_sweep_but_not_the_user() {
+    let (_d, store) = open();
+    let ids = start(&store, 1, "assess@2026-11-22");
+    finish(&store, ids.answer, "done", "Keep going.", DAY);
+    // one chat deleted
     assert_eq!(
-        hit.saved.last_good.expect("last good").message_id,
-        done.answer
+        store
+            .write(|tx| data::delete_chat(tx, 1, ids.chat))
+            .expect("del"),
+        1
     );
-    // a finished answer of another set is never offered as the last good one
-    let dir = tempfile::tempdir().expect("dir");
-    let store = Store::open(dir.path(), JournalMode::Delete).expect("open");
-    pair(
-        &store,
-        1,
-        &insert("assess@2026-11-22", "2026-11-22", None, LINE_X),
-        "old advice",
-    );
-    let run = attempt(
-        &store,
-        1,
-        &insert("assess@2026-11-22", "2026-11-22", None, LINE_Y),
-        "stopped",
-        "half",
-    );
-    let hit = store
-        .read(|c| data::assess_saved(c, 1, AT_Y))
-        .expect("read")
-        .expect("hit");
-    assert_eq!(hit.saved.latest.expect("latest").message_id, run.answer);
-    assert!(hit.saved.last_good.is_none());
+    assert_eq!(latest(&store, 1).expect("row").content, "Keep going.");
+    // delete all
+    let again = start(&store, 1, "assess@2026-11-23");
+    assert!(again.new_chat);
+    store
+        .write(|tx| data::delete_all_chats(tx, 1))
+        .expect("all");
+    let chats: i64 = store
+        .read(|c| c.query_row("SELECT COUNT(*) FROM chats", [], |r| r.get(0)))
+        .expect("count");
+    assert_eq!(chats, 0);
+    assert_eq!(latest(&store, 1).expect("row").content, "Keep going.");
+    // the retention sweep removes the old chat but not the capsule
+    let third = start(&store, 1, "assess@2026-11-24");
+    let swept = store
+        .write(|tx| stats::sweep_chats(tx, NOW + 1_000_000, &[], 100))
+        .expect("sweep");
+    assert_eq!(swept, 1, "{}", third.chat);
+    assert_eq!(latest(&store, 1).expect("row").content, "Keep going.");
+    // deleting the user removes it (cascade)
+    assert!(store.write(|tx| data::delete_user(tx, 1)).expect("user"));
+    assert!(latest(&store, 1).is_none());
 }
 
 #[test]
-fn assess_saved_finds_the_matching_chat_after_a_follow_up_touched_an_older_one() {
+fn the_table_is_added_to_an_older_file_on_open_without_a_version_change() {
     let dir = tempfile::tempdir().expect("dir");
-    let store = Store::open(dir.path(), JournalMode::Delete).expect("open");
-    let a = pair(
-        &store,
-        1,
-        &insert("assess@2026-11-21", "2026-11-21", None, LINE_X),
-        "advice x",
-    );
-    let b = pair(
-        &store,
-        1,
-        &insert("assess@2026-11-22", "2026-11-22", None, LINE_Y),
-        "advice y",
-    );
-    // a follow-up in AI Chat inside the older chat makes it the most recently touched one
+    {
+        let store = Store::open(dir.path(), JournalMode::Delete).expect("open");
+        store
+            .write(|tx| tx.execute_batch("DROP TABLE assess_latest"))
+            .expect("drop");
+    }
+    let store = Store::open(dir.path(), JournalMode::Delete).expect("reopen");
+    assert!(latest(&store, 1).is_none());
+    let version: String = store
+        .read(|c| {
+            c.query_row("SELECT value FROM meta WHERE key = 'schema'", [], |r| {
+                r.get(0)
+            })
+        })
+        .expect("schema");
+    assert_eq!(version, "11");
+}
+
+#[test]
+fn the_capsule_day_is_the_day_it_was_asked_not_the_day_it_ended() {
+    let (_d, store) = open();
+    let ids = start(&store, 1, "assess@2026-11-21");
+    // the answer ends after midnight: the finish call no longer carries a day, the chat ref does
+    assert!(finish(&store, ids.answer, "done", "Late.", "2026-11-22"));
+    assert_eq!(latest(&store, 1).expect("row").day, "2026-11-21");
+}
+
+// —— v2.6: per-day count, usage mark, the `assess` slot upgrade ——————————————————————————————————————————————————————
+
+#[test]
+fn runs_count_per_day_and_restart_on_a_new_day() {
+    let dir = tempfile::tempdir().expect("dir");
+    let store = Store::open(dir.path(), JournalMode::Wal).expect("open");
     store
         .write(|tx| {
             tx.execute(
-                "INSERT INTO messages (chat_id, role, content, status, created_at, finished_at, kind, parent_id)
-                 VALUES (?1, 'user', 'and then?', 'done', ?2, ?2, 'chat', ?3)",
-                rusqlite::params![a.chat, NOW + 600, a.answer],
-            )?;
-            let q = tx.last_insert_rowid();
-            tx.execute(
-                "INSERT INTO messages (chat_id, role, content, status, created_at, finished_at, kind, parent_id)
-                 VALUES (?1, 'assistant', 'more advice', 'done', ?2, ?2, 'chat', ?3)",
-                rusqlite::params![a.chat, NOW + 600, q],
-            )?;
-            data::touch_chat(tx, a.chat, NOW + 600)
+                "INSERT INTO users (id, stamp, username, first_seen_at, last_seen_at) VALUES (1, 'a', 'u', 1, 1)",
+                [],
+            )
         })
-        .expect("follow-up");
-    let hit = store
-        .read(|c| data::assess_saved(c, 1, AT_Y))
+        .expect("user");
+    let line = "[AI assessment] latest=2026-11-21 10:30 30d 3r 6q";
+    let run = |day: &str, n: i64| {
+        let r = format!("assess@{day}");
+        let ins = insert(&r, day, None, line);
+        let ids = pair(&store, 1, &ins, &format!("text {n}"));
+        store
+            .write(|tx| {
+                data::save_assess_latest(tx, ids.answer, "done", &format!("text {n}"), "m", NOW)
+            })
+            .expect("save")
+    };
+    assert!(run("2026-11-22", 1));
+    assert!(run("2026-11-22", 2));
+    let l = store
+        .read(|c| data::assess_latest(c, 1))
         .expect("read")
-        .expect("hit y");
-    assert_eq!(hit.saved.chat_id, Some(b.chat));
-    assert_eq!(hit.date, "2026-11-22");
-    assert_eq!(hit.saved.latest.expect("latest").content, "advice y");
-    let hit = store
-        .read(|c| data::assess_saved(c, 1, AT_X))
+        .expect("row");
+    assert_eq!((l.day.as_str(), l.runs), ("2026-11-22", 2));
+    assert!(run("2026-11-23", 3));
+    let l = store
+        .read(|c| data::assess_latest(c, 1))
         .expect("read")
-        .expect("hit x");
-    assert_eq!(hit.saved.chat_id, Some(a.chat));
-    assert_eq!(hit.date, "2026-11-21");
-    assert_eq!(hit.saved.latest.expect("latest").content, "advice x");
+        .expect("row");
+    assert_eq!((l.day.as_str(), l.runs), ("2026-11-23", 1));
 }
 
 #[test]
-fn assess_saved_finds_an_older_answer_of_the_same_chat_after_the_newest_record_is_gone() {
+fn an_assess_slot_is_added_to_an_older_file_as_a_copy_of_summary() {
     let dir = tempfile::tempdir().expect("dir");
-    let store = Store::open(dir.path(), JournalMode::Delete).expect("open");
-    let x = pair(
-        &store,
-        1,
-        &insert("assess@2026-11-22", "2026-11-22", None, LINE_X),
-        "advice x",
+    {
+        let store = Store::open(dir.path(), JournalMode::Wal).expect("open");
+        drop(store);
+    }
+    let path = dir.path().join(xexam_ai_service::store::DB_FILE);
+    {
+        let c = rusqlite::Connection::open(&path).expect("raw");
+        c.execute_batch(
+            "INSERT INTO connections (name, provider, base_url, created_at, updated_at) VALUES ('c', 'openai', 'http://x', 1, 1);
+             INSERT INTO models (connection_id, model) VALUES (1, 'm1');
+             UPDATE model_slots SET model_id = 1, effort = 'openai:high', updated_by = 'root' WHERE slot = 'summary';
+             ALTER TABLE model_slots RENAME TO model_slots_new;
+             CREATE TABLE model_slots (
+               slot TEXT PRIMARY KEY NOT NULL CHECK (slot IN ('default', 'chat', 'hint', 'explain', 'summary', 'generate', 'import')),
+               model_id INTEGER REFERENCES models(id) ON DELETE SET NULL, updated_at INTEGER NOT NULL,
+               updated_by TEXT NOT NULL DEFAULT '', effort TEXT);
+             INSERT INTO model_slots SELECT slot, model_id, updated_at, updated_by, effort FROM model_slots_new WHERE slot <> 'assess';
+             DROP TABLE model_slots_new;",
+        )
+        .expect("older shape");
+    }
+    let store = Store::open(dir.path(), JournalMode::Wal).expect("reopen");
+    let rows: Vec<(String, Option<i64>, Option<String>)> = store
+        .read(|c| {
+            let mut st = c.prepare("SELECT slot, model_id, effort FROM model_slots WHERE slot IN ('summary', 'assess') ORDER BY slot")?;
+            let r = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+            r.collect()
+        })
+        .expect("rows");
+    assert_eq!(
+        rows,
+        vec![
+            (
+                "assess".to_string(),
+                Some(1),
+                Some("openai:high".to_string())
+            ),
+            (
+                "summary".to_string(),
+                Some(1),
+                Some("openai:high".to_string())
+            ),
+        ]
     );
-    pair(
-        &store,
-        1,
-        &insert("assess@2026-11-22", "2026-11-22", None, LINE_Y),
-        "advice y",
-    );
-    // the record of Y was deleted: the newest record is X again
-    let hit = store
-        .read(|c| data::assess_saved(c, 1, AT_X))
-        .expect("read")
-        .expect("hit");
-    let latest = hit.saved.latest.expect("latest");
-    assert_eq!(latest.message_id, x.answer);
-    assert_eq!(latest.content, "advice x");
-    assert_eq!(hit.line.records, 2);
+    // idempotent
+    drop(store);
+    let store = Store::open(dir.path(), JournalMode::Wal).expect("again");
+    let n: i64 = store
+        .read(|c| c.query_row("SELECT COUNT(*) FROM model_slots", [], |r| r.get(0)))
+        .expect("n");
+    assert_eq!(n, 8);
 }

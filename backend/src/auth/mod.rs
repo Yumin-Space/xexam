@@ -57,6 +57,8 @@ pub const TOKEN_LEN: usize = 43;
 pub const PASSWORD_MIN_CHARS: usize = 8;
 pub const PASSWORD_MAX_CHARS: usize = 128;
 pub const USERNAME_MAX_CHARS: usize = 40;
+/// Longest display name (v2.6), counted in Unicode scalar values after cleaning.
+pub const DISPLAY_NAME_MAX_CHARS: usize = 20;
 
 /// The administrator created when the database has no users (the owner's requirement); `must_change_password` is set.
 pub const DEFAULT_ADMIN_USERNAME: &str = "admin";
@@ -329,6 +331,41 @@ pub fn clean_username(raw: &str) -> Option<String> {
     ok.then(|| name.to_string())
 }
 
+/// Why a display name was refused ([`clean_display_name`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DisplayNameError {
+    /// Nothing is left after trimming
+    Empty,
+    /// Longer than [`DISPLAY_NAME_MAX_CHARS`], or it holds `@` or a control character
+    Bad,
+}
+
+/// Invisible format characters (category Cf and look-alikes: zero-width, bidi controls, soft hyphen, BOM) that would let two
+/// names look the same or reverse the text after them; refused in display names (mirrored in `frontend/src/domain/user-name.ts`)
+fn is_invisible_format(c: char) -> bool {
+    matches!(c, '\u{00AD}' | '\u{061C}' | '\u{180E}' | '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}'
+        | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{206F}' | '\u{FEFF}' | '\u{FFF9}'..='\u{FFFB}')
+}
+
+/// Display name rule (v2.6): trimmed, runs of whitespace collapsed to one space, 1–20 characters (Unicode scalar values) after
+/// that, any script, no `@` (a name can never pass for an e-mail address) and no control characters. Returns the cleaned name.
+pub fn clean_display_name(raw: &str) -> Result<String, DisplayNameError> {
+    // Whitespace (tabs and line breaks too) collapses first; control characters that remain are refused
+    let name = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+    let n = name.chars().count();
+    if n == 0 {
+        Err(DisplayNameError::Empty)
+    } else if n > DISPLAY_NAME_MAX_CHARS
+        || name
+            .chars()
+            .any(|c| c.is_control() || c == '@' || is_invisible_format(c))
+    {
+        Err(DisplayNameError::Bad)
+    } else {
+        Ok(name)
+    }
+}
+
 /// A random password for `reset-password` (16 characters from an unambiguous alphabet).
 pub fn random_password() -> String {
     const ALPHABET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
@@ -552,6 +589,41 @@ pub fn unix_now() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn display_name_rule() {
+        assert_eq!(
+            clean_display_name("  Ann   Lee "),
+            Ok("Ann Lee".to_string())
+        );
+        assert_eq!(clean_display_name("a\tb\nc"), Ok("a b c".to_string()));
+        assert_eq!(clean_display_name("小明"), Ok("小明".to_string()));
+        assert_eq!(clean_display_name("   "), Err(DisplayNameError::Empty));
+        assert_eq!(clean_display_name(""), Err(DisplayNameError::Empty));
+        assert_eq!(clean_display_name("a@b"), Err(DisplayNameError::Bad));
+        assert_eq!(clean_display_name("a\u{7}b"), Err(DisplayNameError::Bad));
+        assert_eq!(clean_display_name("a\u{0}"), Err(DisplayNameError::Bad));
+        for bad in [
+            "a\u{200B}b",
+            "a\u{202E}b",
+            "\u{FEFF}a",
+            "a\u{2066}",
+            "a\u{AD}b",
+        ] {
+            assert_eq!(
+                clean_display_name(bad),
+                Err(DisplayNameError::Bad),
+                "{bad:?}"
+            );
+        }
+        // 20 characters pass, 21 do not (counted after collapsing, in characters not bytes)
+        assert!(clean_display_name(&"字".repeat(20)).is_ok());
+        assert_eq!(
+            clean_display_name(&"字".repeat(21)),
+            Err(DisplayNameError::Bad)
+        );
+        assert!(clean_display_name(&format!("{}   {}", "a".repeat(9), "b".repeat(10))).is_ok());
+    }
     use axum::http::{HeaderMap, HeaderValue};
 
     #[test]

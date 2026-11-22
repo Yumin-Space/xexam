@@ -170,7 +170,7 @@ fn a_schema_8_file_is_backed_up_and_study_becomes_hint_and_explain() {
     let rows = slot_rows(&c);
     let get = |name: &str| rows.iter().find(|r| r.0 == name).cloned().expect(name);
     assert!(rows.iter().all(|r| r.0 != "study"));
-    assert_eq!(rows.len(), 7);
+    assert_eq!(rows.len(), 8);
     for name in ["hint", "explain"] {
         assert_eq!(
             get(name),
@@ -207,7 +207,7 @@ fn a_schema_8_file_is_backed_up_and_study_becomes_hint_and_explain() {
     // the slots API agrees with the table
     assert_eq!(
         store.read(conn::slots).expect("slots"),
-        [None, None, Some(model), Some(model), None, None, None]
+        [None, None, Some(model), Some(model), None, None, None, None]
     );
     // one backup, still schema 8
     let copies = backups(dir.path());

@@ -2,7 +2,7 @@
 //!
 //! Sign-in (v0.6): there is no switch that turns authentication off. The routers the helpers build are **signed in as the
 //! default administrator**: [`test_session`] uses the same `Store` calls as `POST /api/auth/login` and `POST /api/auth/password`
-//! (it clears the "must change the password" flag and starts a session), and [`with_cookie`] wraps the router so every request
+//! (it clears the "must change the password" flag, gives the user a display name and starts a session), and [`with_cookie`] wraps the router so every request
 //! without a `Cookie` header carries that session cookie. That is how the golden tests and every older API test keep running
 //! unchanged. Tests of sign-in itself use `build_router(state)` directly (no cookie) and sign in through the API.
 #![allow(dead_code)]
@@ -281,6 +281,12 @@ pub fn test_session(store: &Store, username: &str) -> String {
                 auth::unix_now(),
             )
             .expect("clear the flag");
+    }
+    if u.display_name.is_none() {
+        // v2.6: the forced setup also asks for a display name; one per user id keeps them unique
+        store
+            .set_display_name(u.id, &format!("User {}", u.id))
+            .expect("set the display name");
     }
     let token = auth::new_session_token();
     store

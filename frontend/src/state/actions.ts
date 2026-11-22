@@ -6,7 +6,7 @@
 // page comes back (the address keeps the route, which opens again after signing in); a 403 "choose a new password first"
 // brings that page. A different user signing in on a page that still holds someone's data reloads the page, so nothing of
 // the previous user (data, page state, unfinished exam) survives in memory.
-import { changePassword, fetchAuthState, loginSession, logout } from '../api/auth.ts';
+import { changePassword, fetchAuthState, loginSession, logout, setDisplayName } from '../api/auth.ts';
 import { ApiError, isSignInError, setAuthHandler, type AuthProblem } from '../api/client.ts';
 import { submitAttempt } from '../api/progress.ts';
 import { fetchBank, fetchBanks, fetchInfo } from '../api/bank.ts';
@@ -14,6 +14,7 @@ import { fetchProgress, fetchRecord, fetchRecords } from '../api/progress.ts';
 import { hardSoonMinutes } from '../domain/activity.ts';
 import { countedResults, kindOf } from '../domain/attempt.ts';
 import { aiServiceOf } from '../domain/ai-settings.ts';
+import { setupRequired, setupView } from '../domain/user-name.ts';
 import {
   attemptTail, defaultFilter, examAnswer, isEmptyAnswer, isTimeUp, markUnanswered, noticeDue, recordSeconds, remaining, resultCounts, srDue, submitConfirm,
   type EndKind, type TimedFields,
@@ -88,7 +89,7 @@ export function persistSession(): void {
   if (!se) return;
   persist({
     qs: se.qs, answers: se.answers, flags: se.flags, idx: se.idx, elapsedSeconds: elapsed(), mode: se.mode, sheets: se.sheets,
-    kind: se.kind, checked: se.checked, key: se.key, startedAt: se.startedAt, timed: timedOf(se),
+    kind: se.kind, checked: se.checked, key: se.key, startedAt: se.startedAt, timed: timedOf(se), lang: se.lang,
   });
 }
 
@@ -101,6 +102,8 @@ function sessionOf(sv: SavedSession): Session {
     qs: sv.qs, answers: sv.answers, flags: sv.flags, idx: sv.idx, base: sv.elapsed, t0: Date.now(), mode: sv.mode, sheets: sv.sheets,
     kind: sv.kind, checked: sv.checked, key: sv.key, startedAt: sv.startedAt,
     limit: sv.timed.limit, warned: sv.timed.warned, timeUp: sv.timed.timeUp,
+    // A save from before v2.6 has no language: it starts from the default
+    lang: sv.lang ?? S.settings.questionLang,
   };
 }
 
@@ -213,7 +216,7 @@ export function setNavOpen(open: boolean): void {
  * otherwise at most every 60 s. Never fails: an AI service that cannot be reached only hides AI Chat.
  */
 export function refreshAi(force = false): Promise<void> {
-  return refreshAiStatus({ force, mustChangePassword: S.user?.mustChangePassword ?? true }).then((changed) => {
+  return refreshAiStatus({ force, mustChangePassword: S.user ? setupRequired(S.user) : true }).then((changed) => {
     if (changed && S.user && !S.authView) render();
   });
 }
@@ -309,8 +312,9 @@ function onAuthProblem(problem: AuthProblem): void {
     refreshSignInHint();
   } else {
     if (S.authView) return;
-    if (S.user) S.user = { ...S.user, mustChangePassword: true };
-    S.authView = 'password';
+    // v2.6: 'name' = only the display name is missing (the password is fine)
+    if (S.user) S.user = problem === 'name' ? { ...S.user, needsName: true } : { ...S.user, mustChangePassword: true };
+    S.authView = problem === 'name' ? 'name' : 'password';
   }
   cancelAdvance();
   S.navOpen = false;
@@ -384,13 +388,14 @@ function checkSession(): void {
     if (!st.user) onAuthProblem('signin');
     else if (st.user.id !== me.id) window.location.reload();
     else if (st.user.mustChangePassword) onAuthProblem('password');
+    else if (st.user.needsName) onAuthProblem('name');
     else {
       // A new name, or (v0.6.5) the bank-manager permission given or taken away: it applies without signing out, so the
       // menu and the Question banks page follow at the next check. v0.8: the same for AI+ (the AI status is read again
       // at once then; otherwise at most every 60 s)
       const aiChanged = st.user.aiAllowed !== me.aiAllowed;
       const svcChanged = noteAiService(st);
-      if (st.user.username !== me.username || st.user.canManageBanks !== me.canManageBanks || (st.user.canDownloadBanks === true) !== (me.canDownloadBanks === true) || aiChanged || svcChanged) {
+      if (st.user.username !== me.username || (st.user.displayName ?? null) !== (me.displayName ?? null) || st.user.canManageBanks !== me.canManageBanks || (st.user.canDownloadBanks === true) !== (me.canDownloadBanks === true) || aiChanged || svcChanged) {
         S.user = st.user;
         render();
       }
@@ -420,12 +425,13 @@ async function recheckAuthPage(): Promise<void> {
     const u = st.user;
     if (!u) {
       S.defaultAdmin = st.defaultAdmin ?? null;
-      if (S.authView === 'password') onAuthProblem('signin');
+      if (S.authView === 'password' || S.authView === 'name') onAuthProblem('signin');
       else render();
       return;
     }
     // Still the same person on the same page: nothing to do
     if (S.authView === 'password' && S.user?.id === u.id && u.mustChangePassword) return;
+    if (S.authView === 'name' && S.user?.id === u.id && !u.mustChangePassword && u.needsName) return;
     await afterSignIn(u);
   } catch {
     /* offline for a moment: the page stays as it is */
@@ -478,8 +484,8 @@ async function start(): Promise<void> {
     return;
   }
   adoptUser(user);
-  if (user.mustChangePassword) {
-    S.authView = 'password';
+  if (setupRequired(user)) {
+    S.authView = setupView(user);
     render();
     return;
   }
@@ -523,8 +529,8 @@ async function afterSignIn(user: AuthUser): Promise<void> {
     return;
   }
   adoptUser(user);
-  if (user.mustChangePassword) {
-    S.authView = 'password';
+  if (setupRequired(user)) {
+    S.authView = setupView(user);
     S.authNote = null;
     render();
     return;
@@ -548,11 +554,11 @@ export async function signIn(username: string, password: string, remember = true
  * The "choose a new password" page: sets the new password (the session proves who it is), then opens the app. The toast
  * comes after the user's own settings are applied, so it is in the same language as the page under it.
  */
-export async function saveNewPassword(password: string): Promise<void> {
+export async function saveNewPassword(password: string, displayName?: string): Promise<void> {
   authBusy = true;
   let user: AuthUser;
   try {
-    user = await changePassword(password);
+    user = await changePassword(password, undefined, displayName);
   } catch (e) {
     // 400: maybe another tab of this browser chose the new password meanwhile (then the server asks for the current one)
     const st = e instanceof ApiError && e.status === 400 ? await fetchAuthState().catch(() => null) : null;
@@ -573,10 +579,31 @@ export async function saveNewPassword(password: string): Promise<void> {
   } finally {
     authBusy = false;
   }
-  if (!S.authView) toast(t('auth.password.saved'));
+  if (!S.authView) toast(t(displayName !== undefined ? 'auth.setup.saved' : 'auth.password.saved'));
 }
 
-/** Settings > Account: changes the signed-in user's password; their other sessions are signed out. */
+/**
+ * v2.6: the "set a username" page (an existing user without a display name; the password is fine): saves the name, then opens
+ * the app. Throws the ApiError (a taken or refused name) for the page to show.
+ */
+export async function saveFirstName(displayName: string): Promise<void> {
+  authBusy = true;
+  try {
+    const user = await setDisplayName(displayName);
+    adoptUser(user);
+    await enterApp();
+  } finally {
+    authBusy = false;
+  }
+  if (!S.authView) toast(t('auth.name.saved'));
+}
+
+/** v2.6: Profile > Username: changes the signed-in user's display name (throws the ApiError for the page to show) */
+export async function changeOwnName(displayName: string): Promise<void> {
+  S.user = await setDisplayName(displayName);
+}
+
+/** Profile > Change password: changes the signed-in user's password; their other sessions are signed out. */
 export async function changeOwnPassword(current: string, password: string): Promise<void> {
   S.user = await changePassword(password, current);
 }
@@ -680,6 +707,8 @@ export function startSession(qs: Question[], mode: Mode, kind: AttemptKind = 'ex
     sheets: [...new Set(qs.map((q) => q.sheet))],
     kind, checked: new Set(), key: newSessionKey(), startedAt: Math.floor(Date.now() / 1000),
     limit: kind === 'exam' && opts.limit != null ? opts.limit : null, warned: false, timeUp: false,
+    // Every new session starts from the default question language (Settings); the quiz switch changes only the session
+    lang: S.settings.questionLang,
   };
   persistSession();
   navigate({ name: 'quiz' });
@@ -738,15 +767,15 @@ export function go(i: number): void {
   scrollTop();
 }
 
-/** The language the question text is shown in (saved on the server like the other settings). */
-export function setQuestionLang(code: QuestionLang): void {
-  if (S.settings.questionLang === code) return;
+/** The language the questions of this session are shown in: it changes only the session (saved with it), never the settings. */
+export function setSessionLang(code: QuestionLang): void {
+  const se = S.session;
+  if (!se || se.lang === code) return;
   const y = window.scrollY;
-  const rerender = (): void => {
-    render(); // only swaps the text; answers, flags and the timer live in S.session and are unaffected
-    window.scrollTo(0, y);
-  };
-  updateSettings({ questionLang: code }, rerender).catch((e: unknown) => toast(t('act.settings.saveFailed', { reason: errorText(e) }), 6000));
+  se.lang = code;
+  persistSession();
+  render(); // only swaps the text; answers, flags and the timer live in S.session and are unaffected
+  window.scrollTo(0, y);
 }
 
 function syncQuiz(): void {

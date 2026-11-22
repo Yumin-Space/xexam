@@ -1,4 +1,4 @@
-// Hash routing: #/ (dashboard), #/study (exam & practice setup), #/banks, #/users, #/logs, #/records, #/records/<id>, #/records/wrong, #/settings, #/about, #/quiz, #/result,
+// Hash routing: #/ (dashboard), #/study (exam & practice setup), #/banks, #/users, #/logs, #/records, #/records/<id>, #/records/wrong, #/settings, #/profile (v2.6), #/about, #/quiz, #/result,
 // and (v0.8) #/ai (AI Chat; #/ai/<id> = that chat open, #/ai/new = a new chat not sent yet, so a reload keeps either) and
 // #/ai-settings (AI settings, administrators).
 // Hash routes need no server-side fallback and survive a page reload.
@@ -13,6 +13,7 @@ export type Route =
   | { name: 'record'; id: number }
   | { name: 'wrong' }
   | { name: 'settings' }
+  | { name: 'profile' }
   | { name: 'about' }
   | { name: 'quiz' }
   | { name: 'result' }
@@ -20,7 +21,7 @@ export type Route =
   | { name: 'aiSettings' };
 
 /** The menu entry a route belongs to */
-export type NavSection = 'home' | 'study' | 'banks' | 'records' | 'users' | 'logs' | 'settings' | 'about' | 'ai' | 'aiSettings';
+export type NavSection = 'home' | 'study' | 'banks' | 'records' | 'users' | 'logs' | 'settings' | 'profile' | 'about' | 'ai' | 'aiSettings';
 
 export function parseHash(hash: string): Route {
   const path = hash.replace(/^#\/?/, '').replace(/\/+$/, '').split('?')[0] ?? '';
@@ -44,6 +45,8 @@ export function parseHash(hash: string): Route {
       return { name: 'records' };
     case 'settings':
       return { name: 'settings' };
+    case 'profile':
+      return { name: 'profile' };
     case 'about':
       return { name: 'about' };
     case 'quiz':
@@ -97,6 +100,8 @@ export function sectionOf(r: Route): NavSection | null {
       return 'records';
     case 'settings':
       return 'settings';
+    case 'profile':
+      return 'profile';
     case 'about':
       return 'about';
     case 'ai':

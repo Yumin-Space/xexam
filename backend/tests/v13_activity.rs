@@ -106,6 +106,9 @@ fn session(a: &App, id: i64) -> (String, String) {
         )
         .expect("flag")
         .expect("user");
+    a.store
+        .set_display_name(id, &format!("User {}", id))
+        .expect("name");
     let token = auth::new_session_token();
     let now = auth::unix_now();
     a.store

@@ -106,6 +106,9 @@ fn user(a: &App, name: &str, banks: &[i64]) -> Who {
         )
         .expect("clear")
         .expect("user");
+    a.store
+        .set_display_name(id, &format!("User {}", id))
+        .expect("name");
     let token = auth::new_session_token();
     a.store
         .start_session(

@@ -22,6 +22,7 @@ Made-up accounts and data only; the screenshots stay in the output folder. Regis
 import re
 import time
 
+import seed
 from checks import LANGS, SETUP, goto, phone, start_quiz, until
 from checks_v13 import common
 
@@ -127,8 +128,9 @@ def ab_case(rc, lang, theme, size):
             else:
                 if not t['inside']:
                     q.append('the tip is outside the screen')
-                if user not in t['text']:
-                    q.append('the tip does not name the user: %r' % t['text'][:60])
+                want = seed.name_of(user)
+                if want not in t['text']:
+                    q.append('the tip does not name the user %r: %r' % (want, t['text'][:60]))
             if t and t['menuOpen']:
                 q.append('a tap on the account button opened the menu on a phone')
             rc.rec('W-V22-AB', 'home', 'tip-' + user, user, size, lang, theme, not q, '; '.join(q) or 'tap shows the name tip', d)

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { buildStudyAsk } from './ai-plus.ts';
-import { assessSpec, studySavedQuery, studySpec, summarySpec, type StudyTransport } from './ai-spec.ts';
+import { studySavedQuery, studySpec, summarySpec, type StudyTransport } from './ai-spec.ts';
 
 const calls: string[] = [];
 const tr: StudyTransport = {
@@ -9,8 +9,6 @@ const tr: StudyTransport = {
   askStudy: async (b) => { calls.push('askStudy ' + JSON.stringify(b)); },
   savedSummary: async (q) => { calls.push('savedSummary ' + JSON.stringify(q)); return { chatId: null, latest: null, lastGood: null }; },
   askSummary: async (b) => { calls.push('askSummary ' + JSON.stringify(b)); },
-  savedAssess: async (at) => { calls.push('savedAssess ' + at); return { chatId: null, latest: null, lastGood: null }; },
-  askAssess: async (b) => { calls.push('askAssess ' + JSON.stringify(b)); },
   stopChat: async (id) => { calls.push('stop ' + id); },
 };
 const ac = new AbortController();
@@ -59,21 +57,5 @@ describe('spec builders', () => {
   it('a summary spec with an unreadable time has no lookup', async () => {
     const s = summarySpec(tr, { id: 1, at: 'soon' }, () => 'en');
     assert.equal(await s.loadSaved(), null);
-  });
-});
-
-describe('assessSpec (v2.5)', () => {
-  it('looks up by the newest record time and asks with the reply language', async () => {
-    calls.length = 0;
-    const spec = assessSpec(tr, '2026-11-22 09:10', () => 'zh');
-    await spec.loadSaved();
-    await spec.ask(ac.signal, () => {});
-    assert.deepEqual(calls, ['savedAssess 202611220910', 'askAssess {"lang":"zh-CN"}']);
-  });
-  it('a time that does not match has no lookup', async () => {
-    calls.length = 0;
-    const spec = assessSpec(tr, 'bad', () => 'en');
-    assert.equal(await spec.loadSaved(), null);
-    assert.deepEqual(calls, []);
   });
 });

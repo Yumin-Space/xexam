@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { AiStatus } from '../state/ai.ts';
 import {
-  aiControls, aiPlusView, assessDateTag, assessExtra, atDigits, basedKey, buildAssessAsk, buildStudyAsk, buildSummaryAsk, busyView, chatDisplayTitle, chatNameOf, controlState,
+  aiControls, aiPlusView, assessExtra, atDigits, basedKey, buildAssessAsk, buildStudyAsk, buildSummaryAsk, busyView, chatDisplayTitle, chatNameOf, controlState,
   dockKey, focusKey, localDay, newestRecordAt, popTitleKey, recordSummaryExtra, replyLang, resultExtra, type RunningInfo, unavailableParts,
 } from './ai-plus.ts';
 
@@ -10,6 +10,16 @@ const ready = (enabled: boolean, suspended = false): AiStatus =>
   ({ state: 'ready', enabled, allowed: enabled && !suspended, suspended }) as unknown as AiStatus;
 const LOADING: AiStatus = { state: 'loading' };
 const DOWN: AiStatus = { state: 'unavailable' };
+
+describe('controlState with the assess feature', () => {
+  it('the assessment switch off greys the card; the summary switch off does not', () => {
+    const on = { show: true, usable: true, features: { summary: true, assess: false } } as unknown as Parameters<typeof controlState>[0];
+    assert.equal(controlState(on, null, 'assess').show && (controlState(on, null, 'assess') as { reason?: string }).reason, 'featureOff');
+    assert.deepEqual(controlState(on, null, 'summary'), { show: true, usable: true });
+    const sumOff = { show: true, usable: true, features: { summary: false, assess: true } } as unknown as Parameters<typeof controlState>[0];
+    assert.deepEqual(controlState(sumOff, null, 'assess'), { show: true, usable: true });
+  });
+});
 
 describe('aiPlusView', () => {
   it('role user without the service sees nothing, whatever the status', () => {
@@ -350,18 +360,7 @@ describe('v2.5: the assessment newest record and date tag', () => {
     assert.equal(newestRecordAt(records), '2026-11-01 01:50');
     assert.equal(newestRecordAt([{ at: '2026-11-22 07:00' }]), '2026-11-22 07:00');
   });
-  it('assessDateTag takes the day from createdAt in local time and compares it with the local today', () => {
-    const now = new Date(2026, 10, 22, 7, 5);
-    const secs = (d: Date): number => Math.floor(d.getTime() / 1000);
-    // Made minutes ago: no tag, even when the server's calendar day (date) is still the day before
-    assert.equal(assessDateTag({ createdAt: secs(new Date(2026, 10, 22, 7, 0)), date: '2026-11-21' }, now), null);
-    // Made on an earlier local day: that local day, whatever the server's day was
-    assert.equal(assessDateTag({ createdAt: secs(new Date(2026, 10, 20, 23, 30)), date: '2026-11-21' }, now), '2026-11-20');
-    // No createdAt: the server's date is the fallback
-    assert.equal(assessDateTag({ createdAt: null, date: '2026-11-19' }, now), '2026-11-19');
-    assert.equal(assessDateTag({ createdAt: null, date: '2026-11-22' }, now), null);
-    assert.equal(assessDateTag({ createdAt: null }, now), null);
-    assert.equal(assessDateTag(null, now), null);
+  it('localDay formats the browser local day', () => {
     assert.equal(localDay(new Date(2026, 0, 5, 0, 0)), '2026-01-05');
   });
 });

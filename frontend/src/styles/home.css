@@ -188,13 +188,6 @@
 .home-latest .stat { flex-wrap: wrap; }
 
 /* ---------- Overview: soft tiles ---------- */
-.home-figs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-.home-fig { display: grid; gap: 2px; padding: 12px 14px; border-radius: 8px; background: var(--fill); min-width: 0; }
-.home-fig b { font: 700 26px/1.2 var(--num), var(--en); }
-.home-fig span { font-size: 13px; color: var(--ink2); overflow-wrap: anywhere; }
-.home-fig.ng { background: var(--answer-wrong-soft); }
-.home-fig.ng b { color: var(--answer-wrong); }
-.home-overview .acts { margin-top: 16px; }
 
 /* ---------- Narrower content areas ---------- */
 /* One column once the page is too narrow for two */
@@ -216,8 +209,6 @@
   .home-count input, .home-limit .home-limit-field { width: 52px; padding-inline: 6px; }
   /* line 1: count + shuffle; line 2: the time limit */
   .home-limit { flex: 0 0 100%; }
-  .home-figs { gap: 8px; }
-  .home-fig b { font-size: 22px; }
 }
 /* Touch screens: small controls stay small to look at, but an invisible margin (or the row) makes them ~44px to tap */
 @media (pointer: coarse), (max-width: 480px) {
@@ -329,9 +320,6 @@
 .page-home .home-bankrow .grow > .name { flex-basis: 100%; }
 /* Discard is red text (it throws the saved answers away; the confirm dialog stays) */
 .home-resume .rs-acts .btn.quiet { color: var(--danger); }
-a.home-fig { color: inherit; text-decoration: none; }
-a.home-fig:focus-visible { outline: 2px solid var(--print); outline-offset: 2px; }
-@media (hover: hover) { a.home-fig:hover { filter: brightness(.97); } }
 .home-resume .rs-text { flex: 1 1 12em; }
 .home-resume .rs-head { flex-wrap: nowrap; align-items: baseline; gap: 0 8px; }
 .home-resume .rs-head h2 { white-space: nowrap; }
@@ -351,3 +339,33 @@ a.home-fig:focus-visible { outline: 2px solid var(--print); outline-offset: 2px;
   .home-count input, .home-limit .home-limit-field { width: 52px; padding-inline: 6px; font-size: 14px; }
   .home-limit { flex: none; }
 }
+
+/* v2.6 preview, blackboard mode (html[data-hand], the top-bar "Aa" switch): the Exam & practice page's own texts (titles,
+   labels, buttons, the latest-result overview) in the hand-written face and its line icons hand-drawn; the bank list (bank
+   and sheet names, question counts, the wrong-answer counts) and the mode counts keep the page font */
+html[data-hand] .page-home { font-family: 'Xexam Hand', var(--en); }
+html[data-hand]:lang(zh-CN) .page-home { font-family: 'Xexam Hand', var(--zh); }
+html[data-hand]:lang(ja) .page-home { font-family: 'Xexam Hand', var(--jp); }
+html[data-hand] .page-home :is(.home-picklist, .home-sheets, .mseg-n) { font-family: var(--en); }
+html[data-hand]:lang(zh-CN) .page-home :is(.home-picklist, .home-sheets, .mseg-n) { font-family: var(--zh); }
+html[data-hand]:lang(ja) .page-home :is(.home-picklist, .home-sheets, .mseg-n) { font-family: var(--jp); }
+html[data-hand] .page-home .ico { filter: url(#xexam-hand) drop-shadow(.6px -.5px 0 currentColor); }
+html[data-hand] .page-home :is(.home-picklist, .home-sheets) .ico { filter: none; }
+
+/* Blackboard mode: a hand-drawn ruler on Start exam and a pencil on Start practice (components/doodle.ts) */
+.hand-ico { display: none; flex: none; width: 30px; height: 22px; }
+html[data-hand] .hand-ico { display: inline-block; }
+html[data-hand] :is(.home-go-exam, .home-go-practice) { display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+@media (max-width: 480px) {
+  html[data-hand] .home-go-btns .btn:is(.home-go-exam, .home-go-practice) { gap: 4px; padding-inline: 6px; }
+  html[data-hand] .hand-ico { width: 20px; height: 15px; }
+  html[data-hand] :is(.home-go-exam, .home-go-practice) > span { white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+}
+@media (max-width: 360px) {
+  html[data-hand] .hand-ico { display: none; }
+}
+.hand-ico path { fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; }
+.hand-ico .dash-doodle-line.dash-s1 { stroke-width: 1.9; }
+.hand-ico .dash-doodle-line.dash-s2 { stroke-width: 1.2; opacity: .8; }
+.hand-ico .dash-doodle-tick { stroke-width: 1.4; }
+.hand-ico .dash-doodle-shade { stroke-width: 1.2; }

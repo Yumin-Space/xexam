@@ -64,6 +64,20 @@ pub fn insert_usage_purpose(
     Ok(())
 }
 
+/// Marks the usage row just inserted (same transaction) as an assessment call when the answer `message` belongs to an
+/// assessment chat (a `summary` chat whose ref starts with `assess@`). The row keeps purpose `summary` (its CHECK cannot
+/// change); `by_purpose` reports it as `assess`. A no-op for every other answer.
+pub fn mark_assess_usage(c: &Connection, message: i64) -> rusqlite::Result<()> {
+    c.execute(
+        "UPDATE usage SET assess = 1
+         WHERE id = last_insert_rowid() AND purpose = 'summary'
+           AND EXISTS(SELECT 1 FROM messages a JOIN chats ch ON ch.id = a.chat_id
+                      WHERE a.id = ?1 AND ch.kind = 'summary' AND ch.ref LIKE 'assess@%')",
+        [message],
+    )?;
+    Ok(())
+}
+
 /// Sums over a set of usage rows.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Sums {
@@ -257,17 +271,19 @@ pub fn tokens_today(c: &Connection, day: &str) -> rusqlite::Result<i64> {
 /// The features, in the order `by_purpose` returns them. `generate` = AI bank generation calls; `import` = the AI file
 /// import's calls (`gen_calls` purposes `import` and `recognise`); `other` = the calls that belong to no feature (the
 /// administrators' model list and connection tests).
-pub const PURPOSES: [&str; 7] = [
-    "chat", "hint", "explain", "summary", "generate", "import", "other",
+pub const PURPOSES: [&str; 8] = [
+    "chat", "hint", "explain", "summary", "assess", "generate", "import", "other",
 ];
 
-/// Calls of the period per feature, always the seven rows in the order chat, hint, explain, summary, generate, import,
+/// Calls of the period per feature, always the eight rows in the order chat, hint, explain, summary, assess, generate, import,
 /// other, zeros kept: the `usage` rows by `COALESCE(purpose, 'chat')` (memory suggestions are AI Chat's; the model list and
 /// connection tests are `other`), then the `gen_calls` rows. The rows add up to the total calls.
 pub fn by_purpose(c: &Connection, w: &Window) -> rusqlite::Result<Vec<(&'static str, Sums)>> {
     let (f, vals) = w.filter();
     let mut st = c.prepare(&format!(
-        "SELECT CASE WHEN kind IN ('verify', 'models') THEN 'other' ELSE COALESCE(purpose, 'chat') END AS p, {SUMS}
+        "SELECT CASE WHEN kind IN ('verify', 'models') THEN 'other'
+                     WHEN purpose = 'summary' AND assess = 1 THEN 'assess'
+                     ELSE COALESCE(purpose, 'chat') END AS p, {SUMS}
          FROM usage WHERE {f} GROUP BY p"
     ))?;
     let rows = st.query_map(rusqlite::params_from_iter(vals.clone()), |r| {

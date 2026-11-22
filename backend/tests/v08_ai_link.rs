@@ -135,6 +135,9 @@ fn clear_flag(a: &App, id: i64) {
         )
         .expect("clear")
         .expect("user");
+    a.store
+        .set_display_name(id, &format!("User {}", id))
+        .expect("name");
 }
 
 /// Starts a session for user `id` with the store (as the sign-in route does). Returns the `Cookie` value and the token
@@ -424,7 +427,7 @@ fn a_fresh_database_is_schema_5_and_every_user_gets_a_stamp() {
         .map(|r| r.expect("row"))
         .collect();
     assert_eq!(
-        columns[columns.len() - 15..columns.len() - 11],
+        columns[columns.len() - 16..columns.len() - 12],
         ["new_banks", "can_manage_banks", "ai_enabled", "uid"]
     );
     // the default administrator (created by the v3 step, before the column existed) has a stamp and AI+ off
@@ -625,6 +628,8 @@ async fn ai_in_the_users_api_and_ai_allowed_in_the_signed_in_user() {
         [
             "id",
             "username",
+            "displayName",
+            "needsName",
             "role",
             "mustChangePassword",
             "canManageBanks",
@@ -677,6 +682,7 @@ async fn ai_in_the_users_api_and_ai_allowed_in_the_signed_in_user() {
         [
             "id",
             "username",
+            "displayName",
             "role",
             "disabled",
             "createdAt",
@@ -2314,7 +2320,7 @@ async fn switching_a_users_ai_plus_service_is_refused_while_ai_plus_is_not_avail
             "/api/users/create",
             r#"{"username": "new bie", "password": "initial-pass", "role": "user", "ai": true}"#
                 .to_string(),
-            "用户名不对：1–40 个字符，只能用字母、数字和 . _ - @。",
+            "邮箱不对：1–40 个字符，只能用字母、数字和 . _ - @。",
         ),
     ] {
         let r = call(path, body.clone()).await;

@@ -201,9 +201,9 @@ class Run:
         """A made-up user with a 40-character name and the AI+ feature (W-AS-1)."""
         if 'longuser' not in self.cache:
             s = self.session('admin')
-            name = 'walk-long-user-' + 'x' * 25
+            name = 'walk-long-user-' + 'x' * 13 + '@example.com'       # 40 characters, an e-mail login (v2.6)
             try:
-                s.call('/api/users/create', {'username': name, 'password': seed.INITIAL, 'role': 'user'})
+                s.create_user(name)
             except Exception:
                 pass
             try:
@@ -219,9 +219,9 @@ class Run:
             s = self.session('admin')
             names = []
             for i in range(12):
-                name = 'walk-pg-%02d' % (i + 1)
+                name = 'walk-pg-%02d@example.com' % (i + 1)
                 try:
-                    s.call('/api/users/create', {'username': name, 'password': seed.INITIAL, 'role': 'user'})
+                    s.create_user(name)
                 except Exception:
                     pass
                 try:
@@ -431,7 +431,7 @@ VISITS = [
     ('records', 'list', 'lee', v_goto('#/records')), ('records', 'detail', 'lee', v_record),
     ('ai', 'list', 'sam', v_goto('#/ai')), ('ai', 'chat', 'sam', v_chat),
     ('ai-settings', '', 'admin', v_goto('#/ai-settings')), ('users', '', 'admin', v_goto('#/users')),
-    ('logs', '', 'admin', v_goto('#/logs')), ('settings', '', 'sam', v_goto('#/settings')),
+    ('logs', '', 'admin', v_goto('#/logs')), ('settings', '', 'sam', v_goto('#/settings')), ('profile', '', 'sam', v_goto('#/profile')),
     ('banks', '', 'admin', v_goto('#/banks')), ('about', '', 'sam', v_goto('#/about')),
     ('signin', '', None, v_goto('#/')), ('forbidden', '', 'riley', v_goto('#/banks')),
     ('menu', 'open', 'admin', v_menu),
@@ -1871,7 +1871,8 @@ FOOTER_JS = """(async (ver) => {
 SH10_VISITS = [('home', 'lee', v_goto('#/')), ('study', 'lee', v_goto(SETUP)), ('quiz', 'sam', v_quiz('practice')), ('quiz', 'riley', v_quiz('exam')),
                ('result', 'sam', v_result), ('records', 'lee', v_goto('#/records')), ('ai', 'sam', v_goto('#/ai')),
                ('ai-settings', 'admin', v_goto('#/ai-settings')), ('users', 'admin', v_goto('#/users')),
-               ('logs', 'admin', v_goto('#/logs')), ('settings', 'sam', v_goto('#/settings')), ('banks', 'admin', v_goto('#/banks')),
+               ('logs', 'admin', v_goto('#/logs')), ('settings', 'sam', v_goto('#/settings')), ('profile', 'sam', v_goto('#/profile')),
+               ('banks', 'admin', v_goto('#/banks')),
                ('about', 'sam', v_goto('#/about')), ('signin', None, v_goto('#/'))]
 
 
@@ -2130,13 +2131,15 @@ def saved_setup(d):
 
 
 # ---------------------------------------------------------------------------------------------------- v1.1 checks
-# W-IM-1 (the AI import card of Bank management), W-GB-1 (Home's AI button), W-BT-1 (every badge has a tip), W-FP-1 (five boxes in two
+# W-IM-1 (the AI import card of Bank management), W-GB-1 (Home's AI button), W-BT-1 (every badge has a tip), W-FP-1 (six boxes in two
 # groups), W-UC-1 (the usage charts), W-AS-1v (the top-row 交卷 / 完成 button and count, no finish button in the narrow answer sheet), W-FT-1 (footer space), W-SI-1 (sign-in).
 # They use only the classes of the v1.1 components (.bk-aicard, .gen-home, .ai-badge-tip, .ais-feats, .uc-chart ...).
 NO_SIDE_SCROLL = "(() => document.documentElement.scrollWidth <= window.innerWidth + 1)()"
 BADGE_TIPS = """(() => {
   const out = [];
   for (const b of document.querySelectorAll('.ai-badge')) {
+    // v2.6: the badge in the Home capsule title is decoration (aria-hidden), not a control with a tip
+    if (b.closest('.dash-ai-head')) continue;
     const host = b.closest('.has-tip');
     const tip = host ? host.querySelector(':scope > .tip') : null;
     const text = tip ? (tip.textContent || '').trim() : '';
@@ -2159,7 +2162,7 @@ LABEL_OVERLAP = """(() => {
   return res })()"""
 FEAT_ROWS = """(() => {
   const rows = [...document.querySelectorAll('.ais-feats')].map(f => {
-    // v1.1 (A-OWNER-21): an administrator row also has the free-mode switch (.ais-fg-free), not one of the five boxes (v1.3: AI hint and AI analysis are one box, ais-feat-<id>-hint, labelled 提示+解析)
+    // v1.1 (A-OWNER-21): an administrator row also has the free-mode switch (.ais-fg-free), not one of the six boxes (v1.3: AI hint and AI analysis are one box, ais-feat-<id>-hint, labelled 提示+解析)
     const boxes = f.querySelectorAll('.ais-fg:not(.ais-fg-free) input[type=checkbox]').length;
     const groups = [...f.querySelectorAll('.ais-fg:not(.ais-fg-free)')].map(g => new Set([...g.querySelectorAll('label')].map(l => Math.round(l.getBoundingClientRect().top))).size);
     const free = f.querySelectorAll('.ais-fg-free input[role=switch]').length;
@@ -2505,7 +2508,8 @@ def gb1_case(rc, lang, theme, size):
 def bt1_case(rc, lang, theme, size):
     problems = []
     d = rc.dev('admin', lang, theme, size)
-    for route in ('#/', SETUP, '#/settings', '#/users', '#/ai-settings?tab=users'):
+    # v2.6: the role / AI+ badges moved from Settings to the Profile page
+    for route in ('#/', SETUP, '#/profile', '#/users', '#/ai-settings?tab=users'):
         goto(d, route, 2.0)
         for b in d.js(BADGE_TIPS) or []:
             if not b['tip']:
@@ -2529,7 +2533,7 @@ def fp1_case(rc, lang, theme, size):
         return
     problems = []
     for i, r in enumerate(rows):
-        if r['boxes'] != 5:
+        if r['boxes'] != 6:
             problems.append('row %d has %d boxes' % (i, r['boxes']))
         if r['split']:
             problems.append('row %d: hint and analysis are not one box' % i)
@@ -2542,7 +2546,7 @@ def fp1_case(rc, lang, theme, size):
     if not any(r['admin'] for r in rows):
         problems.append('no administrator row with disabled boxes')
     rc.rec('W-FP-1', 'ai-settings', 'features', 'admin', size, lang, theme, not problems,
-           '; '.join(problems[:3]) or '%d rows: five boxes in two groups' % len(rows), d if problems else None)
+           '; '.join(problems[:3]) or '%d rows: six boxes in two groups' % len(rows), d if problems else None)
 
 
 UC_BARS = """(() => {
@@ -3656,8 +3660,9 @@ from checks_v13 import GROUPS_V13  # noqa: E402
 from checks_v22 import GROUPS_V22  # noqa: E402
 from checks_v23 import GROUPS_V23  # noqa: E402
 from checks_v25 import GROUPS_V25  # noqa: E402
+from checks_v26 import GROUPS_V26  # noqa: E402
 
-GROUPS = GROUPS + GROUPS_V12_QUIZ + GROUPS_V12_AI + GROUPS_V12_TOKENS + GROUPS_V12_CHARTS + GROUPS_V13 + GROUPS_V22 + GROUPS_V23 + GROUPS_V25
+GROUPS = GROUPS + GROUPS_V12_QUIZ + GROUPS_V12_AI + GROUPS_V12_TOKENS + GROUPS_V12_CHARTS + GROUPS_V13 + GROUPS_V22 + GROUPS_V23 + GROUPS_V25 + GROUPS_V26
 
 
 def run(walk):

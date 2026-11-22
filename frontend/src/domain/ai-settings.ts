@@ -274,7 +274,9 @@ export type LimitKey =
   // v1.3: sharing of hints / explanations, the chunks of a big bank, the summary size, the site-wide daily budget
   | 'studyShare' | 'studyShareDays' | 'genMaxChunks' | 'summaryMaxItems' | 'dailyTokenBudget'
   // v1.9: one pacing setting for AI generation and import calls (the provider's own rate limit)
-  | 'paceOn' | 'paceRpm' | 'paceTpm';
+  | 'paceOn' | 'paceRpm' | 'paceTpm'
+  // v2.6: the AI study assessment is its own feature: a per-day count and the administrators' exemption
+  | 'assessPerDay' | 'assessAdminsExempt';
 /** The values of the limits; a key the service did not send falls back to its default where it is read */
 export type LimitValues = Partial<Record<LimitKey, number>>;
 export type LimitRanges = Partial<Record<LimitKey, [number, number]>>;
@@ -290,6 +292,8 @@ export const LENGTH_KEYS: readonly LimitKey[] = ['replyMaxTokens'];
 /** The group "Shared hints and explanations" and the site budget */
 export const SHARE_KEYS: readonly LimitKey[] = ['studyShare', 'studyShareDays'];
 export const SUMMARY_KEYS: readonly LimitKey[] = ['summaryMaxItems'];
+/** v2.6: the group "AI study assessment": successful assessments per user and day, and whether administrators are exempt */
+export const ASSESS_KEYS: readonly LimitKey[] = ['assessPerDay', 'assessAdminsExempt'];
 /** The group "AI banks": generation and import */
 export const GEN_KEYS: readonly LimitKey[] = ['genPerDay', 'genAdminsExempt', 'genCallTokens', 'genMaxCalls', 'genUnlimited', 'genMaxChunks'];
 export const IMPORT_KEYS: readonly LimitKey[] = ['importMaxMb', 'importMaxQuestions', 'importMaxCalls', 'recognizeMaxCalls', 'importUnlimited'];
@@ -301,7 +305,7 @@ export const PACE_KEYS: readonly LimitKey[] = ['paceOn', 'paceRpm', 'paceTpm'];
 export const CONTENT_KEYS: readonly LimitKey[] = ['genMinSource', 'genMinWrong', 'genBankSingle', 'genBankMulti', 'genWrongSingle', 'genWrongMulti'];
 /** What the safety tab shows (its Reset fills these defaults) */
 export const AS_KEYS: readonly LimitKey[] = [
-  ...CALLS_KEYS, ...CHAT_KEYS, ...LENGTH_KEYS, ...SHARE_KEYS, ...SUMMARY_KEYS, 'dailyTokenBudget', ...GEN_KEYS, ...IMPORT_KEYS, ...SERVER_KEYS,
+  ...CALLS_KEYS, ...CHAT_KEYS, ...LENGTH_KEYS, ...SHARE_KEYS, ...SUMMARY_KEYS, ...ASSESS_KEYS, 'dailyTokenBudget', ...GEN_KEYS, ...IMPORT_KEYS, ...SERVER_KEYS,
   ...PACE_KEYS,
 ];
 /** Every key of the limits row */
@@ -318,6 +322,7 @@ export const DEFAULT_LIMITS: Record<LimitKey, number> = {
   genUnlimited: 1, importUnlimited: 1,
   studyShare: 1, studyShareDays: 180, genMaxChunks: 8, summaryMaxItems: 40, dailyTokenBudget: 0,
   paceOn: 1, paceRpm: 13, paceTpm: 230000,
+  assessPerDay: 3, assessAdminsExempt: 1,
 };
 export const LIMIT_RANGES: Record<LimitKey, [number, number]> = {
   callsPerMinute: [1, 100], callsPerHour: [1, 2000], callsPerDay: [1, 20000], callsAdminsExempt: [0, 1], replyMaxTokens: [1, 250000], memoryTokens: [50, 250000],
@@ -328,6 +333,7 @@ export const LIMIT_RANGES: Record<LimitKey, [number, number]> = {
   genUnlimited: [0, 1], importUnlimited: [0, 1],
   studyShare: [0, 1], studyShareDays: [7, 3650], genMaxChunks: [1, 50], summaryMaxItems: [10, 70], dailyTokenBudget: [0, 100000000],
   paceOn: [0, 1], paceRpm: [1, 10000], paceTpm: [1000, 100000000],
+  assessPerDay: [0, 50], assessAdminsExempt: [0, 1],
 };
 
 export type LimitsForm = Record<LimitKey, string>;
@@ -424,8 +430,8 @@ export function paceEffective(rpm: number, tpm: number): { rpm: number; tpm: num
 
 // ---------------------------------------------------------------- the sub-tabs of the safety tab (v1.9)
 
-/** The seven sub-tabs of AI safety, in the order of the row */
-export const SAFETY_SUBS = ['caps', 'chat', 'study', 'summary', 'gen', 'import', 'server'] as const;
+/** The eight sub-tabs of AI safety, in the order of the row */
+export const SAFETY_SUBS = ['caps', 'chat', 'study', 'summary', 'assess', 'gen', 'import', 'server'] as const;
 export type SafetySub = (typeof SAFETY_SUBS)[number];
 
 /** The limits each sub-tab shows (together exactly AS_KEYS, each once) */
@@ -434,6 +440,7 @@ export const SUB_KEYS: Record<SafetySub, readonly LimitKey[]> = {
   chat: CHAT_KEYS,
   study: SHARE_KEYS,
   summary: SUMMARY_KEYS,
+  assess: ASSESS_KEYS,
   gen: GEN_KEYS,
   import: IMPORT_KEYS,
   server: [...SERVER_KEYS, ...PACE_KEYS],
@@ -692,7 +699,7 @@ export function keyLine(c: Pick<AiConnection, 'provider' | 'keys'>): Array<{ slo
 
 // ---------------------------------------------------------------- status cards, slots and the merged model list (v1.3)
 
-export const SLOTS: readonly AiSlot[] = ['default', 'chat', 'hint', 'explain', 'summary', 'generate', 'import'];
+export const SLOTS: readonly AiSlot[] = ['default', 'chat', 'hint', 'explain', 'summary', 'assess', 'generate', 'import'];
 
 /** A connection counts as on unless the service says `enabled: false` (an older service sends nothing) */
 export const connOn = (c: Pick<AiConnection, 'enabled'>): boolean => c.enabled !== false;

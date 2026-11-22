@@ -91,8 +91,14 @@
 //! 4. The nine tables of `schema::V11_REBUILDS` are rebuilt (12-step procedure: new table, copy by explicit column list,
 //!    drop, rename, indexes after the rename): an unknown column stops the upgrade, the row count must be equal, and the
 //!    AUTOINCREMENT high-water mark is restored (ids are never reused).
-//! 5. `PRAGMA foreign_key_check` must be empty, the one `system.migrate` activity row `{"from": N, "to": 11}` (plus
-//!    `orphansRemoved` when rows were deleted; only when the file held data) is written and the schema is stamped `"11"`.
+//! 5. `PRAGMA foreign_key_check` must be empty and the schema is stamped `"11"`; the one `system.migrate` activity row
+//!    `{"from": N, "to": 12}` (plus `orphansRemoved` when rows were deleted; only when the file held data) is written
+//!    after the v12 step.
+//!
+//! Schema v11 → v12 (v2.6): the v12 step adds `users.display_name` (NULL for every existing user, who is asked for a name at the
+//! next sign-in) and the unique case-insensitive index `idx_users_display_name`, then stamps `"12"`. It runs after the v11
+//! step in the same transaction; a v11 file gets its single backup (`xexam-schema11-…`) and only this step. The one
+//! `system.migrate` row now says `"to": 12`. A v2.5 binary opens a v12 file unchanged.
 //!
 //! Any surprise rolls the whole transaction back: the file is unchanged, the backup stays, `meta.schema` is unchanged and the
 //! next start tries again (with a new backup). A v1.9 binary opens a v11 file as it is (it treats a newer schema as
@@ -101,8 +107,9 @@ use super::super::pyjson;
 use super::super::schema::{
     Rebuild, MIGRATE_V2_INDEXES, MIGRATE_V2_TABLES, MIGRATE_V3_INDEXES, MIGRATE_V3_TABLES,
     MIGRATE_V4_INDEXES, MIGRATE_V4_TABLES, MIGRATE_V7_INDEXES, MIGRATE_V8_INDEXES,
-    MIGRATE_V8_TABLES, SCHEMA_VERSION, V10_COLUMNS, V11_REBUILDS, V11_USERS_UID_INDEX, V2_COLUMNS,
-    V3_COLUMNS, V4_COLUMNS, V5_COLUMNS, V6_COLUMNS, V7_COLUMNS, V8_COLUMNS, V9_COLUMNS,
+    MIGRATE_V8_TABLES, SCHEMA_VERSION, V10_COLUMNS, V11_REBUILDS, V11_USERS_UID_INDEX, V12_COLUMNS,
+    V12_DISPLAY_NAME_INDEX, V2_COLUMNS, V3_COLUMNS, V4_COLUMNS, V5_COLUMNS, V6_COLUMNS, V7_COLUMNS,
+    V8_COLUMNS, V9_COLUMNS,
 };
 use super::super::timefmt::{local_file_stamp, Clock};
 use super::{banks, get_meta, run_tx, users};
@@ -127,7 +134,7 @@ pub(super) struct Upgrade {
     pub report: MigrationReport,
 }
 
-/// Brings the database opened at `db_path` up to schema v11.
+/// Brings the database opened at `db_path` up to schema v12.
 pub(super) fn upgrade(
     conn: &Connection,
     db_path: &Path,
@@ -145,12 +152,13 @@ pub(super) fn upgrade(
         Some("8") => 8,
         Some("9") => 9,
         Some("10") => 10,
-        // "11", or a newer schema written by a later version: nothing to migrate
-        Some(_) => 11,
+        Some("11") => 11,
+        // "12", or a newer schema written by a later version: nothing to migrate
+        Some(_) => 12,
     };
     // Read-only check, before anything is written
     let pre = from == 4 && is_prerelease_v4(conn)?;
-    if from < 11 || pre {
+    if from < 12 || pre {
         // ONE backup of the state before this open, named after the schema the file had
         let had_data = has_any_data(conn)?;
         if had_data {
@@ -186,7 +194,15 @@ pub(super) fn upgrade(
                 }
                 migrate_v9(c)?;
                 migrate_v10(c)?;
-                let report = migrate_v11(c, from, had_data).map_err(stopped)?;
+                let report = if from < 11 {
+                    migrate_v11(c).map_err(stopped)?
+                } else {
+                    MigrationReport::default()
+                };
+                migrate_v12(c)?;
+                if had_data {
+                    write_migrate_row(c, from, report.orphans_removed())?;
+                }
                 Ok((created, report))
             })
         })?;
@@ -1003,7 +1019,7 @@ fn stopped(e: DbError) -> DbError {
 }
 
 /// The v11 step (inside the caller's transaction, foreign keys off); see the module documentation. Returns what it fixed.
-fn migrate_v11(c: &Connection, from: u32, had_data: bool) -> Result<MigrationReport, DbError> {
+fn migrate_v11(c: &Connection) -> Result<MigrationReport, DbError> {
     let mut report = MigrationReport::default();
     // A trigger on a rebuilt table would be dropped silently with the old table: stop instead
     if let Some(name) = c
@@ -1050,23 +1066,35 @@ fn migrate_v11(c: &Connection, from: u32, had_data: bool) -> Result<MigrationRep
         )));
     }
     drop(st);
-    // f. the one activity row of the upgrade
-    if had_data {
-        let unix = jiff::Timestamp::now().as_second();
-        let removed = report.orphans_removed();
-        let detail = if removed > 0 {
-            json!({ "from": from, "to": 11, "orphansRemoved": removed })
-        } else {
-            json!({ "from": from, "to": 11 })
-        };
-        c.execute(
-            "INSERT INTO activity_log(ts, last_ts, actor, action, detail, result)              VALUES(?1, ?1, 'system', 'system.migrate', ?2, 'ok')",
-            params![unix, detail.to_string()],
-        )?;
-    }
-    // g.
-    set_schema(c, SCHEMA_VERSION)?;
+    // f.
+    set_schema(c, "11")?;
     Ok(report)
+}
+
+/// The v12 step (inside the caller's transaction): the display name column and its unique index; stamps the schema.
+fn migrate_v12(c: &Connection) -> Result<(), DbError> {
+    for (table, column, definition) in V12_COLUMNS {
+        if !has_column(c, table, column)? {
+            c.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {definition};"))?;
+        }
+    }
+    c.execute_batch(V12_DISPLAY_NAME_INDEX)?;
+    set_schema(c, SCHEMA_VERSION)
+}
+
+/// The one `system.migrate` activity row of an upgrade of a file that held data.
+fn write_migrate_row(c: &Connection, from: u32, removed: i64) -> Result<(), DbError> {
+    let unix = jiff::Timestamp::now().as_second();
+    let detail = if removed > 0 {
+        json!({ "from": from, "to": 12, "orphansRemoved": removed })
+    } else {
+        json!({ "from": from, "to": 12 })
+    };
+    c.execute(
+        "INSERT INTO activity_log(ts, last_ts, actor, action, detail, result) VALUES(?1, ?1, 'system', 'system.migrate', ?2, 'ok')",
+        params![unix, detail.to_string()],
+    )?;
+    Ok(())
 }
 
 /// Whether `Store::open` must run the v1 `SCHEMA` text: the file is new, or `meta.schema` is missing or below 11. Read-only.
@@ -1089,7 +1117,10 @@ pub(super) fn needs_v1_schema(c: &Connection) -> Result<bool, DbError> {
 ///
 /// No full `foreign_key_check` here: its cost grows with `attempt_items`, and enforcement keeps new orphans out.
 fn post_checks(c: &Connection, report: &mut MigrationReport) -> Result<(), DbError> {
-    if get_meta(c, "schema")?.as_deref() != Some("11") {
+    if !matches!(
+        get_meta(c, "schema")?.and_then(|v| v.parse::<u32>().ok()),
+        Some(n) if n >= 11
+    ) {
         return Ok(());
     }
     for table in ["stats", "settings"] {

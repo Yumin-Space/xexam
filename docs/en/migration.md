@@ -4,6 +4,7 @@
 
 > This document covers every upgrade path, newest first:
 >
+> - **v2.5 → v2.6** (section 0000000000000): nothing to do besides `docker compose pull` and `docker compose up -d`. The main database moves to schema 12 on start after the copy `backups/xexam-schema11-<date-time>.db` (one new column, `users.display_name`); the AI database stays at schema 11 and only gains a table, columns and a model slot. Every existing user sets a username at the next sign-in, and users who never chose a question language now start in English. No new variable and no `docker-compose.yml` edit. Rolling back to v2.5 needs no restore.
 > - **v2.4 → v2.5** (section 000000000000): nothing to do besides `docker compose pull` and `docker compose up -d`. No database change (main schema 11, AI schema 11), no new variable and no `docker-compose.yml` edit; Home becomes a dashboard and the old Home is the page Exam & practice. Rolling back to v2.4 needs no restore.
 > - **v2.3 → v2.3.1** (section 00000000000): nothing to do besides `docker compose pull` and `docker compose up -d`. The AI service's container is renamed from `ai-service` to `xexam-ai-service` (the Compose service keeps its name); no variable, no `docker-compose.yml` edit and no database change. Rolling back to v2.3 needs no restore.
 > - **v2.2 → v2.3** (section 0000000000): nothing to do. A change to the screens only (AI Chat layout and the top bar): no `docker-compose.yml` change, no new variable, and neither database changes. Rolling back to v2.2 needs no restore.
@@ -29,6 +30,33 @@
 > **Going straight to v1.0 from an older version** applies every step of the sections below in one go with the current images: one backup named after the schema the database had, then the migration to the current schema (6 for the main database, 4 for the AI database). The sections below are written for the version they lead to, so where one says schema 5, v1.0 ends at schema 6, the log says `Upgraded the database to schema 6`, `/api/info` shows `1.0` and ai-service creates its database at schema 4.
 >
 > **Every upgrade from v0.6 or older retires all your questions.** Since v0.7 only the six-column Excel layout can be imported, and every start retires the questions that were imported from the three- and four-column layouts of earlier versions; every question of v0.6 and older is in one of those. The banks, the study records and the statistics stay. Prepare a six-column version of each workbook before you upgrade (section 12 of [usage.md](usage.md)), and update each bank with it afterwards (section 2.4).
+
+## 0000000000000. Upgrading from v2.5 to v2.6
+
+This section is numbered 0000000000000 because it is the newest one. The older sections keep their numbers.
+
+### 0000000000000.1 What changes
+
+- **The main database** moves from schema 11 to **schema 12**, once, on the first start of the v2.6 backend, after the copy `backups/xexam-schema11-<date-time>.db`. The step adds one nullable column, `users.display_name` (the username others see), and the unique index `idx_users_display_name`; no row is changed and no login is rewritten. Keep free disk space of about the size of the database for the copy. Details: section 6.19 of [database.md](database.md).
+- **The AI database** stays at **schema 11**. On every start, without a copy, ai-service adds the table `assess_latest` (the latest study assessment of each user), the column `usage.assess`, the limits `assess_per_day` (3) and `assess_admins_exempt` (on) and the model slot `assess`, which starts with the model and thinking strength of the summary slot (section 8.2k of [database.md](database.md)). The AI study assessment is now its own feature, on for everyone after the upgrade; at most 3 successful assessments per user and day, administrators not limited.
+- **Every existing user is asked for a username** at the next sign-in (one field; together with the new password when one is due). Until it is set, the account can do nothing else. Tell your users before you upgrade. The administrator who installed Xexam is asked too.
+- **Sign-in is by e-mail.** The sign-in page accepts only an e-mail address, plus the default administrator `admin`. If your accounts use plain names as logins (not e-mail addresses), give each one an e-mail login in **User management** → **Edit** before your users sign in; until then such a user can only be reached through the API (the server still accepts every login) or through `admin`. An unchanged older login can stay in **Edit**; a new or changed login must look like an e-mail address. A login can no longer equal another account's username.
+- **The default question language is English.** Users who never picked a question language (the stored setting is missing) now start in English instead of Japanese; a stored choice is kept. Each user can set it in **Settings** → **Default question language**.
+- **Hand-written mode is on by default** in every browser, so each browser loads the font (about 1.1 MB) once on its first visit. Users switch it off with the **Aa** button or in **Settings** → **Text**.
+- **Nginx**: the frontend image's configuration has one more body in `map $ai_deny $ai_forbidden_body` (`name`, `请先设置用户名。`, code `auth.name`). If you replaced the Nginx configuration of the image with your own, add that line; otherwise a user without a username gets the generic body on AI routes. The route `GET /api/ai/assess/saved` is gone (`GET /api/ai/assess/latest` replaces it); no Nginx change is needed for it.
+- **Scripts that call the API**: `GET /api/dashboard` answers `wrongTop` instead of `popular`; the login error texts say 邮箱 (`邮箱或密码不对。`, `这个邮箱已经有人用了。`); a session without a username gets 403 `请先设置用户名。` until `POST /api/auth/name` is called. See "Changes in v2.6" in section 7 of [api.md](api.md).
+
+### 0000000000000.2 Upgrade
+
+`docker compose pull`, then `docker compose up -d`. The data volumes stay as they are. The backend log says `Upgraded the database to schema 12. A copy of the previous version was saved first: /data/backups/xexam-schema11-….db …`.
+
+### 0000000000000.3 Check
+
+The app menu shows **Xexam v2.6**. Sign in: you are asked for a username, then Home shows the leaderboard and **Most missed**, and the user row at the bottom of the menu opens **Profile**.
+
+### 0000000000000.4 Going back to v2.5
+
+Change `:latest` to `:v2.5` for the three images and run `docker compose up -d`. **No restore is needed**: v2.5 opens the schema-12 main database as it is (it treats a newer schema as current and never reads `users.display_name`), and the AI database is still schema 11 (v2.5 ignores the new table, columns and slot). Usernames stay stored for a later v2.6; accounts made under v2.5 meanwhile are asked for one then. Before going back, switch the **AI study assessment** feature on again in AI settings if you had switched it off (section 8.2k of [database.md](database.md)). To get back the exact state from before the upgrade instead, stop the backend and restore `backups/xexam-schema11-<date-time>.db` as in section 5 of [database.md](database.md); everything written since is lost.
 
 ## 000000000000. Upgrading from v2.4 to v2.5
 

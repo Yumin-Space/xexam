@@ -43,6 +43,7 @@ export const LIMIT_LABEL: Record<LimitKey, MsgKey> = {
   studyShare: 'ai.limits.studyShare', studyShareDays: 'ai.limits.studyShareDays', genMaxChunks: 'ai.limits.genMaxChunks',
   summaryMaxItems: 'ai.limits.summaryMaxItems', dailyTokenBudget: 'ai.limits.dailyTokenBudget',
   paceOn: 'ai.limits.paceOn', paceRpm: 'ai.set.limit.paceRpm', paceTpm: 'ai.set.limit.paceTpm',
+  assessPerDay: 'ai.set.limit.assessPerDay', assessAdminsExempt: 'ai.set.limit.assessAdminsExempt',
 };
 
 /** The label of a sub-tab: the full name and the short one (phones) */
@@ -51,6 +52,7 @@ const SUB_LABEL: Record<SafetySub, { full: MsgKey; short: MsgKey }> = {
   chat: { full: 'ai.set.safeTab.chat', short: 'ai.set.safeTab.chatShort' },
   study: { full: 'ai.set.safeTab.study', short: 'ai.set.safeTab.studyShort' },
   summary: { full: 'ai.set.safeTab.summary', short: 'ai.set.safeTab.summaryShort' },
+  assess: { full: 'ai.set.safeTab.assess', short: 'ai.set.safeTab.assessShort' },
   gen: { full: 'ai.set.safeTab.gen', short: 'ai.set.safeTab.genShort' },
   import: { full: 'ai.set.safeTab.import', short: 'ai.set.safeTab.importShort' },
   server: { full: 'ai.set.safeTab.server', short: 'ai.set.safeTab.serverShort' },
@@ -413,6 +415,11 @@ function subGroups(sub: SafetySub, l: AiLimitsAnswer, f: Record<LimitKey, string
           h('button', { class: 'btn danger', id: 'ai-share-clear', type: 'button', disabled: A.shareBusy || A.limitsSaving, onclick: () => void clearShared() }, t('ai.limits.studyShareClear'))))];
     case 'summary':
       return [group('ais-g-summary', 'ai.limits.group.summary', limitField('summaryMaxItems', l, f, null))];
+    case 'assess':
+      return [group('ais-g-assess', 'ai.limits.group.assess',
+        h('div', { class: 'ais-genrow' },
+          limitField('assessPerDay', l, f, 'ai.set.limit.assessPerDayHint'),
+          limitCheck('assessAdminsExempt', 'ai.set.limit.assessAdminsExempt')))];
     case 'gen': {
       const live = h('p', { class: 'fld-hint ais-live', id: 'ai-lim-genCallTokens-live', 'aria-live': 'polite' });
       const liveText = (text: string): string => {

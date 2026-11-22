@@ -398,7 +398,7 @@ pub fn setting_default(key: &str) -> Option<Value> {
         SETTING_THEME => Value::from("system"),
         SETTING_UI_LANG => Value::from("en"),
         SETTING_AUTO_ADVANCE => Value::Bool(false),
-        SETTING_QUESTION_LANG => Value::from("ja"),
+        SETTING_QUESTION_LANG => Value::from("en"),
         _ => return None,
     })
 }

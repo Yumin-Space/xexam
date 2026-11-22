@@ -1,16 +1,16 @@
-//! Connections, their sealed keys, the model pool and the seven model slots (schema 9). Every function takes the
+//! Connections, their sealed keys, the model pool and the eight model slots (schema 9). Every function takes the
 //! connection or transaction of the caller; the admin routes run the writes inside `Store::write`.
 //!
 //! Keys are only ever stored sealed (`connection_secrets`); nothing here sees a plain key. Slot names are the lower-case
-//! strings of `route::Slot::as_str` (`default`, `chat`, `hint`, `explain`, `summary`, `generate`, `import`).
+//! strings of `route::Slot::as_str` (`default`, `chat`, `hint`, `explain`, `summary`, `assess`, `generate`, `import`).
 use crate::effort::{Effort, EffortFamily};
 use crate::secret::{Sealed, SecretName};
 use crate::store::tables::SecretRow;
 use rusqlite::{params, Connection, OptionalExtension};
 
 /// The model slots, in the order `slots` returns them.
-pub const SLOT_NAMES: [&str; 7] = [
-    "default", "chat", "hint", "explain", "summary", "generate", "import",
+pub const SLOT_NAMES: [&str; 8] = [
+    "default", "chat", "hint", "explain", "summary", "assess", "generate", "import",
 ];
 
 /// One connection as listed (never a key).
@@ -590,8 +590,8 @@ pub fn remove_pool(c: &Connection, id: i64) -> rusqlite::Result<()> {
 }
 
 /// The pool id of every slot, in [`SLOT_NAMES`] order; None = empty.
-pub fn slots(c: &Connection) -> rusqlite::Result<[Option<i64>; 7]> {
-    let mut out = [None; 7];
+pub fn slots(c: &Connection) -> rusqlite::Result<[Option<i64>; 8]> {
+    let mut out = [None; 8];
     let mut st = c.prepare("SELECT slot, model_id FROM model_slots")?;
     let rows = st.query_map([], |r| {
         Ok((r.get::<_, String>(0)?, r.get::<_, Option<i64>>(1)?))
@@ -633,18 +633,18 @@ pub fn global_features_off(c: &Connection) -> rusqlite::Result<i64> {
     })
 }
 
-/// Stores the global feature switches (0 ..= 63).
+/// Stores the global feature switches (0 ..= 127).
 pub fn set_features_off(c: &Connection, bits: i64) -> rusqlite::Result<()> {
     c.execute(
         "UPDATE settings SET features_off = ?1 WHERE id = 1",
-        [bits.clamp(0, 63)],
+        [bits.clamp(0, 127)],
     )?;
     Ok(())
 }
 
 /// The thinking strength of every slot, in [`SLOT_NAMES`] order; `None` = send nothing (also for an unreadable value).
-pub fn efforts(c: &Connection) -> rusqlite::Result<[Option<Effort>; 7]> {
-    let mut out = [None; 7];
+pub fn efforts(c: &Connection) -> rusqlite::Result<[Option<Effort>; 8]> {
+    let mut out = [None; 8];
     let mut st = c.prepare("SELECT slot, effort FROM model_slots")?;
     let rows = st.query_map([], |r| {
         Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?))

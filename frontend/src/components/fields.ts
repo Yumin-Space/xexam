@@ -23,12 +23,16 @@ export interface FieldOptions {
   /** A short line under the field (also its accessible description) */
   hint?: string;
   maxlength?: number;
+  /** A greyed example inside the empty field */
+  placeholder?: string;
   disabled?: boolean;
   /** The current text, on every keystroke */
   onInput?: (value: string) => void;
   /** Password fields: whether the text is shown, and when the button changes it */
   shown?: boolean;
   onShow?: (shown: boolean) => void;
+  /** Soft-keyboard hint (e.g. 'email'); the field stays type=text */
+  inputmode?: string;
 }
 
 export interface Field {
@@ -44,7 +48,7 @@ export function field(o: FieldOptions): Field {
   const input = h('input', {
     id: o.id, name: o.id, type: password && !o.shown ? 'password' : 'text', value: o.value ?? '',
     autocomplete: o.autocomplete ?? 'off', autocapitalize: 'none', autocorrect: 'off', spellcheck: 'false',
-    maxlength: o.maxlength ? String(o.maxlength) : null, disabled: !!o.disabled,
+    maxlength: o.maxlength ? String(o.maxlength) : null, inputmode: o.inputmode ?? null, placeholder: o.placeholder ?? null, disabled: !!o.disabled,
     'aria-describedby': [hintId, capsId].filter(Boolean).join(' ') || null,
     oninput: () => o.onInput?.(input.value),
   });

@@ -301,12 +301,12 @@ const job = (o: Record<string, unknown> = {}) => ({
   bankId: null, error: null, charged: true, ...o,
 });
 
-test('v1.1: statusOf reads why, features (six keys, a missing import key is on) and gen', () => {
+test('v1.1: statusOf reads why, features (seven keys, a missing import key is on) and gen', () => {
   const st = statusOf(answer({ why: 'link', features: { chat: true, hint: false, explain: true, summary: true, generate: true } }));
   assert.ok(st.state === 'ready');
   if (st.state !== 'ready') return;
   assert.equal(st.why, 'link');
-  assert.deepEqual(st.features, { chat: true, hint: false, explain: true, summary: true, generate: true, import: true });
+  assert.deepEqual(st.features, { chat: true, hint: false, explain: true, summary: true, assess: true, generate: true, import: true });
   assert.equal(st.gen, undefined);
   // an older ai-service: no why, no features
   const old = statusOf(answer());

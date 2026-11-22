@@ -3,17 +3,17 @@
 430 px wide, both themes, all three languages (the matrix follows --langs / --themes / --widths; by default the three
 languages and both themes). Every failing case keeps a screenshot in the output folder.
 
-  W-V25-DASH  dashboard layout: no sideways scroll; the hero tile is >= 72 px high, the row tiles >= 88 px, none overlaps another,
-              the icons are 28 px; no tile label is cut off (one line fits, or a clamped second line); the ranking names are
-              ellipsised when long and never contain an @; the ranking JSON of /api/dashboard has no @ either
-  W-V25-AI    the AI assessment button fits its column (own width, >= 44 px high); its dialog opens inside the safe insets
-              (skipped when the account cannot use it, or this Chrome has no safe-area emulation)
+  W-V25-DASH  dashboard layout (v2.6: 4 to 6 row tiles, then the leaderboard chart, the most-missed board and the AI card): no sideways scroll; the hero tile is >= 72 px high, the row tiles >= 88 px, none overlaps another,
+              the icons are 28 px; no tile label is cut off (one line fits, or a clamped second line); no leaderboard point label
+              (.dash-rank .dash-pt aria-label) contains an @; the ranking JSON of /api/dashboard has no @ either
+  W-V25-AI    (retired in v2.6: the amber AI button and its dialog are gone; the AI card is checked by W-V26-CAP in checks_v26.py)
   W-V25-RS    a saved session shows the resume card on the dashboard: visible, inside the width, no sideways scroll
   W-V25-MN    the menu lists Exam & practice as the second entry and opens #/study
   W-V25-RB    the result page's back button lands on #/study (the exam setup), not on the dashboard
   W-V25-ST    the Exam & practice page keeps its setup (bank list and start bar) and its address is #/study
 
-Made-up accounts and data only (the sample users of seed_extra: plain, long and e-mail-shaped names on example.invalid).
+Made-up accounts and data only (the sample users of seed_extra: e-mail logins with plain, long and short display names; v2.6 the
+ranking shows display names).
 Registered in checks.py (GROUPS_V25); run alone with --only 'W-V25-*'.
 """
 import re
@@ -27,8 +27,8 @@ PHONES = [(320, 640), (375, 812), (430, 932)]
 DESKTOP = (1280, 800)
 STUDY_RE = re.compile(r'考试&练习|Exam & practice|試験・練習')
 
-# Waits until the dashboard has its data (no skeleton, or the error block)
-READY = "document.querySelector('.page-dash') && !document.querySelector('.dash-skel')"
+# Waits until the dashboard has its data (the boards are drawn, no skeleton left)
+READY = "document.querySelector('.page-dash') && document.querySelector('.dash-board') && !document.querySelector('.dash-board-skel')"
 
 DASH_JS = """
 const q = (s) => [...document.querySelectorAll(s)].filter(vis);
@@ -41,9 +41,7 @@ for (const e of q('.dash-hero-label, .dash-hero-sub, .dash-tile-label, .dash-sub
   if (e.scrollWidth > e.clientWidth + 1) cut.push(nm(e) + ' is cut sideways');
   else if (clamped && e.scrollHeight > e.clientHeight + 1) cut.push(nm(e) + ' needs more than 2 lines');
 }
-const names = q('.dash-name').map((e) => ({text: e.textContent.trim(), cut: e.scrollWidth > e.clientWidth + 1,
-  ell: getComputedStyle(e).textOverflow === 'ellipsis' || getComputedStyle(e.firstChild && e.firstChild.nodeType === 1 ? e.firstChild : e).textOverflow === 'ellipsis',
-  hidden: getComputedStyle(e).overflow !== 'visible'}));
+const names = q('.dash-rank .dash-pt').map((e) => ({text: (e.getAttribute('aria-label') || '').trim()}));
 const h1 = q('.dash-hello h1')[0];
 return {sideways: document.documentElement.scrollWidth - innerWidth, hero: hb ? Math.round(hb.h) : null,
   tiles: tiles.map((e) => Math.round(box(e).h)), overlap: overlaps(all), icons, cut, names, tileCount: tiles.length,
@@ -53,17 +51,6 @@ return {sideways: document.documentElement.scrollWidth - innerWidth, hero: hb ? 
 API_NAMES_JS = """(async () => { const r = await fetch('/api/dashboard'); if (!r.ok) return {status: r.status};
   const j = await r.json(); return {status: 200, names: (j.ranking.top || []).map((e) => e.name), body: JSON.stringify(j)} })()"""
 
-AI_JS = """
-const b = document.querySelector('.dash-ai .aip-sum-btn'); if (!b) return null;
-const col = b.closest('.dash-ai'); const br = box(b), cr = box(col);
-return {w: Math.round(br.w), col: Math.round(cr.w), h: Math.round(br.h), disabled: b.getAttribute('aria-disabled') === 'true'};"""
-
-DIALOG_JS = """
-const d = document.querySelector('dialog#aip-sum[open]'); if (!d) return null;
-const head = d.querySelector('.aip-sum-head'), bar = d.querySelector('.aip-sum-bar'), inn = d.querySelector('.aip-sum-in') || d;
-const hb = head ? box(head) : box(inn), bb = bar ? box(bar) : box(inn), ib = box(inn);
-return {top: hb.t, bottom: bb.b, left: ib.l, right: ib.r, vw: innerWidth, vh: innerHeight, title: head ? head.textContent.trim().slice(0, 40) : ''};"""
-
 MENU_JS = """
 const items = [...document.querySelectorAll('.nav-pop .nav-list .nav-link')].filter(vis);
 return items.map((e) => (e.querySelector('.nav-label') || e).textContent.trim());"""
@@ -71,10 +58,6 @@ return items.map((e) => (e.querySelector('.nav-label') || e).textContent.trim())
 SETUP_JS = """
 return {hash: location.hash, bank: !!document.querySelector('.home-setup, .home-bank, .home-bankhead'), go: !!document.querySelector('.home-go'),
   h1: (document.querySelector('h1') || {}).textContent || '', sideways: document.documentElement.scrollWidth - innerWidth};"""
-
-
-def insets_of(size):
-    return {'top': 47, 'bottom': 34, 'left': 0, 'right': 0} if size[0] < size[1] else {'top': 0, 'bottom': 21, 'left': 47, 'right': 47}
 
 
 def cases(rc, cid, page, fn, sizes):
@@ -114,8 +97,6 @@ def dash_case(rc, lang, theme, size):
     for n in r['names']:
         if '@' in n['text']:
             p.append('a ranking name contains @ (%s)' % n['text'])
-        if n['cut'] and not (n['hidden'] and n['ell']):
-            p.append('ranking name "%s" is cut without an ellipsis' % n['text'][:24])
     api = d.js(API_NAMES_JS) or {}
     if api.get('status') != 200:
         p.append('GET /api/dashboard answered %s' % api.get('status'))
@@ -124,43 +105,6 @@ def dash_case(rc, lang, theme, size):
     p += ['common: ' + x for x in common(d, size)[:3]]
     verdict(rc, 'W-V25-DASH', 'home', 'layout', 'lee', lang, theme, size, d, p,
             'hero %d px, tiles %s px, icons 28, labels whole, %d ranking names without @' % (r['hero'], r['tiles'], len(r['names'])))
-
-
-# ------------------------------------------------------------------------------------------------ W-V25-AI
-def ai_case(rc, lang, theme, size):
-    d = rc.dev('lee', lang, theme, size)
-    goto(d, '#/', 1.6)
-    until(d, READY, 8.0)
-    a = js(d, AI_JS)
-    if not a:
-        rc.rec('W-V25-AI', 'home', 'button', 'lee', size, lang, theme, None, 'no AI assessment button for this account on this stack')
-        return
-    p = []
-    # v2.5 (coordinator): the button keeps its own width on phones (a calm page), but never wider than its column
-    if a['w'] > a['col'] + 1:
-        p.append('the AI button is %d px wide in a %d px column' % (a['w'], a['col']))
-    if a['h'] < 44:
-        p.append('the AI button is %d px high (< 44)' % a['h'])
-    state = 'button'
-    if not p and not a['disabled'] and phone(size) and d.safe_area_supported:
-        d.tap_sel('.dash-ai .aip-sum-btn')
-        if until(d, "document.querySelector('dialog#aip-sum[open]')", 6.0):
-            time.sleep(1.2)
-            g = js(d, DIALOG_JS)
-            ins = insets_of(size)
-            if g:
-                state = 'dialog'
-                if g['top'] < ins['top'] - 0.5:
-                    p.append('the dialog head starts at %d px, inside the top inset %d' % (g['top'], ins['top']))
-                if g['bottom'] > g['vh'] - ins['bottom'] + 0.5:
-                    p.append('the dialog bar ends at %d px, inside the bottom inset %d' % (g['bottom'], ins['bottom']))
-                if g['left'] < ins['left'] - 0.5 or g['right'] > g['vw'] - ins['right'] + 0.5:
-                    p.append('the dialog is %d..%d px wide, outside the side insets' % (g['left'], g['right']))
-            d.js("document.querySelectorAll('dialog[open]').forEach(x => x.close()); 1")
-        else:
-            p.append('the dialog did not open')
-    verdict(rc, 'W-V25-AI', 'home', state, 'lee', lang, theme, size, d, p,
-            'AI button %d / %d px wide%s' % (a['w'], a['col'], ', dialog inside the safe insets' if state == 'dialog' else ''))
 
 
 # ------------------------------------------------------------------------------------------------ W-V25-RS
@@ -249,7 +193,6 @@ def st_case(rc, lang, theme, size):
 
 def g_v25(rc):
     cases(rc, 'W-V25-DASH', 'home', dash_case, PHONES + [DESKTOP])
-    cases(rc, 'W-V25-AI', 'home', ai_case, PHONES)
     cases(rc, 'W-V25-RS', 'home', rs_case, PHONES)
     cases(rc, 'W-V25-MN', 'menu', mn_case, PHONES)
     cases(rc, 'W-V25-RB', 'result', rb_case, PHONES[:2])

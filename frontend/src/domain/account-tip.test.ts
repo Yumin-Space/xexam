@@ -32,15 +32,15 @@ test('v2.2 fix round: account button redraws across the phone line, one tip at a
 });
 
 test('quiz top row steps down (short count, tighter gaps, no clock icon) before the position is clipped', () => {
-  assert.match(src('../pages/quiz.ts'), /\['tight', 'tighter', 'tightest'\]/);
+  assert.match(src('../pages/quiz.ts'), /\['tight', 'tighter', 'tightest', 'tightest2']/);
   const css = src('../styles/quiz.css');
   assert.match(css, /\.qbar\.tight \.qcount-s \{ display: inline; \}/);
   // The toggle's box is its own 44 px tap area (no ::after a neighbour could cover)
-  assert.match(css, /\.qbar \.theme-btn \{ position: relative; width: 44px; height: 44px; margin-inline: -8px; \}/);
+  assert.match(css, /\.qbar :is\(\.theme-btn, \.hand-btn\) \{ position: relative; width: 44px; height: 44px; margin-inline: -8px; \}/);
   assert.doesNotMatch(css, /\.theme-btn::after \{ content: ""; position: absolute; inset: 0 -/);
 });
 
 test('phone top bar keeps the brand name and drops the admin tag first, then the icon', () => {
-  assert.match(src('../components/shell.ts'), /matches\(PHONE_MQ\) \? \['fit-2', 'fit-1', 'fit-3', 'fit-4'\]/);
+  assert.match(src('../components/shell.ts'), /matches\(PHONE_MQ\) \? \['fit-0', 'fit-2', 'fit-1', 'fit-3', 'fit-4'\]/);
   assert.match(src('../styles/shell.css'), /min-width: 44px; justify-content: center;/);
 });

@@ -76,7 +76,7 @@ async fn every_connection_starts_on_and_the_switch_keeps_everything() {
     let s = settings(&e.t, &e.admin).await;
     assert_eq!(conn_of(&s, 1)["enabled"], json!(true));
     assert_eq!(conn_of(&s, 2)["enabled"], json!(true));
-    assert_eq!(s["slots"].as_object().expect("slots").len(), 7);
+    assert_eq!(s["slots"].as_object().expect("slots").len(), 8);
     assert!(s["slots"].get("study").is_none());
     let rev = conn_of(&s, 2)["rev"].clone();
     let (st, v) = switch(&e, 2, false).await;
@@ -343,7 +343,7 @@ async fn global_switches_are_independent_and_apply_to_administrators() {
             "/api/ai/admin/features",
             &e.admin,
             json!({"userId": e.user.id, "features": {"chat": true, "hint": false, "explain": true,
-                   "summary": true, "generate": true, "import": true}}),
+                   "summary": true, "assess": true, "generate": true, "import": true}}),
         )
         .await;
     assert_eq!(s, 200, "{v}");

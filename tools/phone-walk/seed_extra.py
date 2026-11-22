@@ -15,8 +15,13 @@ Users after the whole seeding (all passwords are made-up demo values):
   lee    administrator (60 records)           alex   user, AI+ paused
   riley  user, NO AI+                         kim    user, disabled
   jordan user, locked
-  casey@example.invalid   user with an e-mail-shaped sample name, 4 practice records (the dashboard masks it)
-  morgan.long.sample.username   user with a long plain sample name, 3 practice records (ellipsis in the dashboard ranking)
+  casey@example.invalid   user, display name "Casey", 4 practice records (a login that looks like an e-mail; the
+                          dashboard shows the display name, never the login)
+  morgan.long.sample.username@example.invalid   user, a long display name (20 characters), 3 practice records
+                          (ellipsis in the dashboard ranking)
+v2.6: every user signs in with an e-mail (seed.LOGINS maps the short handles used in code, sam -> sam@example.com) and has a
+display name (seed.NAMES); seed.Session.sign_in passes the first-sign-in gate (password + name, or name only).
+The user "lee" (60 records) answers wrong 1..4 of 12 questions per record, so the most-missed board of lee has all five places.
 """
 import os
 import sys
@@ -38,7 +43,9 @@ BANK_FILE = BANK_NAME + '.xlsx'
 RECORDS_OF_LEE = 60
 LOCKED_USER = 'jordan'
 EMAIL_USER = 'casey@example.invalid'          # e-mail-shaped sample name (example.invalid only)
-LONG_USER = 'morgan.long.sample.username'
+LONG_USER = 'morgan.long.sample.user@example.invalid'  # 39 chars: logins are at most 40
+DISPLAY_NAMES = {EMAIL_USER: 'Casey', LONG_USER: 'Morgan Longname Test'}   # 20 characters = the longest allowed name
+seed.NAMES.update(DISPLAY_NAMES)
 LETTERS = 'ABCDE'
 
 
@@ -179,7 +186,7 @@ def extra(base, cookie, folder):
     admin = seed.Session(base)
     admin.cookie[seed.COOKIE] = cookie
     admin.import_new(build_bank(folder))
-    admin.call('/api/users/create', {'username': 'riley', 'password': seed.INITIAL, 'role': 'user', 'banks': 'all'})
+    admin.create_user('riley', banks='all')
     riley = seed.Session(base).sign_in('riley', seed.INITIAL)
     lee = seed.Session(base).sign_in('lee', seed.INITIAL)
     bank = lee.call('/api/bank')['questions']
@@ -191,12 +198,12 @@ def extra(base, cookie, folder):
     _attempt(riley, pool, 'practice', {0, 2}, 210)
     # v2.5: two more answering users so the dashboard ranking has plain, long and e-mail-shaped sample names
     for name, rounds in ((EMAIL_USER, 4), (LONG_USER, 3)):
-        admin.call('/api/users/create', {'username': name, 'password': seed.INITIAL, 'role': 'user', 'banks': 'all'})
+        admin.create_user(name, banks='all')
         who = seed.Session(base).sign_in(name, seed.INITIAL)
         for i in range(rounds):
             _attempt(who, pool, 'practice', {(i + k) % len(pool) for k in range(2 + i % 3)}, 150 + 40 * i)
     # a made-up user that is guessed until the account locks
-    admin.call('/api/users/create', {'username': LOCKED_USER, 'password': seed.INITIAL, 'role': 'user', 'banks': 'all'})
+    admin.create_user(LOCKED_USER, banks='all')
     codes = []
     for i in range(10):
         try:

@@ -307,3 +307,18 @@ dialog.rec-jump .rec-up-ic { width: 16px; height: 16px; flex: none; }
 @media (orientation: landscape) and (max-height: 500px) and (min-width: 640px) {
   .rec-meta { grid-template-columns: max-content minmax(0, 1fr) max-content minmax(0, 1fr); gap: 4px 16px; }
 }
+
+/* v2.6 preview, blackboard mode (html[data-hand], the top-bar "Aa" switch): Study records like Exam & practice — the page's
+   texts (titles, overview, filters, list, buttons, the record and wrong-answer reviews with their questions) hand-written
+   and its line icons hand-drawn; the bank names keep the page font. The [lang] rules reach texts that carry their own
+   language (question paragraphs, options), which the per-language font rules would otherwise set back to the page font. */
+html[data-hand] .page-records,
+html[data-hand] .page-records :is(.stem, .opt, .hs-item, .explain, .mnemo, .note) [lang] { font-family: 'Xexam Hand', var(--en); }
+html[data-hand]:lang(zh-CN) .page-records,
+html[data-hand] .page-records :is(.stem, .opt, .hs-item, .explain, .mnemo, .note) [lang|="zh"] { font-family: 'Xexam Hand', var(--zh); }
+html[data-hand]:lang(ja) .page-records,
+html[data-hand] .page-records :is(.stem, .opt, .hs-item, .explain, .mnemo, .note) [lang="ja"] { font-family: 'Xexam Hand', var(--jp); }
+html[data-hand] .page-records :is(.rec-bnames, .rv-src, .rec-bank-sel) { font-family: var(--en); }
+html[data-hand]:lang(zh-CN) .page-records :is(.rec-bnames, .rv-src, .rec-bank-sel) { font-family: var(--zh); }
+html[data-hand]:lang(ja) .page-records :is(.rec-bnames, .rv-src, .rec-bank-sel) { font-family: var(--jp); }
+html[data-hand] .page-records .ico { filter: url(#xexam-hand) drop-shadow(.6px -.5px 0 currentColor); }

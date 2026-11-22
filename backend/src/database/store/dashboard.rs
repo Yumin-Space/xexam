@@ -1,23 +1,25 @@
-//! v2.5: the Home dashboard, `GET /api/dashboard` (read only, writes and logs nothing).
+//! The Home dashboard, `GET /api/dashboard` (read only, writes and logs nothing).
 //!
 //! - **Ranking**: all time, from `user_stats` (it survives the pruning of old study records), enabled users with at least one
 //!   answer, administrators included, every bank. Order: correct answers descending, then fewer answers (better accuracy),
 //!   then user id. The first [`TOP`] are listed; the viewer's own position is always reported in `me`.
-//! - **Names** are decided here, for every viewer: the viewer's own row shows the full user name; another user's name is shown
-//!   in full unless it is an e-mail address, and then only a masked local part is sent ([`mask_name`]). No user id, no domain.
-//! - **Most practised**: the last [`POPULAR_DAYS`] days, answered items of all users, active questions in the viewer's
-//!   [`BankScope`](crate::models::BankScope) only. Only question ids and counts leave; the page resolves the text itself.
-use super::super::timefmt::minus_days;
+//! - **Names** (v2.6): a user's public display name (`users.display_name`) is sent as it is, for every viewer. A user who has
+//!   not chosen one yet (NULL) shows as [`mask_name`] of the login for others (an e-mail address only as a masked local part,
+//!   never a domain) and as the full login for the viewer's own row. No user id leaves.
+//! - **Most missed** (`wrongTop`): the viewer's own questions with at least one wrong answer, from the viewer's own
+//!   `user_stats` only (unanswered exam items never count there; other users' statistics never leak). Active questions in the
+//!   viewer's [`BankScope`](crate::models::BankScope) only. Order: wrong descending, correct ascending, attempts descending,
+//!   bank, position. At most [`WRONG_TOP`] items; only ids and counts leave, the page resolves the text itself.
 use super::Store;
 use crate::error::DbError;
 use crate::models::Viewer;
 use rusqlite::{params, Connection};
 use serde_json::{json, Value};
 
-/// The window of the "most practised" list, in days.
-pub const POPULAR_DAYS: i64 = 30;
-/// How many entries each list shows.
+/// How many entries the leaderboard shows.
 pub const TOP: usize = 3;
+/// How many questions the "most missed" podium shows.
+pub const WRONG_TOP: usize = 5;
 
 /// The name shown for another user: a plain user name unchanged; an e-mail address as its masked local part only
 /// (`alice@x.y` -> `a***e`, a local part of one or two characters -> first character + `***`, an empty one -> `***`).
@@ -35,7 +37,7 @@ pub(crate) fn mask_name(username: &str) -> String {
 
 fn ranking(c: &Connection, user: i64) -> Result<Value, DbError> {
     let mut st = c.prepare(
-        "SELECT u.id, u.username, SUM(s.attempts) AS answered, SUM(s.correct) AS good \
+        "SELECT u.id, u.username, u.display_name, SUM(s.attempts) AS answered, SUM(s.correct) AS good \
          FROM user_stats s JOIN users u ON u.id = s.user_id \
          WHERE u.disabled = 0 \
          GROUP BY u.id HAVING SUM(s.attempts) > 0 \
@@ -45,22 +47,28 @@ fn ranking(c: &Connection, user: i64) -> Result<Value, DbError> {
         Ok((
             r.get::<_, i64>(0)?,
             r.get::<_, String>(1)?,
-            r.get::<_, i64>(2)?,
+            r.get::<_, Option<String>>(2)?,
             r.get::<_, i64>(3)?,
+            r.get::<_, i64>(4)?,
         ))
     })?;
     let mut top = Vec::new();
     let mut me = json!({"rank": null, "answered": 0, "correct": 0});
     let mut users = 0_i64;
     for row in rows {
-        let (id, name, answered, good) = row?;
+        let (id, login, display, answered, good) = row?;
         users += 1;
         let rank = users;
         let own = id == user;
+        let name = match display {
+            Some(d) => d,
+            None if own => login,
+            None => mask_name(&login),
+        };
         if usize::try_from(rank).is_ok_and(|n| n <= TOP) {
             top.push(json!({
                 "rank": rank,
-                "name": if own { name } else { mask_name(&name) },
+                "name": name,
                 "answered": answered,
                 "correct": good,
                 "self": own,
@@ -73,33 +81,20 @@ fn ranking(c: &Connection, user: i64) -> Result<Value, DbError> {
     Ok(json!({"users": users, "top": top, "me": me}))
 }
 
-/// The "most practised" query (`?1` = the window start). `CROSS JOIN` pins `attempts` as the outer loop: SQLite reads the
-/// attempts table (at most `RECORD_RETENTION` rows per user), skips those outside the window, and reads only their items
-/// through the `attempt_items` primary key `(attempt_id, seq)`. With a plain `JOIN` the planner walks
-/// `idx_attempt_items_question` instead (it serves `GROUP BY question_id`) and so reads every item ever saved, with two
-/// random lookups each, while holding the connection lock. `all_banks` adds `LIMIT 3` (no scope filter runs afterwards).
-fn popular_sql(all_banks: bool) -> String {
+/// The "most missed" query (`?1` = the viewer). `all_banks` adds `LIMIT` (no scope filter runs afterwards).
+fn wrong_top_sql(all_banks: bool) -> String {
     let mut sql = String::from(
-        "SELECT ai.question_id, q.bank_id, COUNT(*) AS times, SUM(ai.correct) AS good \
-         FROM attempts a CROSS JOIN attempt_items ai ON ai.attempt_id = a.id \
-         JOIN questions q ON q.id = ai.question_id \
-         WHERE a.at >= ?1 AND q.active = 1 AND q.bank_id IS NOT NULL \
-           AND NOT (ai.answer IS NULL AND ai.correct = 0) \
-         GROUP BY ai.question_id \
-         ORDER BY times DESC, good DESC, q.bank_id ASC, q.seq ASC",
+        "SELECT s.question_id, q.bank_id, s.wrong, s.attempts          FROM user_stats s JOIN questions q ON q.id = s.question_id          WHERE s.user_id = ?1 AND s.wrong > 0 AND q.active = 1 AND q.bank_id IS NOT NULL          ORDER BY s.wrong DESC, s.correct ASC, s.attempts DESC, q.bank_id ASC, q.seq ASC, q.id ASC",
     );
     if all_banks {
-        sql.push_str(" LIMIT 3");
+        sql.push_str(&format!(" LIMIT {WRONG_TOP}"));
     }
     sql
 }
 
-fn popular(c: &Connection, v: &Viewer, now: &str) -> Result<Value, DbError> {
-    let Some(since) = minus_days(now, POPULAR_DAYS) else {
-        return Ok(json!({"days": POPULAR_DAYS, "since": now, "items": []}));
-    };
-    let mut st = c.prepare(&popular_sql(v.scope.is_all()))?;
-    let rows = st.query_map(params![since], |r| {
+fn wrong_top(c: &Connection, v: &Viewer) -> Result<Value, DbError> {
+    let mut st = c.prepare(&wrong_top_sql(v.scope.is_all()))?;
+    let rows = st.query_map(params![v.user], |r| {
         Ok((
             r.get::<_, String>(0)?,
             r.get::<_, i64>(1)?,
@@ -109,73 +104,33 @@ fn popular(c: &Connection, v: &Viewer, now: &str) -> Result<Value, DbError> {
     })?;
     let mut items = Vec::new();
     for row in rows {
-        let (qid, bank, times, good) = row?;
+        let (qid, bank, wrong, attempts) = row?;
         if !v.scope.allows(Some(bank)) {
             continue;
         }
-        items.push(json!({"questionId": qid, "bankId": bank, "times": times, "correct": good}));
-        if items.len() >= TOP {
+        items
+            .push(json!({"questionId": qid, "bankId": bank, "wrong": wrong, "attempts": attempts}));
+        if items.len() >= WRONG_TOP {
             break;
         }
     }
-    Ok(json!({"days": POPULAR_DAYS, "since": since, "items": items}))
+    Ok(json!({"items": items}))
 }
 
 impl Store {
-    /// `GET /api/dashboard` as `v` sees it: `{"ranking": {...}, "popular": {...}}` (see the module docs).
+    /// `GET /api/dashboard` as `v` sees it: `{"ranking": {...}, "wrongTop": {"items": [...]}}` (see the module docs).
     pub fn dashboard_as(&self, v: &Viewer) -> Result<Value, DbError> {
-        let now = self.clock.now();
         let g = self.lock();
         Ok(json!({
             "ranking": ranking(&g, v.user)?,
-            "popular": popular(&g, v, &now)?,
+            "wrongTop": wrong_top(&g, v)?,
         }))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{mask_name, popular_sql};
-    use crate::database::{FixedClock, Store};
-    use std::sync::Arc;
-
-    fn plan(c: &rusqlite::Connection, sql: &str) -> Vec<String> {
-        let mut st = c
-            .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
-            .expect("explain");
-        let rows = st
-            .query_map(["2026-10-23 00:00"], |r| r.get::<_, String>(3))
-            .expect("query");
-        rows.map(|r| r.expect("row")).collect()
-    }
-
-    /// The window drives the query on the real schema (no `ANALYZE`): attempts first, then only their items by primary
-    /// key; never a walk of the question index over every item ever saved.
-    #[test]
-    fn most_practised_reads_only_the_items_of_the_window() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let store = Store::open_with_clock(
-            &dir.path().join("x.db"),
-            Arc::new(FixedClock("2026-11-22 12:00".to_string())),
-        )
-        .expect("open");
-        let g = store.lock();
-        for all_banks in [true, false] {
-            let steps = plan(&g, &popular_sql(all_banks));
-            let joined = steps.join(" | ");
-            assert!(!joined.contains("idx_attempt_items_question"), "{joined}");
-            assert!(!joined.contains("SCAN ai"), "{joined}");
-            let outer = steps
-                .iter()
-                .position(|s| s == "SCAN a" || s.starts_with("SEARCH a "))
-                .unwrap_or_else(|| panic!("attempts step: {joined}"));
-            let items = steps
-                .iter()
-                .position(|s| s.starts_with("SEARCH ai ") && s.contains("attempt_id=?"))
-                .unwrap_or_else(|| panic!("items by primary key: {joined}"));
-            assert!(outer < items, "{joined}");
-        }
-    }
+    use super::mask_name;
 
     #[test]
     fn masks_only_email_shaped_names() {

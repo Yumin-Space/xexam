@@ -6,6 +6,9 @@
 //!   session (401 `MSG_SIGN_IN_REQUIRED`); unknown paths then answer 404 as before.
 //! - A user who must change their password reaches only `GET /api/auth/state`, `POST /api/auth/password`,
 //!   `POST /api/auth/logout` and `GET /api/info`; everything else is 403 `MSG_PASSWORD_CHANGE_REQUIRED`.
+//! - v2.6: a user without a display name is held the same way (`SessionUser::setup_required`), with 403
+//!   `MSG_NAME_REQUIRED`, and reaches `POST /api/auth/name` as well; that route itself refuses (403
+//!   `MSG_PASSWORD_CHANGE_REQUIRED`) while a password change is still pending, so the name cannot be set around it.
 //! - Admin routes answer 403 `MSG_ADMIN_ONLY` to other users.
 //! - Bank management routes (v0.6.5: upload, import confirm / cancel, import history, bank delete) answer 403
 //!   `MSG_NO_BANK_PERMISSION` to plain users without the "can manage question banks" permission. Which banks a bank manager may
@@ -30,7 +33,8 @@
 //!   (409 [`MSG_AI_SERVICE_OFF`](super::response::MSG_AI_SERVICE_OFF), nothing written).
 use super::response::{
     json_resp, MSG_ADMIN_ONLY, MSG_BAD_LOGIN, MSG_BAD_PASSWORD, MSG_BAD_REQUEST, MSG_BAD_USERNAME,
-    MSG_LAST_ADMIN, MSG_NOT_YOURSELF, MSG_NO_BANK_PERMISSION, MSG_NO_DOWNLOAD_PERMISSION,
+    MSG_LAST_ADMIN, MSG_NAME_BAD, MSG_NAME_EMPTY, MSG_NAME_REQUIRED, MSG_NAME_TAKEN,
+    MSG_NOT_YOURSELF, MSG_NO_BANK_PERMISSION, MSG_NO_DOWNLOAD_PERMISSION,
     MSG_PASSWORD_CHANGE_REQUIRED, MSG_SAME_PASSWORD, MSG_SIGN_IN_REQUIRED, MSG_UNKNOWN_BANKS,
     MSG_USERNAME_TAKEN, MSG_USER_NOT_FOUND, MSG_WRONG_PASSWORD,
 };
@@ -39,7 +43,8 @@ use crate::activity::{Actor, ClientInfo, Entry};
 use crate::auth::throttle::{retry_after_secs, Begun, StartedLock};
 use crate::auth::{self, Ended, LockStatus, Role, Rule, SessionTimes, Target, SESSION_PURGE_SECS};
 use crate::database::{
-    ActiveFacts, EndedSession, NewSession, SessionUser, SigninInfo, Touch, UserChange, UserUpdate,
+    ActiveFacts, EndedSession, NewSession, PasswordChange, SessionUser, SigninInfo, Touch,
+    UserChange, UserUpdate,
 };
 use crate::error::{AppError, DbError};
 use crate::logs::BurstReport;
@@ -124,6 +129,10 @@ pub const ROUTES: &[Route] = &[
     Route {
         during_password_change: true,
         ..route("POST", "/api/auth/password", Access::SignedIn)
+    },
+    Route {
+        during_password_change: true,
+        ..route("POST", "/api/auth/name", Access::SignedIn)
     },
     route("POST", "/api/upload", Access::BankManager),
     route("POST", "/api/import/confirm", Access::BankManager),
@@ -530,8 +539,15 @@ pub async fn authorize(
     let Some(a) = authed else {
         return Err(status(StatusCode::UNAUTHORIZED, MSG_SIGN_IN_REQUIRED));
     };
-    if a.user.must_change_password && !route.is_some_and(|r| r.during_password_change) {
-        return Err(status(StatusCode::FORBIDDEN, MSG_PASSWORD_CHANGE_REQUIRED));
+    if a.user.setup_required() && !route.is_some_and(|r| r.during_password_change) {
+        return Err(status(
+            StatusCode::FORBIDDEN,
+            if a.user.must_change_password {
+                MSG_PASSWORD_CHANGE_REQUIRED
+            } else {
+                MSG_NAME_REQUIRED
+            },
+        ));
     }
     if access == Access::Admin && !a.user.is_admin() {
         return Err(status(StatusCode::FORBIDDEN, MSG_ADMIN_ONLY));
@@ -556,8 +572,10 @@ pub enum IntrospectOutcome {
     Guard(super::guard::Denial),
     /// No valid session (none, expired, unknown, or the user is disabled): 401, `X-Xexam-Deny: signin`
     SignIn,
-    /// The user must choose a new password first: 403, `X-Xexam-Deny: password`
+    /// The user must set a new password first: 403, `X-Xexam-Deny: password`
     Password,
+    /// The user only lacks a display name: 403, `X-Xexam-Deny: name`
+    Name,
     /// The database could not be read: 500 (Nginx answers that like an unreachable backend)
     Failed,
     /// Signed in: 204 with this identity statement in `X-Xexam-Identity`
@@ -608,6 +626,7 @@ pub async fn introspect(st: &AppState, headers: &HeaderMap) -> IntrospectOutcome
         Err(_) => IntrospectOutcome::Failed,
         Ok(Looked::None | Looked::Ended) => IntrospectOutcome::SignIn,
         Ok(Looked::Found(f)) if f.user.must_change_password => IntrospectOutcome::Password,
+        Ok(Looked::Found(f)) if f.user.setup_required() => IntrospectOutcome::Name,
         Ok(Looked::Found(f)) => IntrospectOutcome::Allowed(super::internal::identity_statement(
             &link_token,
             &f.user,
@@ -1100,8 +1119,65 @@ pub async fn logout(st: &AppState, a: &Authed, origin: Option<&str>) -> Result<R
     Ok(resp)
 }
 
-/// `POST /api/auth/password` `{"current"?, "password"}` → `{"user": {...}}`. `current` is required unless the user must change
-/// the password (then the session proves who they are). The new password must differ from the old one. Clears the flag and
+/// The `displayName` of a request body, cleaned (v2.6). `None` when the key is absent or null and `required` is false;
+/// a missing or blank name is `MSG_NAME_EMPTY` when `required`. A value that is not a string is a bad request.
+fn display_name_field(data: &PyVal, required: bool) -> Result<Option<String>, AppError> {
+    let raw = match data.get("displayName") {
+        None | Some(PyVal::Null) => None,
+        Some(PyVal::Str(s)) => Some(s.as_str()),
+        Some(_) => return Err(bad_request()),
+    };
+    match raw {
+        None if required => Err(AppError::BadRequest(MSG_NAME_EMPTY.to_string())),
+        None => Ok(None),
+        Some(raw) => match auth::clean_display_name(raw) {
+            Ok(name) => Ok(Some(name)),
+            Err(auth::DisplayNameError::Empty) => {
+                Err(AppError::BadRequest(MSG_NAME_EMPTY.to_string()))
+            }
+            Err(auth::DisplayNameError::Bad) => Err(AppError::BadRequest(MSG_NAME_BAD.to_string())),
+        },
+    }
+}
+
+/// The activity note of a display name written by `POST /api/auth/name` or `POST /api/auth/password`.
+fn name_note(old: Option<&str>, new: &str) -> Value {
+    json!({ "oldName": old, "newName": new })
+}
+
+/// `POST /api/auth/name` `{"displayName"}` → `{"user": {...}}` (v2.6): sets or changes the display name. Allowed while the
+/// name is the only thing missing (first sign-in of an existing user) and from the Profile page; refused (403
+/// `MSG_PASSWORD_CHANGE_REQUIRED`) while a password change is pending, so the setup order cannot be skipped. 409
+/// `MSG_NAME_TAKEN` when another user has the name (any ASCII letter case). The session stays as it is.
+pub async fn set_name(st: &AppState, a: &Authed, data: &PyVal) -> Result<Response, AppError> {
+    if a.user.must_change_password {
+        return Err(status(StatusCode::FORBIDDEN, MSG_PASSWORD_CHANGE_REQUIRED));
+    }
+    let name = display_name_field(data, true)?.ok_or_else(bad_request)?;
+    let store = st.0.store.clone();
+    let id = a.user.id;
+    let stored = name.clone();
+    let (old, user) = match blocking(move || store.set_display_name(id, &stored)).await? {
+        UserChange::Done(done) => done,
+        UserChange::Taken => return Err(status(StatusCode::CONFLICT, MSG_NAME_TAKEN)),
+        _ => return Err(status(StatusCode::UNAUTHORIZED, MSG_SIGN_IN_REQUIRED)),
+    };
+    tracing::info!(
+        "user {:?} set their display name (was {:?})",
+        user.username,
+        old
+    );
+    let note = name_note(old.as_deref(), &name);
+    Ok(crate::activity::with_note(
+        ok_json(&json!({ "user": user.to_json() })),
+        None,
+        Some(note),
+    ))
+}
+
+/// `POST /api/auth/password` `{"current"?, "password", "displayName"?}` → `{"user": {...}}`. `current` is required unless the user must change
+/// the password (then the session proves who they are). `displayName` (v2.6) is required while the user has none and is
+/// written in the same transaction as the password (a taken name refuses the whole request, 409 `MSG_NAME_TAKEN`). The new password must differ from the old one. Clears the flag and
 /// ends every session of the user, this one included: this browser gets a **new** session cookie (and the known-browser cookie
 /// of the new password), so a copy of the old cookie (read off a plain-HTTP network, say) stops working too.
 pub async fn change_password(
@@ -1117,6 +1193,7 @@ pub async fn change_password(
     if !auth::password_ok(password) {
         return Err(AppError::BadRequest(MSG_BAD_PASSWORD.to_string()));
     }
+    let new_name = display_name_field(data, a.user.display_name.is_none())?;
     let store = st.0.store.clone();
     let id = a.user.id;
     let user = blocking(move || store.user_by_id(id))
@@ -1163,7 +1240,8 @@ pub async fn change_password(
         .filter(|_| st.0.activity.signin_info())
         .map(|i| i.to_string());
     let ua = a.client.ua.clone();
-    let updated = blocking(move || {
+    let name_to_store = new_name.clone();
+    let (updated, old_name) = match blocking(move || {
         store.change_own_password_as(
             id,
             &expected,
@@ -1177,15 +1255,25 @@ pub async fn change_password(
                 ip: ip.as_deref(),
                 ua: ua.as_deref(),
             },
+            name_to_store.as_deref(),
         )
     })
     .await?
-    .ok_or(status(StatusCode::UNAUTHORIZED, MSG_SIGN_IN_REQUIRED))?;
+    {
+        PasswordChange::Done { user, old_name } => (user, old_name),
+        PasswordChange::NameTaken => return Err(status(StatusCode::CONFLICT, MSG_NAME_TAKEN)),
+        PasswordChange::Stale => {
+            return Err(status(StatusCode::UNAUTHORIZED, MSG_SIGN_IN_REQUIRED));
+        }
+    };
     st.0.gates.forget(&a.token_hash);
     st.0.gates.started(&new_hash_of_token, id, now);
     tracing::info!("user {:?} changed their password", updated.username);
     let secure = auth::cookie_secure(st.0.cfg.cookie_secure, origin);
     let mut resp = ok_json(&json!({ "user": updated.to_json() }));
+    if let Some(name) = &new_name {
+        resp = crate::activity::with_note(resp, None, Some(name_note(old_name.as_deref(), name)));
+    }
     // The new session keeps the rule of the old one (administrator / remember / browser)
     set_cookie(&mut resp, &auth::session_cookie_for(&token, secure, a.rule));
     set_device_cookie(&mut resp, id, &new_hash, secure);

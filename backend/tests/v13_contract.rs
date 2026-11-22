@@ -77,6 +77,9 @@ fn sign_in(a: &App, id: i64) -> Who {
         )
         .expect("clear")
         .expect("user");
+    a.store
+        .set_display_name(id, &format!("User {}", id))
+        .expect("name");
     let token = auth::new_session_token();
     let sid = auth::token_hash(&token);
     a.store

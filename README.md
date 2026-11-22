@@ -27,16 +27,28 @@
 
 # Xexam
 
-Xexam is a self-hosted app for practising exam questions in the browser. You import your own Excel question banks, then take exams or practise with them, and review the questions you got wrong. If an administrator connects an AI provider and gives them the **AI+ feature**, users can also ask an AI model in **AI Chat** and get AI help while they study: hints in practice, an AI analysis of any question in practice and on result pages, and an AI summary of their wrong answers. It works on computers and on phones (iPhone).
+Xexam is a self-hosted app for practising exam questions in the browser. You import your own Excel question banks, then take exams or practise with them, and review the questions you got wrong. If an administrator connects an AI provider and gives them the **AI+ feature**, users can also ask an AI model in **AI Chat** and get AI help while they study: hints in practice, an AI analysis of any question in practice and on result pages, an AI summary of their wrong answers and a short AI study assessment on Home. Home shows a leaderboard and your most missed questions, and the app has a hand-written look that can be switched to normal text with one button. It works on computers and on phones (iPhone).
 
-![The exam page: a hotspot question in English, the English / 中文 / 日本語 switch and the answer sheet with Finish exam](docs/en/screenshots/desktop-2-quiz.png)
+<p align="center">
+  <img src="docs/en/screenshots/desktop-1-home.png" alt="Home: the Exam & practice tile, the page tiles, the leaderboard, the most missed questions and the AI study assessment" width="420">
+  <img src="docs/en/screenshots/desktop-3-result.png" alt="A result: red pen circles and crosses for every question, the answers and the explanation" width="420">
+</p>
+<p align="center">
+  <img src="docs/en/screenshots/desktop-14-ai-chat.png" alt="AI Chat" width="420">
+  <img src="docs/en/screenshots/desktop-2-quiz.png" alt="The exam page with the English / 中文 / 日本語 switch and the answer sheet" width="420">
+</p>
+<p align="center">
+  <img src="docs/en/screenshots/iphone-1-home.png" alt="Home on a phone" width="220">
+  <img src="docs/en/screenshots/iphone-2-quiz.png" alt="The exam page on a phone" width="220">
+  <img src="docs/en/screenshots/iphone-7-ai-chat.png" alt="AI Chat on a phone" width="220">
+</p>
 
 The repository contains **no questions**. Xexam only provides the tools to import, organize and practise questions; your question banks are your own Excel files and are never committed (`.gitignore` excludes them). The screenshots use made-up demo banks, not content from any real exam.
 
 | | |
 |---|---|
-| Current version | **v2.3.1** (see the [changelog](docs/en/changelog.md) or the repository's [Releases](../../releases) page; in the app: menu → **Xexam v2.3.1**) |
-| Images | Three, on Docker Hub (public, no login needed): `docker.io/yuminspace/xexam-frontend`, `docker.io/yuminspace/xexam-backend` and `docker.io/yuminspace/xexam-ai-service`, with tags `latest` / `v2.3.1` / `sha-<commit>` (the `sha-` tags are for troubleshooting). Mirror: `ghcr.io/yumin-space/xexam-frontend`, `ghcr.io/yumin-space/xexam-backend` and `ghcr.io/yumin-space/xexam-ai-service` (private, same tags) |
+| Current version | **v2.6** (see the [changelog](docs/en/changelog.md) or the repository's [Releases](../../releases) page; in the app: menu → **Xexam v2.6**) |
+| Images | Three, on Docker Hub (public, no login needed): `docker.io/yuminspace/xexam-frontend`, `docker.io/yuminspace/xexam-backend` and `docker.io/yuminspace/xexam-ai-service`, with tags `latest` / `v2.6` / `sha-<commit>` (the `sha-` tags are for troubleshooting). Mirror: `ghcr.io/yumin-space/xexam-frontend`, `ghcr.io/yumin-space/xexam-backend` and `ghcr.io/yumin-space/xexam-ai-service` (private, same tags) |
 | CPU architecture | `linux/amd64`, `linux/arm64` (the right one is picked automatically under the same tag) |
 | Port | `8765` (bound to the local machine only by default) |
 | License | [MIT](LICENSE) |
@@ -100,7 +112,7 @@ This pulls the three images and starts **three containers**: `xexam-frontend` (N
 | Action | Command |
 |---|---|
 | Update to the latest version | `docker compose pull`, then `docker compose up -d` (read [Upgrading](#upgrading) first) |
-| Pin to a specific version | Change `:latest` to `:v2.3.1` for all three images in `docker-compose.yml`, then run `docker compose up -d` |
+| Pin to a specific version | Change `:latest` to `:v2.6` for all three images in `docker-compose.yml`, then run `docker compose up -d` |
 | Check status | `docker compose ps` (all three containers should be `healthy`) |
 | Stop / start again | `docker compose stop` / `docker compose start` |
 | View logs | `docker compose logs -f backend` and `docker compose logs -f ai-service` (administrators can also open **System log** in the menu; it shows the AI service's lines too) |

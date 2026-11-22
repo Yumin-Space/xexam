@@ -88,7 +88,7 @@ async fn bind_session(
 ) -> Result<Result<i64, Value>, AppError> {
     let found = super::auth::session_user_untouched(st, &sid).await?;
     Ok(match found {
-        Some(u) if u.id == id && !u.must_change_password => {
+        Some(u) if u.id == id && !u.setup_required() => {
             if u.ai_allowed || !needs_ai {
                 Ok(u.id)
             } else {

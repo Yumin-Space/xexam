@@ -4,7 +4,7 @@
    tinted block at the top of the list. Colours come only from the tokens in main.css, so the page follows the light and dark
    themes. PHONE = (max-width: 600px), (orientation: landscape) and (max-height: 500px), as in every stylesheet. */
 
-.page-users { max-width: var(--page-narrow, 880px); }
+.page-users { max-width: var(--page-narrow, 880px); margin-inline: auto; }
 
 /* Heading row: title with the count and the page's (i) tip, "Add user" on the right */
 .us-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin-bottom: 8px; }
@@ -230,6 +230,8 @@ dialog .us-banklist { max-height: none; overflow: visible; }
 /* The lock tip sits between two text lines: a 48 px tap area keeps a full 44 px at any sub-pixel position */
 @media (pointer: coarse), (max-width: 480px) {
   .us-tip .tip-btn::after { inset: -12px; }
+  /* the tap area must not be covered by the tag row or the lines next to it */
+  .us-tip { z-index: 1; }
 }
 
 /* v1.1 (GB-6, P2): an AI bank's row in the bank checklist carries the AI+题集 marker at its end */
@@ -271,7 +273,7 @@ dialog .us-banklist { max-height: none; overflow: visible; }
 .btn.us-signin-clear:focus-visible { outline: 2px solid var(--print); outline-offset: 2px; }
 .us-del-svg { width: 18px; height: 18px; flex: none; }
 .us-sort { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink3); margin-left: auto; }
-.us-sort select { min-height: 38px; padding: 6px 10px; font-size: 15px; max-width: 150px; }
+.us-sort select { min-height: 44px; padding: 6px 10px; font-size: 15px; max-width: 150px; }
 
 /* v1.4: the location source block inside the sign-in info panel (radio pair, optional external lookup form) */
 .us-geo { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line-soft); display: grid; gap: 8px; min-width: 0; }
@@ -327,3 +329,13 @@ dialog .us-banklist { max-height: none; overflow: visible; }
   .us-tabs { width: 100%; margin-bottom: 12px; }
   .us-tabs button { flex: 1 1 0; min-height: 44px; gap: 4px; padding-inline: 6px; }
 }
+
+/* v2.6: the display name under the login; muted, one line with an ellipsis ("not set yet" is quieter still) */
+.us-disp { margin: 0; min-width: 0; font-size: 13px; line-height: 1.5; color: var(--ink3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.us-disp.none { opacity: .8; }
+.us-row.off .us-disp { opacity: .8; }
+
+/* v2.6: the pager under the user list (the look of styles/paged-table.css); the row never wraps, so on a phone the arrows and
+   the current page stay on one line with the 44 px targets, and the "Page x / y" text sits under them */
+.us-pager .ptb-btns { flex-wrap: nowrap; }
+.us-pager { margin-bottom: 4px; }

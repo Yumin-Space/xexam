@@ -153,6 +153,7 @@ async fn usage_by_purpose_counts_the_kinds_in_a_fixed_order() {
             ("hint".to_string(), 2, 1),
             ("explain".to_string(), 1, 0),
             ("summary".to_string(), 1, 0),
+            ("assess".to_string(), 0, 0),
             ("generate".to_string(), 0, 0),
             ("import".to_string(), 0, 0),
             ("other".to_string(), 0, 0)

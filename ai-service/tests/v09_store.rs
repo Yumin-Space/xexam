@@ -1442,7 +1442,7 @@ fn usage(user: i64, status: &'static str, tin: i64, tout: i64) -> UsageRow {
 }
 
 #[test]
-fn usage_by_purpose_has_seven_rows_in_a_fixed_order() {
+fn usage_by_purpose_has_eight_rows_in_a_fixed_order() {
     let dir = tempfile::tempdir().expect("dir");
     let store = open(dir.path());
     let day = xexam_ai_service::util::local_date(NOW);
@@ -1453,7 +1453,7 @@ fn usage_by_purpose_has_seven_rows_in_a_fixed_order() {
         .expect("empty");
     assert_eq!(
         rows.iter().map(|r| r.0).collect::<Vec<_>>(),
-        ["chat", "hint", "explain", "summary", "generate", "import", "other"]
+        ["chat", "hint", "explain", "summary", "assess", "generate", "import", "other"]
     );
     assert!(rows.iter().all(|r| r.1.calls == 0));
     store
@@ -1502,7 +1502,7 @@ fn usage_by_purpose_has_seven_rows_in_a_fixed_order() {
     assert_eq!(get("summary").calls, 1);
     assert_eq!(
         rows.iter().map(|r| r.0).collect::<Vec<_>>(),
-        ["chat", "hint", "explain", "summary", "generate", "import", "other"]
+        ["chat", "hint", "explain", "summary", "assess", "generate", "import", "other"]
     );
     // the CHECK refuses an unknown purpose
     let bad =

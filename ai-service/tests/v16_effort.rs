@@ -82,12 +82,13 @@ fn use_family(e: &E, family: &str) {
 }
 
 /// One level per slot (OpenAI family), so a call that used the wrong slot's row shows.
-const ROWS: [(&str, &str); 7] = [
+const ROWS: [(&str, &str); 8] = [
     ("default", "max"),
     ("chat", "high"),
     ("hint", "low"),
     ("explain", "medium"),
     ("summary", "xhigh"),
+    ("assess", "low"),
     ("generate", "low"),
     ("import", "high"),
 ];
@@ -169,7 +170,7 @@ async fn effort_save_round_trip() {
     assert_eq!(v["connections"][0]["effortFamily"], "openai");
     // untouched rows: nothing stored, nothing is sent (Default)
     for slot in [
-        "default", "chat", "hint", "explain", "summary", "generate", "import",
+        "default", "chat", "hint", "explain", "summary", "assess", "generate", "import",
     ] {
         assert_eq!(v["slots"][slot]["effort"], Value::Null, "{slot}");
         assert_eq!(v["slots"][slot]["effortEffective"], Value::Null, "{slot}");
@@ -188,7 +189,7 @@ async fn effort_save_round_trip() {
     );
     let v = settings(&e.t, &e.admin).await;
     for slot in [
-        "default", "hint", "explain", "summary", "generate", "import",
+        "default", "hint", "explain", "summary", "assess", "generate", "import",
     ] {
         assert_eq!(v["slots"][slot]["effort"], Value::Null, "{slot}");
     }
@@ -1007,7 +1008,7 @@ fn new_file_has_model_slots_effort() {
             |r| r.get(0),
         )
         .expect("count");
-    assert_eq!(n, 7, "every seeded slot starts at the default");
+    assert_eq!(n, 8, "every seeded slot starts at the default");
 }
 
 #[test]
@@ -1039,7 +1040,7 @@ fn schema_8_file_without_effort_column_gains_it() {
             |r| r.get(0),
         )
         .expect("count");
-    assert_eq!((slots, nulls), (7, 7), "the slot rows read as the default");
+    assert_eq!((slots, nulls), (8, 8), "the slot rows read as the default");
 }
 
 #[test]

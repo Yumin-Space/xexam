@@ -116,7 +116,9 @@ export function renderAbout(): HTMLElement {
   const facts = h('dl', { class: 'ab-facts props' },
     h('dt', null, t('about.version')), h('dd', { class: 'num' }, S.info.version ? 'v' + S.info.version : '—'),
     S.info.arch ? [h('dt', null, t('about.server')), h('dd', { class: 'num' }, S.info.arch)] : null,
-    h('dt', null, t('about.license')), h('dd', null, t('about.licenseValue')));
+    h('dt', null, t('about.license')), h('dd', null, t('about.licenseValue')),
+    // The OFL text of the blackboard-mode font ships with the frontend (public/fonts/Xiaolai-OFL.txt)
+    h('dt', null, t('about.fontCredit')), h('dd', null, h('a', { href: '/fonts/Xiaolai-OFL.txt', target: '_blank', rel: 'noopener noreferrer' }, t('about.fontValue'))));
   return h('div', { class: 'page page-about' },
     pageHead(t('about.title')),
     h('section', { class: 'panel ab-intro' }, h('p', null, t('about.lead')), facts),

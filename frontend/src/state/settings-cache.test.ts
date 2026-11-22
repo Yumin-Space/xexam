@@ -35,7 +35,7 @@ beforeEach(() => {
 });
 
 test('nobody signed in on this browser yet: the browser language', () => {
-  assert.deepEqual(firstPaintSettings(), { theme: 'system', uiLang: 'ja', autoAdvance: false, questionLang: 'ja' });
+  assert.deepEqual(firstPaintSettings(), { theme: 'system', uiLang: 'ja', autoAdvance: false, questionLang: 'en' });
 });
 
 test('the cache of the user who signed in last paints the page', () => {

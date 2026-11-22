@@ -91,15 +91,6 @@ export default defineCatalog({
     'home.latest.empty': 'Nothing yet. When you finish an exam or a practice, its result appears here.',
 
     // Overview
-    'home.overview.title': 'Overview',
-    'home.overview.banks': 'Question banks',
-    'home.overview.sheets': 'Usable sheets',
-    'home.overview.questions': 'Active questions',
-    'home.overview.notebook': 'Notebook',
-    'home.overview.retired': '{n} retired questions are not counted.',
-    'home.overview.retired_one': '{n} retired question is not counted.',
-    'home.overview.review': 'Review wrong answers',
-    'home.overview.reviewN': 'Review wrong answers ({n})',
     // v1.1
     'home.limit.check': 'Time limit',
     'home.limit.unit': 'min',
@@ -186,14 +177,6 @@ export default defineCatalog({
     'home.latest.allShort': '学习记录',
     'home.latest.empty': '还没有记录。考完一场或练完一次，成绩会出现在这里。',
 
-    'home.overview.title': '概况',
-    'home.overview.banks': '题库',
-    'home.overview.sheets': '可用工作表',
-    'home.overview.questions': '可用题目',
-    'home.overview.notebook': '错题本',
-    'home.overview.retired': '另有 {n} 题已下架，未计入。',
-    'home.overview.review': '复习错题',
-    'home.overview.reviewN': '复习错题（{n}）',
     // v1.1
     'home.limit.check': '设置考试时间',
     'home.limit.unit': '分钟',
@@ -280,14 +263,6 @@ export default defineCatalog({
     'home.latest.allShort': '学習記録',
     'home.latest.empty': 'まだ記録がありません。試験や練習を終えると、結果がここに表示されます。',
 
-    'home.overview.title': '概要',
-    'home.overview.banks': '問題集',
-    'home.overview.sheets': '利用できるシート',
-    'home.overview.questions': '利用できる問題',
-    'home.overview.notebook': '間違いノート',
-    'home.overview.retired': 'ほかに出題停止中の問題が {n} 問あります（上の数には含みません）。',
-    'home.overview.review': '間違えた問題を復習',
-    'home.overview.reviewN': '間違えた問題を復習（{n}）',
     // v1.1
     'home.limit.check': '制限時間',
     'home.limit.unit': '分',

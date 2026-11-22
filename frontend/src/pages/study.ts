@@ -1,5 +1,6 @@
 // Home page: continue an unfinished exam or practice, choose banks / sheets / range / count and start an exam or (v0.6.5)
-// a practice, plus the latest result (exam or practice) and an overview of the question banks in a side column.
+// a practice, plus the latest result (exam or practice).
+import { pencilDoodle, rulerDoodle } from '../components/doodle.ts';
 import '../styles/home.css';
 import { bankName, modeName, pageHead, recordBankNames } from '../components/common.ts';
 import { aiSetBadge } from '../components/ai-badge.ts';
@@ -17,7 +18,7 @@ import { t, tn } from '../i18n/index.ts';
 import { routeHash, type Route } from '../router.ts';
 import { navigate, onRouteChange, render, resumeAndSubmit, resumeSession, startExam } from '../state/actions.ts';
 import { clearSaved, loadSaved } from '../state/session-storage.ts';
-import { S, bankIdsOf, canManageBanks, isAdmin, onClearUserData, pool, questionSheetKey, sheetKey, usableSheetKeys } from '../state/store.ts';
+import { S, bankIdsOf, canManageBanks, isAdmin, onClearUserData, pool, questionSheetKey, sheetKey } from '../state/store.ts';
 import type { AttemptKind, BankSummary, Mode } from '../types/api.ts';
 import { ask } from '../utils/dialog.ts';
 import { h, type Child } from '../utils/dom.ts';
@@ -315,10 +316,11 @@ function startPanel(nb: Notebook): HTMLElement {
   });
   // Start exam stays the main action; Start practice (v0.6.5) draws from the same scope, next to it. v0.7 (owner): Start exam
   // is solid green and Start practice solid orange (home.css)
-  const startBtn = h('button', { class: 'btn primary big home-go-exam', type: 'button', onclick: () => start('exam') }, t('home.start'));
+  // v2.6 preview: in blackboard mode a hand-drawn ruler / pencil sits before the words (the stylesheet hides them otherwise)
+  const startBtn = h('button', { class: 'btn primary big home-go-exam', type: 'button', onclick: () => start('exam') }, rulerDoodle(), h('span', null, t('home.start')));
   const practiceBtn = h('button', {
     class: 'btn big home-go-practice', type: 'button', title: t('home.startPractice.hint'), onclick: () => start('practice'),
-  }, t('home.startPractice'));
+  }, pencilDoodle(), h('span', null, t('home.startPractice')));
   const scopeText = h('p', { class: 'home-scope', role: 'status' });
 
   /** The number typed into the count field (null = empty / not a positive number) */
@@ -523,33 +525,6 @@ function latestCard(): HTMLElement {
   return sec;
 }
 
-/** HM-5: the wrong-notebook figure is a link to the wrong-answer review when there is something to review */
-function notebookFig(total: number): HTMLElement {
-  const a = link({ name: 'wrong' }, [h('b', { class: 'num' }, total), h('span', null, t('home.overview.notebook'))], 'home-fig ng');
-  a.setAttribute('aria-label', t('home.overview.reviewN', { n: total }));
-  return a;
-}
-
-function overviewCard(nb: Notebook): HTMLElement {
-  const questions = S.banks.reduce((n, b) => n + b.total, 0);
-  const retired = S.banks.reduce((n, b) => n + b.inactive, 0);
-  const fig = (value: number, label: string, cls = ''): HTMLElement =>
-    h('div', { class: 'home-fig' + cls }, h('b', { class: 'num' }, value), h('span', null, label));
-  return h('section', { class: 'panel home-overview', 'aria-labelledby': 'home-overview-h' },
-    h('h2', { id: 'home-overview-h' }, t('home.overview.title')),
-    h('div', { class: 'home-figs' },
-      fig(S.banks.length, t('home.overview.banks')),
-      fig(usableSheetKeys().length, t('home.overview.sheets')),
-      fig(questions, t('home.overview.questions')),
-      nb.total ? notebookFig(nb.total) : fig(nb.total, t('home.overview.notebook'))),
-    retired ? h('p', { class: 'dim home-note' }, tn('home.overview.retired', retired)) : null,
-    // With wrong answers to review, that is the stronger action; the banks page (administrators and bank managers) is also
-    // in the menu
-    nb.total || canManageBanks() ? h('div', { class: 'acts' },
-      nb.total ? link({ name: 'wrong' }, t('home.overview.review')) : null,
-      canManageBanks() ? link({ name: 'banks' }, t('nav.banks'), nb.total ? 'btn quiet' : 'btn') : null) : null);
-}
-
 export function renderStudy(): HTMLElement {
   // the start panel sets it again when it has its bar (no questions: no bar, toasts at the default height)
   liftToastAbove(null);
@@ -559,5 +534,6 @@ export function renderStudy(): HTMLElement {
     h('div', { class: 'home-grid' },
       // the generation progress card (GB-7) sits at the top of the main column, above the resume card
       h('div', { class: 'home-main' }, genCardHost('study'), resumeCard(), startPanel(nb)),
-      h('div', { class: 'home-side' }, latestCard(), overviewCard(nb))));
+      // v2.6 (owner): the overview card is gone (Home and the menu already lead to the banks and the wrong-answer review)
+      h('div', { class: 'home-side' }, latestCard())));
 }
