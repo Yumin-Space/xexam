@@ -390,11 +390,13 @@ def parse_args():
     p.add_argument('--only', help='comma-separated file names to retake, e.g. desktop-13-logs.png (the rest are skipped)')
     p.add_argument('--backend', default='docker', choices=['docker', 'cargo'], help='how to run the backend (default docker)')
     p.add_argument('--verbose', action='store_true', help='show the output of the builds')
+    p.add_argument('--theme', default='light', choices=['light', 'dark'], help='the theme of the images (default light; desktop-7-dark is always dark)')
     return p.parse_args()
 
 
 def main():
     args = parse_args()
+    scenes.THEME = args.theme
     langs = LANGS if args.lang == 'all' else [args.lang]
     only = [n.strip() for n in (args.only or '').split(',') if n.strip()]
     unknown = [n for n in only if n not in scenes.SCENES]

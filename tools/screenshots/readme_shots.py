@@ -2,15 +2,17 @@
 
 The documentation screenshots are full pages of different heights, which look uneven side by side in a README. This script
 crops each chosen one to the visible screen (desktop 16:10, phone 390 x 844) and scales it down, so every image of a row
-has the same shape, and draws a thin grey frame around it. Run it after retake.py; it writes docs/<lang>/screenshots/readme/*.png.
+has the same shape, and draws a thin grey frame around it. The README shows the dark theme, so the images are taken
+dark into a separate folder first; it writes docs/<lang>/screenshots/readme/*.png.
 
-    python tools/screenshots/readme_shots.py          # all three languages
-    python tools/screenshots/readme_shots.py en       # one language
+    python tools/screenshots/retake.py --theme dark --out /tmp/dark --only desktop-1-home.png,desktop-3-result.png,\n        desktop-14-ai-chat.png,iphone-1-home.png,iphone-2-quiz.png,iphone-6-result.png,iphone-7-ai-chat.png
+    python tools/screenshots/readme_shots.py --from /tmp/dark          # all three languages
+    python tools/screenshots/readme_shots.py --from /tmp/dark en       # one language
 
 Needs Pillow (pip install pillow).
 """
+import argparse
 import os
-import sys
 
 from PIL import Image, ImageDraw
 
@@ -41,20 +43,27 @@ def crop_top(im, ratio):
     return out
 
 
-def main(langs):
+def main(source, langs):
     for lang in langs:
-        src = os.path.join(ROOT, 'docs', lang, 'screenshots')
-        dst = os.path.join(src, 'readme')
+        src = os.path.join(source, lang)
+        dst = os.path.join(ROOT, 'docs', lang, 'screenshots', 'readme')
         os.makedirs(dst, exist_ok=True)
         for name, out, kind in SHOTS:
             tw, th = SIZE[kind]
             im = Image.open(os.path.join(src, name)).convert('RGB')
             im = crop_top(im, th / tw).resize((tw, th), Image.LANCZOS)
-            # a thin grey frame, so the light pages stand out from the white README background
-            ImageDraw.Draw(im).rectangle((0, 0, tw - 1, th - 1), outline=(208, 215, 222), width=2)
+            # a thin grey frame, so the dark pages keep an edge on GitHub's dark background too
+            ImageDraw.Draw(im).rectangle((0, 0, tw - 1, th - 1), outline=(88, 96, 105), width=2)
             im.save(os.path.join(dst, out), optimize=True)
         print('%s: %d images in %s' % (lang, len(SHOTS), os.path.relpath(dst, ROOT)))
 
 
 if __name__ == '__main__':
-    main(sys.argv[1:] or LANGS)
+    ap = argparse.ArgumentParser(description='Make the README gallery images from dark screenshots')
+    ap.add_argument('--from', dest='source', required=True, help='the --out folder of retake.py --theme dark (holds <lang>/)')
+    ap.add_argument('langs', nargs='*', help='en, ja and / or zh-CN (default all three)')
+    a = ap.parse_args()
+    bad = [x for x in a.langs if x not in LANGS]
+    if bad:
+        ap.error('unknown language: ' + ', '.join(bad))
+    main(a.source, a.langs or LANGS)

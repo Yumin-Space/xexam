@@ -215,6 +215,10 @@ PRELUDE = r"""
 })();
 """
 
+# The theme of every image except desktop-7-dark (always dark): 'light' for the documentation, 'dark' for the README
+# gallery (retake.py --theme dark --out ..., then readme_shots.py --from ...)
+THEME = 'light'
+
 JS_SETUP = r"""(async (lang, theme) => {
   const post = (u, b) => fetch(u, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(b || {})});
   const r = await post('/api/settings', {uiLang: lang, questionLang: lang, theme, autoAdvance: false});
@@ -1081,7 +1085,7 @@ def _as_sam(s, base, cookie, code, scene):
     s.cdp.call('Network.setCookie', name=seed.COOKIE, value=sam, url=base + '/', httpOnly=True, sameSite='Strict')
     try:
         s.nav()
-        s.js(JS_SETUP + "(%s, 'light')" % json.dumps(code))      # sam's own language setting follows the run
+        s.js(JS_SETUP + "(%s, %s)" % (json.dumps(code), json.dumps(THEME)))      # sam's own language setting follows the run
         scene()
     finally:
         s.cdp.call('Network.setCookie', name=seed.COOKIE, value=cookie, url=base + '/', httpOnly=True, sameSite='Strict')
@@ -1095,7 +1099,7 @@ def _desktop_scenes(s, base, cookie, code, upload, with_log):
     s.page('desktop-9-signin.png', cap=900)
     cdp.call('Network.setCookie', name=seed.COOKIE, value=cookie, url=base + '/', httpOnly=True, sameSite='Strict')
     s.nav()
-    print('  ' + s.js(JS_SETUP + "(%s, 'light')" % json.dumps(code)))
+    print('  ' + s.js(JS_SETUP + "(%s, %s)" % (json.dumps(code), json.dumps(THEME))))
     s.js(JS_CLEAR_SAVED)
     s.nav()
     if s.wanted('desktop-3-result.png') or s.wanted('desktop-18-ai-result.png'):
@@ -1225,7 +1229,7 @@ def _desktop_scenes(s, base, cookie, code, upload, with_log):
     s.nav()
     s.js(JS_RESUME)
     s.page('desktop-7-dark.png', cap=900, to_footer=True)
-    s.js(JS_SETUP + "(%s, 'light')" % json.dumps(code))
+    s.js(JS_SETUP + "(%s, %s)" % (json.dumps(code), json.dumps(THEME)))
     s.nav('#/about', settle=2.4)
     bottom, kept, hidden = s.js('(%s)(%d)' % (JS_ABOUT, 1500))
     print('  about: %d bullet(s) shown, %d hidden, card ends at %d px' % (kept, hidden, bottom))
@@ -1423,7 +1427,7 @@ def _check_practice_bar(s, base, cookie, code):
     try:
         cdp.call('Network.setCookie', name=seed.COOKIE, value=alex, url=base + '/', httpOnly=True, sameSite='Strict')
         s.nav()
-        s.js(JS_SETUP + "(%s, 'light')" % json.dumps(code))
+        s.js(JS_SETUP + "(%s, %s)" % (json.dumps(code), json.dumps(THEME)))
         for width in (390, 360):
             at(width, False, 'AI+ feature paused')
     finally:
