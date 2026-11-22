@@ -62,9 +62,9 @@ What is checked:
   9. Volumes (v0.8): the AI volume holds secret.key (mode 600, uid 10001) and xexam-ai.db; the main volume holds no AI
      secret and no AI table, and users has ai_enabled and uid; the ai_auth volume holds internal.token (mode 600)
   D. Database shape (v2.0, the last step): backend and ai-service are stopped and both volumes are read through a throw-away
-     python container (immutable=1, read-only): main meta.schema 11, foreign_key_check empty, the foreign keys of the nine
+     python container (immutable=1, read-only): main meta.schema 12, foreign_key_check empty, the foreign keys of the nine
      rebuilt tables (all ON DELETE NO ACTION) and of no other table, no stats / settings table, idx_users_uid /
-     idx_user_stats_question / idx_imports_bank present; AI meta.schema 11, no secrets table, settings and limits hold none
+     idx_users_display_name / idx_user_stats_question / idx_imports_bank present; AI meta.schema 11, no secrets table, settings and limits hold none
      of the retired columns (settings columns exactly id, enabled, retention_days, updated_at, updated_by, features_off)
 """
 import codecs
@@ -1839,14 +1839,14 @@ try:
                 'attempt_items': [['attempt_id', 'attempts', 'id', NA]], 'sessions': [['user_id', 'users', 'id', NA]],
                 'user_stats': [['user_id', 'users', 'id', NA]], 'user_settings': [['user_id', 'users', 'id', NA]],
                 'user_banks': [['bank_id', 'banks', 'id', NA], ['user_id', 'users', 'id', NA]]}
-    ok(main_db.get('schema') == '11', 'D. The main database is schema 11. Actual %r' % main_db)
+    ok(main_db.get('schema') == '12', 'D. The main database is schema 12 (v2.6). Actual %r' % main_db)
     ok(main_db.get('fk_check') == [], 'D. PRAGMA foreign_key_check on the main database is empty. Actual %r' % main_db.get('fk_check'))
     ok(main_db.get('fks') == want_fks,
        'D. The nine rebuilt tables have exactly the expected foreign keys (all ON DELETE NO ACTION) and no other table has one. Actual %r' % main_db.get('fks'))
     ok('stats' not in main_db.get('tables', ['stats']) and 'settings' not in main_db.get('tables', ['settings']),
        'D. The legacy tables stats and settings are gone from the main database. Actual %r' % main_db.get('tables'))
-    ok(all(i in main_db.get('indexes', []) for i in ('idx_users_uid', 'idx_user_stats_question', 'idx_imports_bank')),
-       'D. The indexes idx_users_uid, idx_user_stats_question and idx_imports_bank exist. Actual %r' % main_db.get('indexes'))
+    ok(all(i in main_db.get('indexes', []) for i in ('idx_users_uid', 'idx_users_display_name', 'idx_user_stats_question', 'idx_imports_bank')),
+       'D. The indexes idx_users_uid, idx_users_display_name, idx_user_stats_question and idx_imports_bank exist. Actual %r' % main_db.get('indexes'))
     ai_db = volume_report(PROJECT + '_ai_data', (
         "import json, sqlite3\n"
         "c = sqlite3.connect('file:/v/xexam-ai.db?immutable=1', uri=True)\n"
