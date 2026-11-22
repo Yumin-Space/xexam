@@ -45,7 +45,7 @@ export function aiPlusView(i: { role: Role; service: boolean; status: AiStatus }
 // ---------------------------------------------------------------- control state (view + row-level reasons)
 
 /** Reasons that grey one control although AI itself works (no 无法使用 tag) */
-export type ExtraReason = 'noDetail' | 'noWrong' | 'notSaved';
+export type ExtraReason = 'noDetail' | 'noWrong' | 'notSaved' | 'assessFew';
 export type ControlReason = AiPlusReason | ExtraReason | 'featureOff';
 
 /** The tooltip of a greyed control: a message key, plus for `aiplus.tip.na` the key of the badge reason text */
@@ -63,6 +63,7 @@ const WHY_KEY: Record<'loading' | ExtraReason, string> = {
   noDetail: 'aiplus.why.noDetail',
   noWrong: 'aiplus.why.noWrong',
   notSaved: 'aiplus.why.notSaved',
+  assessFew: 'aiplus.why.assessFew',
 };
 
 /** The own-viewer badge tip of a reason (BT-2): what a greyed control says is wrong */
@@ -101,6 +102,44 @@ export function recordSummaryExtra(r: { detail?: boolean; answered: number | nul
 /** The result page's reason: an exam result whose record was not saved cannot be explained */
 export function resultExtra(i: { mode: 'practice' | 'exam'; recordId: number | null }): ExtraReason | null {
   return i.mode === 'exam' && i.recordId == null ? 'notSaved' : null;
+}
+
+/** The fewest saved study records the AI study assessment needs (v2.5) */
+export const ASSESS_MIN_RECORDS = 3;
+
+/** The reason that greys the study assessment button: fewer than 3 saved records (`records` null = not loaded yet: no reason) */
+export function assessExtra(records: { length: number } | null | undefined): ExtraReason | null {
+  if (records == null) return null;
+  return records.length < ASSESS_MIN_RECORDS ? 'assessFew' : null;
+}
+
+/**
+ * The newest record's time as the server counts it for the study assessment: the largest `at` of all records (the backend
+ * takes MAX(at)), not the first row, which is the newest by id. `at` is `YYYY-MM-DD HH:MM`, so the text order is the time
+ * order. Null for no records.
+ */
+export function newestRecordAt(records: ReadonlyArray<{ at: string }> | null | undefined): string | null {
+  let best: string | null = null;
+  for (const r of records ?? []) if (best === null || r.at > best) best = r.at;
+  return best;
+}
+
+/** `YYYY-MM-DD` of `d` in the browser's local time */
+export function localDay(d: Date): string {
+  const p = (n: number): string => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+/**
+ * The date an assessment answer names when it is not from today, or null. The day comes from the answer's own `createdAt`
+ * (Unix seconds) in the browser's local time and is compared with the browser's today, so both sides use one clock (the
+ * server's `date` is its own calendar day, which can differ from the browser's); `date` is only the fallback for an answer
+ * without `createdAt`.
+ */
+export function assessDateTag(a: { createdAt: number | null; date?: string | null } | null | undefined, now: Date = new Date()): string | null {
+  if (!a) return null;
+  const day = a.createdAt != null ? localDay(new Date(a.createdAt * 1000)) : a.date ?? null;
+  return day && day !== localDay(now) ? day : null;
 }
 
 // ---------------------------------------------------------------- which controls a page has (spec 7.4, 7.5)
@@ -221,6 +260,9 @@ export function buildStudyAsk(i: StudyAskInput): StudyAskBody {
 /** The body of POST /api/ai/summary/ask */
 export const buildSummaryAsk = (recordId: number, ui: UiLangCode): { recordId: number; lang: ReplyLang } => ({ recordId, lang: replyLang(ui) });
 
+/** The body of POST /api/ai/assess/ask (v2.5): only the reply language */
+export const buildAssessAsk = (ui: UiLangCode): { lang: ReplyLang } => ({ lang: replyLang(ui) });
+
 // ---------------------------------------------------------------- records and chats
 
 /** `2026-11-11 21:58` -> `202611112158` (digits only: the server's query values are not percent-decoded); null when it does not match */
@@ -247,8 +289,9 @@ export function basedKey(s: Sample): BasedKey {
   return 'aiplus.sum.basedAll';
 }
 
-export type ChatKind = 'chat' | 'practice' | 'exam' | 'summary';
-export type ChatSuffixKey = 'aiplus.chat.suffix.practice' | 'aiplus.chat.suffix.exam' | 'aiplus.chat.suffix.summary';
+export type ChatKind = 'chat' | 'practice' | 'exam' | 'summary' | 'assess';
+export type ChatSuffixKey =
+  | 'aiplus.chat.suffix.practice' | 'aiplus.chat.suffix.exam' | 'aiplus.chat.suffix.summary' | 'aiplus.chat.suffix.assess';
 
 /** A chat's title as shown: the stored title plus, for study chats, a suffix key the page translates (`<time>-练习`) */
 export function chatDisplayTitle(c: { title: string; kind?: ChatKind | null }): { text: string; suffixKey: ChatSuffixKey | null } {
@@ -256,6 +299,7 @@ export function chatDisplayTitle(c: { title: string; kind?: ChatKind | null }): 
     case 'practice': return { text: c.title, suffixKey: 'aiplus.chat.suffix.practice' };
     case 'exam': return { text: c.title, suffixKey: 'aiplus.chat.suffix.exam' };
     case 'summary': return { text: c.title, suffixKey: 'aiplus.chat.suffix.summary' };
+    case 'assess': return { text: c.title, suffixKey: 'aiplus.chat.suffix.assess' };
     default: return { text: c.title, suffixKey: null };
   }
 }
@@ -272,7 +316,7 @@ export interface RunningInfo {
   chatId: number;
   messageId: number;
   chatKind: ChatKind;
-  kind: 'chat' | 'hint' | 'explain' | 'summary';
+  kind: 'chat' | 'hint' | 'explain' | 'summary' | 'assess';
   questionId: string | null;
   questionNo: number | null;
   source: StudySource | null;
@@ -282,6 +326,7 @@ export interface RunningInfo {
 export type BusyView =
   | { kind: 'study'; labelKey: 'aiplus.hint' | 'aiplus.explain' | 'aiplus.analyze'; n: number; noteKey: 'aiplus.busy.study'; canShow: boolean }
   | { kind: 'summary'; noteKey: 'aiplus.busy.summary'; canShow: false }
+  | { kind: 'assess'; noteKey: 'aiplus.busy.assess'; canShow: false }
   | { kind: 'chat'; noteKey: 'aiplus.busy.chat'; canShow: false }
   | { kind: 'other'; noteKey: 'aiplus.busy.other'; canShow: false };
 
@@ -292,6 +337,7 @@ export type BusyView =
 export function busyView(running: RunningInfo | null, sessionChatId: number | null): BusyView {
   if (!running) return { kind: 'other', noteKey: 'aiplus.busy.other', canShow: false };
   if (running.kind === 'summary') return { kind: 'summary', noteKey: 'aiplus.busy.summary', canShow: false };
+  if (running.kind === 'assess') return { kind: 'assess', noteKey: 'aiplus.busy.assess', canShow: false };
   if (running.kind === 'hint' || running.kind === 'explain') {
     const canShow = running.questionId != null && sessionChatId != null && running.chatId === sessionChatId
       && (running.chatKind === 'practice' || running.chatKind === 'exam');

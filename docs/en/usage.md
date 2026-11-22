@@ -10,7 +10,8 @@
 
 - [1. Your first exam](#1-your-first-exam)
 - [2. The layout](#2-the-layout)
-- [3. Home](#3-home)
+- [2.1 Home](#21-home)
+- [3. Exam & practice](#3-exam--practice)
 - [4. The exam page](#4-the-exam-page)
 - [5. Practice](#5-practice)
 - [6. The result page](#6-the-result-page)
@@ -31,7 +32,7 @@
 ## 1. Your first exam
 
 1. Open the menu (the three-line button at the top right) and choose **Question banks** (administrators and bank managers see it). Under **Import Excel**, leave **New bank** selected, click **Import Excel file** and pick your workbook (in the six-column layout, see [section 12](#12-excel-question-bank-format)). Check the preview, then click **Create the question bank**.
-2. Click **Start an exam** in the message that confirms the import (or choose **Home** in the menu). In the **Exam or practice** panel nothing is ticked at first *(v2.4)*: tick the banks or sheets you want (or click **Select all**), then click **Start exam** in the bar at the bottom of the panel (**Count** and **Shuffle** in the same bar set how many questions are asked and in which order). **Start practice** next to it starts a [practice](#5-practice) with the same questions instead.
+2. Click **Start an exam** in the message that confirms the import (or choose **Exam & practice** in the menu). In the **Exam or practice** panel nothing is ticked at first *(v2.4)*: tick the banks or sheets you want (or click **Select all**), then click **Start exam** in the bar at the bottom of the panel (**Count** and **Shuffle** in the same bar set how many questions are asked and in which order). **Start practice** next to it starts a [practice](#5-practice) with the same questions instead.
 3. Answer the questions, then click **Submit**. The result page shows the score and, for each wrong question, the correct answer and the explanation (**All (n)** shows every question).
 4. To see the exam again later: open the menu, choose **Study records** and click the time of the exam.
 
@@ -43,21 +44,37 @@ A new bank is visible to you and to the administrators, and to every user who ha
 
 - Every page except the exam has a slim header: the **Xexam** logo icon with the word at the top left on a tablet or desktop, only the word **Xexam** on a phone (it takes you to Home; with a very large text size on a narrow phone the word first gets smaller and is left out only as a last resort); at the top right a moon / sun button (moon = dark look, sun = light look; one press switches and saves the same choice as **Appearance** in Settings), your account, the **AI+** badge (orange when you can use AI now, dark when you have the AI+ feature but cannot use it right now; see [section 14](#14-users-and-sign-in)), and the three-line menu button. The bar sits in the same place on every page. On a phone the account shows only a person icon, the badge and a short admin tag (**Admin**); tapping it shows a tip with your name, role and AI+ state.
 - The menu shows only the pages of your role:
-  - **Home**, **Study records** and **Settings** for everyone;
+  - **Home**, **Exam & practice**, **Study records** and **Settings** for everyone;
   - **Question banks** for administrators and bank managers;
   - **AI Chat** for everyone who can use AI now, or who still has AI chats or memories to read (see [section 16](#16-ai-chat));
   - **User management**, **AI settings** and **System log** for administrators.
 - Under a divider follow the version entry (for example **Xexam v0.7.5**), which opens the [About page](#10-about-xexam), then your username with your role (**Administrator** or **User**, plus **Bank manager**) and **Sign out**.
 - The menu closes after a choice, a click outside it or the Escape key.
 - On wide screens the page content is centered and at most 1120 px wide.
-- **On a phone** (up to 719 px wide) the header hides while you scroll down and comes back when you scroll up. The bar at the bottom of a practice or exam, and on Home, stays on the screen.
+- **On a phone** (up to 719 px wide) the header hides while you scroll down and comes back when you scroll up. The bar at the bottom of a practice or exam, and on Exam & practice, stays on the screen.
 - **Icons**: the buttons that are only an icon (for example the arrows, the AI icons and the flag in a practice) have a name for screen readers; on a touch screen, press and hold one to see its label.
 - **The footer**: every page ends with a small centred line, **GitHub | Xexam 1.1** (the version of the running app). **GitHub** opens the project's repository and **Xexam 1.1** its releases, both in a new tab. The disclaimer about the question banks stays above it. On AI Chat the line is at the bottom of the sidebar (on a phone, of the drawer), never inside a conversation.
 - The exam and the practice are focused full-screen pages without the header.
 - Opening **Question banks**, **AI settings** or **System log** without the permission shows **Not allowed** with **Back to Home**; **User management** sends everyone but administrators to Home.
 - Everything that deletes asks first, in a dialog that says what goes and that it cannot be undone; its confirm button is solid red. **Delete** buttons are red, or turn red when you point at them.
 
-## 3. Home
+### 2.1 Home (the dashboard, v2.5)
+
+Home is the start page (the Xexam logo, **Back to Home** and signing in lead here). It is one calm column, and it does not start anything by itself: starting an exam or a practice is the job of [Exam & practice](#3-exam--practice).
+
+- **Greeting**: **Hello** and your name (for an e-mail user name, the part before the `@`), with the time of your last study record, or **Start with a practice round.** when you have none. A saved unfinished exam or practice shows its **Continue** / **Discard** card here, so a timed exam is not missed.
+- **Page tiles**: a big **Exam & practice** tile, and under it **Study records**, **AI Chat** (only when you may use it) and **Settings**. There are no tiles for question banks or the administrator pages; they stay in the menu.
+- **AI study assessment** (only with the **AI+ feature** and the summary feature): the amber button opens a window with advice for the next 7 days. It is written from numbers only, taken from your study records of the last 30 days: how many records, answers and correct ones, how many days you studied and the gaps between them, the time per question, your exam results and time limits, the weekdays and times of day, and the size of your wrong-answer notebook. It never sees the questions, banks, sheets or user names. It needs at least **3** saved study records; before that the button is greyed with the reason. Opening shows the saved assessment when it was made for your newest record and writes a new one otherwise; **Regenerate** writes another, and a saved one from an earlier day is marked **Assessed on** with its date. It uses the same switch, daily limits, pacing and thinking strength as the AI summary (section 7.1), and each assessment is saved in AI Chat as a chat named after its date with **AI study assessment**.
+- **Leaderboard**: the three users with the most correct answers, all time (answered and correct counts shown). Ties go to the user with fewer answers, then to the older account. Disabled users and users with no answer are not listed; administrators are. Below the three you see your own line when you rank lower, or a hint to finish a practice when you have no answers yet. Your own name is shown in full. Another user's name is shown in full too, except an e-mail address, which shows only a masked part (`a***e`) and never the domain.
+- **Most practised**: the three questions answered most often in the last 30 days by all users together, with their bank and sheet. Only questions of banks you may see are listed; unanswered exam items and retired questions do not count. Only question ids and counts leave the server: the page reads the question text from the banks it has already loaded.
+
+Both lists refresh every time you open Home. If one cannot be loaded, its panel says so with a **Retry** button.
+
+![Home (the dashboard) on a desktop](screenshots/desktop-1-home.png)
+
+The greeting, the unfinished exam, the big **Exam & practice** tile with **Study records**, **AI Chat** and **Settings** under it, the amber **AI study assessment** button, the leaderboard and the most practised questions.
+
+## 3. Exam & practice
 
 Before there is anything to practise, the **Exam or practice** panel shows a short note instead:
 
@@ -65,13 +82,13 @@ Before there is anything to practise, the **Exam or practice** panel shows a sho
 - a user who has not been given a question bank yet reads: “No question bank has been made available to you yet. Ask an administrator to give you access to one; it appears here as soon as they do.”
 - when the banks have no active questions (every question has been retired, for example because it came from an older Excel layout), an administrator is asked to update them with a six-column file; a bank manager reads that they can update their own banks with a six-column Excel file or import a new one, and ask an administrator to update the others, with **Go to Question banks**; any other user is asked to turn to an administrator.
 
-After that, Home has:
+After that, Exam & practice has:
 
 - **Unfinished exam** or **Unfinished practice**: a compact card at the top for what you left with **Save and exit**. It shows its title and the question you were on (for example **Question 4/12**), with **Continue** and **Discard**. Its hover tip names the question banks and says **Saved in this browser only**. Your other devices do not see it. **Continue** picks it up where you stopped; **Discard** throws it away. Starting something new while one is saved asks first.
 - **Exam or practice**:
   - In the top-right corner of the panel you choose where the questions come from: **All** (every question in the selected sheets) or **Wrong answers** (only the questions you still need to review). Each shows its number of questions. When the notebook has nothing to review in the selected sheets, **Wrong answers** cannot be chosen and one line under the title says why; while **Wrong answers** is chosen, that line says how a question leaves the notebook. On a phone the two buttons stay next to the title; in English and Japanese they show only their icon and number, in Chinese they keep their short words.
   - **Banks and sheets**: each bank is one card with its sheets as rows inside.
-    - **Select all** and **Clear** are on the right of the heading row. Since v2.4 nothing is ticked when Home opens, and a bank that appears later is not ticked either: tick what you want to use.
+    - **Select all** and **Clear** are on the right of the heading row. Since v2.4 nothing is ticked when Exam & practice opens, and a bank that appears later is not ticked either: tick what you want to use.
     - The bank's checkbox selects or clears all its sheets, and you can also tick single sheets. While only some are selected, the checkbox shows − and the card says, for example, **1 of 2 sheets selected** (also while the bank is folded).
     - The arrow button on the right of a bank's row folds or unfolds its sheets. With at most two banks they start unfolded, with more they start folded; your choice is kept until you reload the page.
     - The number of notebook questions of a bank is written on its row, for example **2 to review**.
@@ -80,13 +97,13 @@ After that, Home has:
 - **Latest result**: the score of your latest exam or practice with its **Exam** / **Practice** tag, **View details**, **AI summary** (only with the **AI+ feature**, [section 7.1](#71-ai-summary)) and **All study records**, in that order. The **AI summary** button has the same flat amber look as the other AI buttons (an amber icon button on a phone); when it cannot be used it is greyed like **AI generate**, with the tag **Unavailable**.
 - **Overview**: how many question banks, usable sheets, active questions and notebook questions you have, with **Review wrong answers** (when the notebook has questions) and, for administrators and bank managers, **Question banks**.
 
-![Home page on a desktop](screenshots/desktop-1-home.png)
+![Exam & practice on a desktop](screenshots/desktop-26-study.png)
 
 The unfinished exam as a compact banner; **All** and **Wrong answers** in the corner of **Exam or practice**; **Select all** and **Clear** on the row of **Banks and sheets**; the two demo banks as unfolded cards with their sheets; the bar with the green **Start exam**, the orange **Start practice**, the scope, **Count** and **Shuffle**; on the right, the latest result and the overview.
 
 ### 3.1 Exam time limit
 
-On **Home**, next to the number of questions and the shuffle option, tick the time-limit box and type the minutes, from 1 to 600. The limit applies to **exams only**: practice ignores it. The box and the number start empty and unticked each time Home opens; the number you typed stays while you remain on the page. Typing a number ticks the box, and unticking it ignores the number. If the box is ticked and the number is not a whole number from 1 to 600, the exam does not start and the field says why.
+On **Exam & practice**, next to the number of questions and the shuffle option, tick the time-limit box and type the minutes, from 1 to 600. The limit applies to **exams only**: practice ignores it. The box and the number start empty and unticked each time Exam & practice opens; the number you typed stays while you remain on the page. Typing a number ticks the box, and unticking it ignores the number. If the box is ticked and the number is not a whole number from 1 to 600, the exam does not start and the field says why.
 
 A timed exam shows the **time left** at the top of the page; an untimed exam and every practice show the time used, as before. **Save and exit**, closing the page or reloading it pauses the countdown, and the exam continues from the same second when you come back. When the time is up, the exam is submitted by itself, and its unanswered questions are **not completed**, exactly as with a submit by hand.
 
@@ -97,9 +114,9 @@ A timed exam shows the **time left** at the top of the page; an untimed exam and
 
 The screenshot in [section 1](#1-your-first-exam) shows it.
 
-- At the top: **Question 4 of 12** (for example), the time used, and **Save and exit**, which keeps your answers and the time used so you can continue later from Home in the same browser.
+- At the top: **Question 4 of 12** (for example), the time used, and **Save and exit**, which keeps your answers and the time used so you can continue later from Exam & practice in the same browser.
 - **In a narrow window or on a phone** (when the answer sheet is not shown beside the questions) the top row also shows **Done 3/12** and a green **Finish exam** button (in a practice, an orange **Finish practice** button), both inside the bar; the answer sheet then has no finish button of its own. On the narrowest phones the count reads **3/12**. The button always keeps its label; when the row is tight it switches to a short one (**Finish**) instead of hiding it.
-- **Time limit** (only when you set one on Home, see [section 3.1](#31-exam-time-limit)): the time left counts down at the top of the page instead of the time used, in a larger bold figure. A notice appears when 30 minutes are left (never for a limit of 30 minutes or less). Closing or reloading the page pauses the countdown. At zero the exam is submitted by itself.
+- **Time limit** (only when you set one on Exam & practice, see [section 3.1](#31-exam-time-limit)): the time left counts down at the top of the page instead of the time used, in a larger bold figure. A notice appears when 30 minutes are left (never for a limit of 30 minutes or less). Closing or reloading the page pauses the countdown. At zero the exam is submitted by itself.
 - **No right/wrong feedback and no score while you answer.**
 - **English** / **中文** / **日本語** switches the question text. Switching changes only the text: your answers, the option letters, the timer and the grading stay the same. The option buttons of hotspot questions switch too.
   - English is the base language of every question: it is always there. Chinese and Japanese are there when the workbook has them.
@@ -117,7 +134,7 @@ The screenshot in [section 1](#1-your-first-exam) shows it.
 
 ## 5. Practice
 
-A practice uses the same page as the exam, but checks every answer right away. Start it with **Start practice** on Home, next to **Start exam** and with the same banks, sheets, **Count** and **Shuffle**.
+A practice uses the same page as the exam, but checks every answer right away. Start it with **Start practice** on Exam & practice, next to **Start exam** and with the same banks, sheets, **Count** and **Shuffle**.
 
 - A **Practice** tag sits next to **Question 4 of 12**.
 - **The bar at the bottom** holds, in this order: **Previous** (‹), **Check answer**, **Next** (›), **AI hint** and **AI analysis** (only for users with the **AI+ feature**, see [section 5.1](#51-ai-hint-ai-analysis-and-the-ai-panel)) and **Revisit** (a flag). **Check answer** and **Next** are two separate buttons in fixed places on every question; neither turns into the other.
@@ -132,7 +149,7 @@ A practice uses the same page as the exam, but checks every answer right away. S
 - Auto-advance never applies in a practice: you move on with **Next**.
 - The answer sheet fills checked questions green (correct) or orange (wrong), and says, for example, **Checked 4 of 12 · 3 correct**.
 - **Finish practice** (below the answer sheet on a wide screen, in the top row in a narrow window or on a phone, and on the last question) asks only when some questions are not checked yet. Those count as not answered (wrong), even when an answer is chosen.
-- **Save and exit** works as in an exam; Home then shows **Unfinished practice** with how many questions are checked.
+- **Save and exit** works as in an exam; Exam & practice then shows **Unfinished practice** with how many questions are checked.
 - A finished practice opens the **Practice result** page, is saved in **Study records** as a **Practice** record, and counts in the wrong-answer notebook like an exam.
 
 ![The practice page after Check answer on a multiple-choice question answered wrongly: the Practice tag, the verdict, the chosen wrong option solid orange, the correct options solid green, the explanation and the memory aid](screenshots/desktop-11-practice.png)
@@ -183,7 +200,7 @@ The score, the number right and wrong, and a strip with one box per question (a 
 
 If questions were deleted (with their bank) while you took the exam, a note says so: the score and the saved record cover only the other questions.
 
-Buttons: **Retry wrong answers only**, **Take it again** (**Retake practice** after a practice), **View in study records** and **Back to home**. Retrying and retaking start the same kind as the result: an exam again as an exam, a practice as a practice.
+Buttons: **Retry wrong answers only**, **Take it again** (**Retake practice** after a practice), **View in study records** and **Back to Exam & practice**. Retrying and retaking start the same kind as the result: an exam again as an exam, a practice as a practice.
 
 ![Result page on a desktop](screenshots/desktop-3-result.png)
 
@@ -218,12 +235,12 @@ With the **AI+ feature**, every question card of a practice result and of an exa
 
 ### 7.1 AI summary
 
-With the **AI+ feature**, **Study records** has a new first column, **AI summary**, with one button per record (on a narrow window: in the record's card), and **Home** has the same button for the latest result, between **View details** and **All study records**. Both open the same window for the same record and show the same saved summary.
+With the **AI+ feature**, **Study records** has a new first column, **AI summary**, with one button per record (on a narrow window: in the record's card), and **Exam & practice** has the same button for the latest result, between **View details** and **All study records**. Both open the same window for the same record and show the same saved summary.
 
 - **What it does**: the model is given the questions of that record that you **answered wrong** (your answer, the correct answer, the question and the bank's explanation) and writes: your weak knowledge points, what to watch out for, how to approach such questions from now on, and a detailed but simple summary of those knowledge points. It does not go through the questions one by one.
 - **Which questions**: only questions answered wrong. Unanswered questions are not part of it. When the record has more wrong answers than the set number (40 by default, 10 to 70 in **AI safety**), that many are chosen at random, and a new random pick is made each time you press **Regenerate**. A line under the title says what the summary is based on, for example **Based on all 6 wrong answers.**, **Based on 40 of 80 wrong answers, chosen at random.** or, when some of the questions are gone (their bank was deleted or you lost access), **Based on 5 of 6 wrong answers (the others are no longer available).**
 - **The window**: a large window over most of the page below the title. At the top: **AI summary** at the left and **Regenerate** (**Stop** while it is being written) and a close button at the right. The text scrolls inside it while the page behind stays still. It closes with the close button, **Esc** or a click outside it. At the bottom are **Copy** and, at the right, the muted text **Saved in AI Chat**, which has the same tip as in [section 5.1](#51-ai-hint-ai-analysis-and-the-ai-panel) and names the summary's chat. Nothing in the window opens AI Chat. Pressing **AI summary** again shows the saved summary at once; **Regenerate** adds a new one and shows it; a new one that fails leaves the previous one in place. The summary is written in the **Settings** language.
-- **Greyed out**: for a record without wrong answers (**No questions were answered wrong this time (unanswered questions are not part of the AI summary).**) and for a record saved by an old version that kept no per-question details (**This record was saved by an older version without per-question details, so it cannot be summarised.**). If every wrong question has since disappeared, asking says that these wrong answers are no longer available. The same **Unavailable** states as in [section 5.1](#51-ai-hint-ai-analysis-and-the-ai-panel) apply when AI is paused or unavailable (on Home the tag sits beside the button).
+- **Greyed out**: for a record without wrong answers (**No questions were answered wrong this time (unanswered questions are not part of the AI summary).**) and for a record saved by an old version that kept no per-question details (**This record was saved by an older version without per-question details, so it cannot be summarised.**). If every wrong question has since disappeared, asking says that these wrong answers are no longer available. The same **Unavailable** states as in [section 5.1](#51-ai-hint-ai-analysis-and-the-ai-panel) apply when AI is paused or unavailable (on Exam & practice the tag sits beside the button).
 - **In AI Chat**: each record has one chat, `<record time>-AI summary`, where every summary of it is kept (in AI Chat a summary request shows only its label, for example **AI summary · 40 of 80 wrong answers**). Deleting the study record keeps that chat; it follows the normal chat rules. Only one answer is written at a time ([section 5.1](#51-ai-hint-ai-analysis-and-the-ai-panel)).
 - **Limits**: a summary counts toward the per-user AI request limits like every other answer ([section 17](#17-ai-settings)). A long summary can reach the answer length limit, which then cuts it and says so.
 
@@ -231,7 +248,7 @@ With the **AI+ feature**, **Study records** has a new first column, **AI summary
 
 ## 8. Wrong-answer notebook
 
-Questions you answer wrong, in an exam or in a practice, go into your wrong-answer notebook and leave it after you answer them correctly **2 times in a row** (in either). Use it from Home (**Wrong answers** in the top-right corner of **Exam or practice**), from **Study records** → **Review wrong answers** → **Practise**, or right after an exam with **Retry wrong answers only**. A retired question stays in your statistics but is not offered for review; it comes back if a later import of its bank restores it.
+Questions you answer wrong, in an exam or in a practice, go into your wrong-answer notebook and leave it after you answer them correctly **2 times in a row** (in either). Use it from Exam & practice (**Wrong answers** in the top-right corner of **Exam or practice**), from **Study records** → **Review wrong answers** → **Practise**, or right after an exam with **Retry wrong answers only**. A retired question stays in your statistics but is not offered for review; it comes back if a later import of its bank restores it.
 
 ## 9. Settings
 
@@ -268,7 +285,7 @@ Here administrators and bank managers import Excel workbooks. Users without the 
 - **Import Excel**: pick **New bank** or **Update a bank** (two small buttons next to the title; their tooltips explain them; for an update you choose the bank under **Bank to update**), then click **Import Excel file** or drop the file anywhere on the panel. The hint line says to upload the whole workbook in the six-column layout and ends in a link to the **Excel format guide**.
 - **The bank list**, one compact row per bank: its file, number of questions (with the retired ones, for example **5 questions (+2 retired)**) and sheets and last update, with **Update** and **Delete**. Its sheets are folded under the arrow on the right of the row. A bank whose questions are all retired because they came from an older Excel layout says so, and that an update with a six-column file brings it back into use.
   - An **administrator** sees **All question banks**, each with who imported it (**uploaded by sam**, **uploaded by you**), and may update or delete any of them.
-  - A **bank manager** sees **Your question banks**: only the banks they imported, which they may update or delete. Banks an administrator gave them to study are on Home.
+  - A **bank manager** sees **Your question banks**: only the banks they imported, which they may update or delete. Banks an administrator gave them to study are on Exam & practice.
 - **Import history**: one line per import, the latest 8 (an administrator sees all imports, a bank manager those of their own banks).
 - **Excel format and import guide**, folded until you open it, is the short version of [section 12](#12-excel-question-bank-format) and [section 13](#13-importing-question-banks). Its last part, **Use an outside AI to make the Excel file**, has numbered steps and a ready prompt with a **Copy** button ([section 13.10](#1310-making-the-excel-file-with-an-outside-ai)).
 
@@ -428,7 +445,7 @@ A delete cannot be undone; your own backup is the only way back (section 5 of [d
 Every bank and every sheet in the bank list has a checkbox. Ticking a bank ticks all its sheets; a bank with only some sheets ticked shows a mixed box. When something is ticked, a toolbar appears above the list:
 
 - **Delete** (in the selection bar) deletes the ticked banks and sheets after one dialog that lists what goes and asks whether their study records go too (the same choice as deleting a bank). A bank whose sheets are all ticked is deleted as a whole. A sheet is deleted on its own only while other sheets of the bank remain; an AI-generated bank has one sheet and is deleted as a whole.
-- **AI questions** starts an AI-generated bank from the ticked banks and sheets (section 13.9). It is flat amber with white text; when it cannot be used (nothing usable is ticked, an AI+ bank is ticked, the daily limit) it is a plain grey button, with no text under it: tap, hover or focus it to read the reason in a small tip box (Esc or a tap elsewhere closes it). A new AI bank is not ticked on Home by itself.
+- **AI questions** starts an AI-generated bank from the ticked banks and sheets (section 13.9). It is flat amber with white text; when it cannot be used (nothing usable is ticked, an AI+ bank is ticked, the daily limit) it is a plain grey button, with no text under it: tap, hover or focus it to read the reason in a small tip box (Esc or a tap elsewhere closes it). A new AI bank is not ticked on Exam & practice by itself.
 
 Each bank row shows its name in bold, a line of counts (for example **7 questions, 2 sheets**), an arrow that folds its sheets, and the AI+ badge of an AI-generated bank (section 13.9). On a phone the row's buttons (**Update** and **Delete**) sit on their own line under the name, the badge has its own line too, and long names wrap.
 
@@ -444,20 +461,20 @@ While the job runs, its card shows the progress and the figures in two aligned l
 
 ### 13.9 AI-generated question banks
 
-Who: users with the AI+ feature, the generation feature and bank management (administrators always qualify). There are three places to start one: **AI questions** in the toolbar of Bank management (for the ticked banks and sheets), **AI questions** on Home (for the ticked banks and sheets), and **AI wrong-answer drill** in the wrong-answer notebook mode of Home.
+Who: users with the AI+ feature, the generation feature and bank management (administrators always qualify). There are three places to start one: **AI questions** in the toolbar of Bank management (for the ticked banks and sheets), **AI questions** on Exam & practice (for the ticked banks and sheets), and **AI wrong-answer drill** in the wrong-answer notebook mode of Exam & practice.
 
 - **Minimum source**: 30 single- or multiple-choice questions in the ticked banks (hotspot questions do not count); in wrong-answer mode, 10 wrong single- or multiple-choice questions.
-- **AI banks are never a source**: as soon as the ticked banks and sheets contain an AI-generated bank, AI generation is greyed out (in both modes, on Home and in Bank management) until you untick it.
+- **AI banks are never a source**: as soon as the ticked banks and sheets contain an AI-generated bank, AI generation is greyed out (in both modes, on Exam & practice and in Bank management) until you untick it.
 - **Result**: a new bank with one sheet named **AI** and 20 valid questions (at least 10 since v2.4, see below), in Chinese, English and Japanese, each with its answer and explanation: 14 single and 6 multiple choice (never hotspot). A missing or invalid question is generated again (at most 5 tries per question). *(v2.4)* A question that still fails is left out and the job goes on: the bank is made with the questions that passed as long as at least half of them passed (for example 19 of 20), and the finished card says **19 of 20 questions** and how many were left out; with fewer than half, the job fails and saves nothing. Because the options are shuffled, an explanation that points at an option by its letter ("Option B", "A and B") is rewritten to the quoted text of that option instead of being refused, and labels such as "A." are removed when every option starts with its own letter in order.
-- **Name**: you type the name in the start dialog (Home and Bank management); a suggestion is filled in, for example `Kitchen basics_sample01_20261113101530` (source, the first 8 characters of your username and the start time).
+- **Name**: you type the name in the start dialog (Exam & practice and Bank management); a suggestion is filled in, for example `Kitchen basics_sample01_20261113101530` (source, the first 8 characters of your username and the start time).
 - **Quota**: 3 AI bank jobs per user per day, generation and file import together, reset at 0:00 of the server time. One job counts as 1, however many AI calls it needs. A job counts when it is done, or when it is cancelled after a call was sent. Failures and jobs cancelled before their first call do not count. Administrators are exempt. The per-user AI request limits (per minute, hour and day) do not apply to generation or import.
 - **Limits**: **Unlimited** is on by default for generation and for import (section 17.5): no call ceiling, no limit on the answer length per call and no deadline. Two safety stops always remain: provider errors in a row stop the job (after each one it waits 15 s, 30 s, then 60 s; errors that may pass by waiting, such as overloaded, rate limited, no connection or server error, stop it after 6 in a row, about four minutes; other errors such as timeout, key, quota, model not found or refused request after 3; *v2.4*), and you can always cancel. With **Unlimited** off, a generation makes at most 15 AI calls (an import 25; 8 to 40 in AI settings, the same for everyone, administrators included), each call keeps the length of section 17.5, and the job has 30 minutes. A failure says why, with the rejection counts by reason, and the same reason is written to the System log at ERROR level.
-- **Progress**: a progress card on Home and Bank management shows the questions made against the goal and one line of figures (calls and input / output tokens). You may leave the page; the card tells you when the job is done or has failed, and its corner button closes it. A finished bank appears on Home and in Bank management at once, even if you were on another page or in a hidden tab.
-- **Marker**: the AI+ badge with a word for where the bank came from: **AI+practice set** (ticked banks and sheets, Home or Bank management), **AI+wrong-answer set** (wrong-answer notebook mode) or **AI+imported set** (AI file import). It appears on the bank row, on the question cards of its questions and on every review card of them (result, record, wrong-answer review). Its tip names who generated it and when, and says that AI-generated answers may be wrong.
+- **Progress**: a progress card on Exam & practice and Bank management shows the questions made against the goal and one line of figures (calls and input / output tokens). You may leave the page; the card tells you when the job is done or has failed, and its corner button closes it. A finished bank appears on Exam & practice and in Bank management at once, even if you were on another page or in a hidden tab.
+- **Marker**: the AI+ badge with a word for where the bank came from: **AI+practice set** (ticked banks and sheets, Exam & practice or Bank management), **AI+wrong-answer set** (wrong-answer notebook mode) or **AI+imported set** (AI file import). It appears on the bank row, on the question cards of its questions and on every review card of them (result, record, wrong-answer review). Its tip names who generated it and when, and says that AI-generated answers may be wrong.
 - **Sharing**: an AI bank is shared like any new bank: users who may see every source bank get it when they have the option to include future banks. An administrator can remove an AI bank from a user in User management, like any other bank.
 
 
-![Home after an AI generation: the card saying the AI bank "Everyday mix" is ready with 20 questions, its token line and Practise it, and the new bank in the list with the AI+practice set badge](screenshots/desktop-25-ai-bank-home.png)
+![Exam & practice after an AI generation: the card saying the AI bank "Everyday mix" is ready with 20 questions, its token line and Practise it, and the new bank in the list with the AI+practice set badge](screenshots/desktop-25-ai-bank-home.png)
 
 ### 13.10 Making the Excel file with an outside AI
 
@@ -853,7 +870,7 @@ In **AI+ users**, each user row has five checkboxes: **Chat**, **Hint + analysis
 - **AI safety** tab: the request limits with the box **Administrators are not limited by the AI request caps** (ticked), the daily token budget (0 = off), the summary items, sharing of hints and analyses (on / off, days to keep, **Clear shared answers**), and the AI question and import limits (a generation up to 300 questions, an import up to 300 per file, default 100; the number of parts a big source may use).
 - **AI usage** tab: by model, with the shared answers and the daily budget.
 - **Shared hints and analyses** (everyone with AI+): a hint or analysis that someone already received is shown at once, with a short note that it is shared, without using any request. **Regenerate** asks again and replaces it for everyone.
-- **AI questions**: the card lists each question as it is written (tap one to see the options and the explanation), and while the job runs a placeholder bank **generating 8 / 20** shows on Home and in Bank management.
+- **AI questions**: the card lists each question as it is written (tap one to see the options and the explanation), and while the job runs a placeholder bank **generating 8 / 20** shows on Exam & practice and in Bank management.
 
 ### 17.9 Thinking strength per connection (v1.6, changed in v2.1)
 
@@ -890,7 +907,7 @@ On the **Connections and models** tab, every model row (default, chat, hint, ana
 - Open the service address in Safari on your iPhone (first follow section 4 of [deployment.md](deployment.md) so the phone can reach Xexam). It needs **iOS 15.4 or later**.
 - Tap the Share button → **Add to Home Screen**. After that it opens full-screen like a standalone app, with the Xexam icon: four dots and a light-blue bar on a navy square.
 - The three-line button at the top right opens the same small menu as on a computer.
-- On Home, **All** and **Wrong answers** stay next to the **Exam or practice** title (in English and Japanese with only their icon and number). The bar at the bottom of the screen has two rows: the scope, **Count** and **Shuffle** on the first; **Start exam** and **Start practice** (the same width) on the second.
+- On Exam & practice, **All** and **Wrong answers** stay next to the **Exam or practice** title (in English and Japanese with only their icon and number). The bar at the bottom of the screen has two rows: the scope, **Count** and **Shuffle** on the first; **Start exam** and **Start practice** (the same width) on the second.
 - On the exam and practice page, the bar stays at the bottom: **Previous**, **Next** and the flag for **Revisit** as icons. In a practice, **Check answer** and **Next** are two buttons side by side, in fixed places, and the AI icons sit on the same bar for AI+ users. The top row shows **Done x/n** and the green **Finish exam** (or orange **Finish practice**) button, always with its text; the answer sheet below the question has no finish button.
 - Study records are shown as compact cards; with the **AI+ feature** each card has its **AI summary** button.
 - With the **AI+ feature**, the AI+ panel sits under the question card. It is closed at first; **AI hint** or **AI analysis** in the bar opens it, and its chevron closes it. Its buttons keep fixed places, and a text in the panel says **Saved in AI Chat** when the answer is saved (a tap shows the name of the chat). Greyed-out controls (AI paused or unavailable) stay in place and a tap on one shows why it cannot be used. The **AI summary** opens a window over most of the page.
@@ -901,13 +918,13 @@ Screenshots on an iPhone (390 px wide):
 
 <table>
 <tr>
-<td width="25%"><img src="screenshots/iphone-1-home.png" alt="Home page on an iPhone"></td>
+<td width="25%"><img src="screenshots/iphone-9-study.png" alt="Exam & practice on an iPhone"></td>
 <td width="25%"><img src="screenshots/iphone-2-quiz.png" alt="Exam page on an iPhone"></td>
 <td width="25%"><img src="screenshots/iphone-3-menu.png" alt="The menu of an administrator open on an iPhone"></td>
 <td width="25%"><img src="screenshots/iphone-4-records.png" alt="Study records on an iPhone"></td>
 </tr>
 <tr>
-<td>Home: the scope, <b>Count</b> and <b>Shuffle</b>, with <b>Start exam</b> and <b>Start practice</b> below them, at the bottom of the screen.</td>
+<td>Exam & practice: the scope, <b>Count</b> and <b>Shuffle</b>, with <b>Start exam</b> and <b>Start practice</b> below them, at the bottom of the screen.</td>
 <td>Exam: <b>Previous</b>, <b>Next</b> and <b>Revisit</b> stay at the bottom.</td>
 <td>The menu of an administrator, opened from the three-line button.</td>
 <td>Study records: each record is a compact card.</td>

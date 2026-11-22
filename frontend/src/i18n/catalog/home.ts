@@ -3,7 +3,6 @@ import { defineCatalog } from '../define.ts';
 
 export default defineCatalog({
   en: {
-    'home.title': 'Home',
 
     // Labels of the small fact lists (unfinished exam, latest exam)
     'home.fact.banks': 'Question banks',
@@ -113,7 +112,6 @@ export default defineCatalog({
     'home.fact.unanswered': 'Not completed',
   },
   zh: {
-    'home.title': '主页',
 
     'home.fact.banks': '题库',
     'home.fact.mode': '出题方式',
@@ -208,7 +206,6 @@ export default defineCatalog({
     'home.fact.unanswered': '没有完成的题',
   },
   ja: {
-    'home.title': 'ホーム',
 
     'home.fact.banks': '問題集',
     'home.fact.mode': '出題モード',

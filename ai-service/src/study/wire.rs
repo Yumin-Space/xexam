@@ -6,6 +6,7 @@
 //! values are validated (kinds, languages, answer entries, key and time shapes). Anything else is
 //! [`WireError::Unreadable`]: the caller fails only its own request (the link state is never touched).
 use crate::prompt::Lang;
+use crate::study::assess::AssessBasis;
 use crate::study::model::{
     HotspotItem, KeyAnswer, OptionText, QKind, Solution, StudyQuestion, UserEntry,
 };
@@ -23,6 +24,8 @@ pub enum Refusal {
     NotAllowed,
     /// Missing, foreign or out-of-scope (one answer for all three)
     NotFound,
+    /// Fewer than 3 saved records (`/internal/ai/assess` only)
+    Few,
 }
 
 /// A data answer that is not a good answer.
@@ -85,6 +88,17 @@ pub struct RecordReply {
 pub struct InfoReply {
     pub ui_lang: Lang,
     pub record: RecordIdent,
+}
+
+/// A good `/internal/ai/assess` answer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AssessReply {
+    pub ui_lang: Lang,
+    /// The backend's local day, `YYYY-MM-DD`
+    pub today: String,
+    /// The newest record's time, `YYYY-MM-DD HH:MM`
+    pub latest_at: String,
+    pub basis: AssessBasis,
 }
 
 // —— raw shapes ——————————————————————————————————————————————————————————————————————————————————————————————————————
@@ -190,6 +204,16 @@ struct RawRecordAnswer {
     usable: i64,
     items: Vec<RawRecordItem>,
     budget_cut: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct RawAssessAnswer {
+    ok: bool,
+    ui_lang: String,
+    today: String,
+    latest_at: String,
+    basis: AssessBasis,
 }
 
 #[derive(Deserialize)]
@@ -444,6 +468,81 @@ pub fn parse_record(body: &[u8], max: usize) -> Res<RecordReply> {
     })
 }
 
+const ASSESS_REASONS: &[(&str, Refusal)] = &[
+    ("session", Refusal::Session),
+    ("notAllowed", Refusal::NotAllowed),
+    ("few", Refusal::Few),
+];
+
+/// Largest count a basis number may hold (a sanity bound, far above 500 records of 100 items).
+const BASIS_MAX: i64 = 10_000_000;
+
+fn count_ok(n: i64) -> bool {
+    (0..=BASIS_MAX).contains(&n)
+}
+
+/// `YYYY-MM-DD`.
+fn day_ok(s: &str) -> bool {
+    let b = s.as_bytes();
+    b.len() == 10
+        && b.iter().enumerate().all(|(i, c)| match i {
+            4 | 7 => *c == b'-',
+            _ => c.is_ascii_digit(),
+        })
+}
+
+fn basis_ok(b: &AssessBasis) -> bool {
+    let counts = [
+        b.records,
+        b.practice,
+        b.exams,
+        b.answered,
+        b.correct,
+        b.unanswered,
+        b.active_days,
+        b.days_since_last,
+        b.longest_gap_days,
+        b.timed_exams,
+        b.time_ups,
+        b.all_time.records,
+        b.all_time.seen,
+        b.all_time.answers,
+        b.all_time.correct,
+        b.all_time.notebook_open,
+        b.all_time.mastered,
+    ];
+    let optional = [b.avg_sec_per_item, b.median_minutes];
+    (1..=366).contains(&b.days)
+        && counts.iter().all(|n| count_ok(*n))
+        && optional.iter().flatten().all(|n| count_ok(*n))
+        && b.exam_avg_percent.is_none_or(|p| (0..=100).contains(&p))
+        && b.weekdays.len() == 7
+        && b.dayparts.len() == 4
+        && b.weeks.len() == 4
+        && b.weekdays.iter().chain(&b.dayparts).all(|n| count_ok(*n))
+        && b.weeks
+            .iter()
+            .all(|w| count_ok(w.answered) && count_ok(w.correct))
+        && b.modes.len() <= 8
+        && b.modes.iter().all(|(k, n)| {
+            (1..=16).contains(&k.len()) && k.bytes().all(|c| c.is_ascii_lowercase()) && count_ok(*n)
+        })
+}
+
+/// Parses a `/internal/ai/assess` answer: exact keys, bounded non-negative numbers, array lengths 7 / 4 / 4.
+pub fn parse_assess(body: &[u8]) -> Res<AssessReply> {
+    let raw: RawAssessAnswer = parse(envelope(body, ASSESS_REASONS)?)?;
+    if !raw.ok || !day_ok(&raw.today) || !at_ok(&raw.latest_at) || !basis_ok(&raw.basis) {
+        return bad();
+    }
+    Ok(AssessReply {
+        ui_lang: lang_of(&raw.ui_lang)?,
+        today: raw.today,
+        latest_at: raw.latest_at,
+        basis: raw.basis,
+    })
+}
+
 /// Parses a `/internal/ai/record-info` answer.
 pub fn parse_info(body: &[u8]) -> Res<InfoReply> {
     let raw: RawInfoAnswer = parse(envelope(body, INFO_REASONS)?)?;
@@ -642,5 +741,79 @@ mod tests {
         let i = parse_info(&bytes(&info)).expect("info");
         assert_eq!(i.record.id, 7);
         assert_eq!(i.ui_lang, Lang::Ja);
+    }
+
+    fn assess_ok() -> Value {
+        json!({"ok": true, "uiLang": "en", "today": "2026-11-22", "latestAt": "2026-11-22 09:10", "basis": {
+            "days": 30, "records": 12, "practice": 9, "exams": 3, "answered": 340, "correct": 251, "unanswered": 6,
+            "activeDays": 8, "daysSinceLast": 0, "longestGapDays": 6, "avgSecPerItem": 38, "medianMinutes": 14,
+            "examAvgPercent": 72, "timedExams": 2, "timeUps": 1,
+            "weekdays": [1, 2, 3, 0, 2, 3, 1], "dayparts": [0, 4, 5, 3],
+            "weeks": [{"answered": 1, "correct": 1}, {"answered": 2, "correct": 1},
+                      {"answered": 3, "correct": 2}, {"answered": 4, "correct": 3}],
+            "modes": {"all": 7, "wrong": 5},
+            "allTime": {"records": 20, "seen": 300, "answers": 900, "correct": 700, "notebookOpen": 14, "mastered": 120}}})
+    }
+
+    #[test]
+    fn assess_answer_is_parsed_strictly() {
+        let r = parse_assess(&bytes(&assess_ok())).expect("parsed");
+        assert_eq!(r.ui_lang, Lang::En);
+        assert_eq!(r.today, "2026-11-22");
+        assert_eq!(r.latest_at, "2026-11-22 09:10");
+        assert_eq!((r.basis.records, r.basis.answered), (12, 340));
+        assert_eq!(r.basis.weeks.len(), 4);
+        assert_eq!(r.basis.modes["wrong"], 5);
+        // no exams: null average
+        let mut v = assess_ok();
+        v["basis"]["examAvgPercent"] = Value::Null;
+        assert_eq!(
+            parse_assess(&bytes(&v)).expect("ok").basis.exam_avg_percent,
+            None
+        );
+        // refusals
+        for (reason, want) in [
+            ("few", Refusal::Few),
+            ("session", Refusal::Session),
+            ("notAllowed", Refusal::NotAllowed),
+        ] {
+            let b = bytes(&json!({"ok": false, "reason": reason}));
+            assert_eq!(parse_assess(&b), Err(WireError::Refused(want)));
+        }
+        let b = bytes(&json!({"ok": false, "reason": "notFound"}));
+        assert_eq!(parse_assess(&b), Err(WireError::Unreadable));
+    }
+
+    #[test]
+    fn assess_answer_rejects_every_bad_shape() {
+        let bad = |f: &dyn Fn(&mut Value)| {
+            let mut v = assess_ok();
+            f(&mut v);
+            assert_eq!(parse_assess(&bytes(&v)), Err(WireError::Unreadable), "{v}");
+        };
+        bad(&|v| v["extra"] = json!(1));
+        bad(&|v| v["basis"]["extra"] = json!(1));
+        bad(&|v| v["basis"]["allTime"]["extra"] = json!(1));
+        bad(&|v| {
+            v["basis"].as_object_mut().expect("o").remove("days");
+        });
+        bad(&|v| v["basis"]["answered"] = json!(-1));
+        bad(&|v| v["basis"]["answered"] = json!(10_000_001));
+        bad(&|v| v["basis"]["answered"] = json!("3"));
+        bad(&|v| v["basis"]["answered"] = json!(1.5));
+        bad(&|v| v["basis"]["days"] = json!(0));
+        bad(&|v| v["basis"]["examAvgPercent"] = json!(101));
+        bad(&|v| v["basis"]["weekdays"] = json!([1, 2, 3]));
+        bad(&|v| v["basis"]["dayparts"] = json!([1, 2, 3, 4, 5]));
+        bad(&|v| v["basis"]["weeks"] = json!([]));
+        bad(&|v| v["basis"]["weeks"][0]["extra"] = json!(1));
+        bad(&|v| v["basis"]["weekdays"][0] = json!(-2));
+        bad(&|v| v["basis"]["modes"] = json!({"Wrong": 1}));
+        bad(&|v| v["basis"]["modes"] = json!({"": 1}));
+        bad(&|v| v["basis"]["modes"] = json!({"abcdefghijklmnopq": 1}));
+        bad(&|v| v["basis"]["modes"] = json!({"all": -1}));
+        bad(&|v| v["today"] = json!("2026-11-2"));
+        bad(&|v| v["latestAt"] = json!("2026-11-22"));
+        bad(&|v| v["uiLang"] = json!("fr"));
     }
 }

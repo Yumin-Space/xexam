@@ -114,6 +114,8 @@ export const MINI = {
   list: [{ d: 'M6 4h7.5' }, { d: 'M6 8h7.5' }, { d: 'M6 12h7.5' }, { d: 'M2.5 4h.01' }, { d: 'M2.5 8h.01' }, { d: 'M2.5 12h.01' }],
   /** A house: Home */
   home: [{ d: 'M2.5 7.5 8 2.8l5.5 4.7' }, { d: 'M3.8 6.6v6.9h8.4V6.6' }, { d: 'M6.6 13.5V9.6h2.8v3.9' }],
+  /** v2.5, a clipboard with a tick: Exam & practice */
+  study: [{ d: 'M5.5 3.5H4v10h8v-10h-1.5' }, { d: 'M6 2.5h4v2H6z' }, { d: 'M6 9l1.5 1.5L10.5 7.5' }],
   /** A simple line-style GitHub mark (a cat head with a tail): the footer link */
   /** AI settings category tabs (v1.0, AS-9): AI+ function / AI+ users / AI usage / AI safety */
   plug: [{ d: 'M5.8 2v3' }, { d: 'M10.2 2v3' }, { d: 'M4 5h8v2.4A4 4 0 0 1 8 11.4a4 4 0 0 1-4-4Z' }, { d: 'M8 11.4V14' }],

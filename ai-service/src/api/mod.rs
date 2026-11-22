@@ -93,6 +93,8 @@ enum Route {
     StudySaved,
     SummaryAsk,
     SummarySaved,
+    AssessAsk,
+    AssessSaved,
     GeoGet,
     GeoTest,
     GeoSave,
@@ -197,6 +199,8 @@ const ROUTES: &[(&str, Option<Route>, Option<Route>)] = &[
     ("/api/ai/study/saved", Some(Route::StudySaved), None),
     ("/api/ai/summary/ask", None, Some(Route::SummaryAsk)),
     ("/api/ai/summary/saved", Some(Route::SummarySaved), None),
+    ("/api/ai/assess/ask", None, Some(Route::AssessAsk)),
+    ("/api/ai/assess/saved", Some(Route::AssessSaved), None),
     ("/api/ai/admin/geo", Some(Route::GeoGet), None),
     ("/api/ai/admin/geo/test", None, Some(Route::GeoTest)),
     ("/api/ai/admin/geo/save", None, Some(Route::GeoSave)),
@@ -563,6 +567,8 @@ async fn handle(app: AppState, req: Request) -> Answer {
         Route::StudySaved => study::saved(ctx).await,
         Route::SummaryAsk => study::summary_ask(ctx).await,
         Route::SummarySaved => study::summary_saved(ctx).await,
+        Route::AssessAsk => study::assess_ask(ctx).await,
+        Route::AssessSaved => study::assess_saved(ctx).await,
         Route::GeoGet => geo::get(ctx).await,
         Route::GeoTest => geo::test(ctx).await,
         Route::GeoSave => geo::save(ctx).await,
@@ -755,6 +761,15 @@ mod tests {
             let name = p.rsplit('/').next().unwrap_or("");
             assert_eq!(events, [format!("ai.geo.{name}").as_str()], "{p}");
         }
+    }
+
+    #[test]
+    fn the_v25_assess_routes_exist() {
+        let find = |p: &str| ROUTES.iter().find(|(q, _, _)| *q == p).expect("route");
+        let (_, get, post) = find("/api/ai/assess/ask");
+        assert!(get.is_none() && matches!(post, Some(Route::AssessAsk)));
+        let (_, get, post) = find("/api/ai/assess/saved");
+        assert!(post.is_none() && matches!(get, Some(Route::AssessSaved)));
     }
 
     #[test]

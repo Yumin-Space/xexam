@@ -1376,6 +1376,22 @@ try:
     pace(LEE)
     st, _, e = jreq('POST', '/api/ai/summary/ask', {'recordId': R_PRACTICE, 'lang': 'en'}, headers={'Cookie': LEE})
     ok(st == 404 and e.get('code') == 'ai.notFound', 'lee: the summary of sam\'s record id → 404 ai.notFound. Actual %d %r' % (st, e))
+    # v2.5: the study assessment of a user with no saved records → 409 ai.assessFew (the stub provider is never called)
+    pace(LEE)
+    st, _, e = jreq('POST', '/api/ai/assess/ask', {'lang': 'en'}, headers={'Cookie': LEE})
+    ok(st == 409 and e.get('code') == 'ai.assessFew', 'lee (AI+, no records): POST /api/ai/assess/ask → 409 ai.assessFew. Actual %d %r' % (st, e))
+    # v2.5: GET /api/dashboard: the exact key sets, and 401 without a session cookie
+    st, _, d = jreq('GET', '/api/dashboard', headers={'Cookie': LEE})
+    ok(st == 200 and sorted(d) == ['popular', 'ranking'] and sorted(d['ranking']) == ['me', 'top', 'users']
+       and sorted(d['ranking']['me']) == ['answered', 'correct', 'rank'] and sorted(d['popular']) == ['days', 'items', 'since']
+       and d['popular']['days'] == 30 and d['ranking']['me']['rank'] is None and d['ranking']['me']['answered'] == 0,
+       'lee: GET /api/dashboard has the exact key sets and an unranked me. Actual %d %r' % (st, d))
+    ok(all(sorted(r) == ['answered', 'correct', 'name', 'rank', 'self'] for r in d['ranking']['top'])
+       and all(sorted(i) == ['bankId', 'correct', 'questionId', 'times'] for i in d['popular']['items'])
+       and len(d['ranking']['top']) <= 3 and len(d['popular']['items']) <= 3 and '@' not in json.dumps(d),
+       'The dashboard rows have the exact keys, at most 3 each, and no "@". Actual %r' % d)
+    st, _, e = jreq('GET', '/api/dashboard', headers={'Cookie': ''})
+    ok(st == 401, 'GET /api/dashboard without a session cookie → 401. Actual %d %r' % (st, e))
     ka = study(hint_body(caps[0], 1), KIM)
     ok(ka.status == 403 and T(ka).get('code') == 'ai.notAllowed', 'kim (no AI+ feature): a study ask → 403 ai.notAllowed. Actual %r %r' % (ka.status, ka.raw[:120]))
     pace(KIM)

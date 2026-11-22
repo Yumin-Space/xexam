@@ -340,6 +340,8 @@ test('v0.9: a follow-up in a study chat keeps the kind (the start event names it
   const fresh = run(localSend(emptyChat(), 'hi'), { event: 'start', data: { ...start().data, chatKind: 'chat' } });
   assert.equal(fresh.kind, 'chat');
   assert.equal(startOf({ ...start().data, chatKind: 'summary' })?.chatKind, 'summary');
+  assert.equal(startOf({ ...start().data, chatKind: 'assess' })?.chatKind, 'assess');
+  assert.equal(startOf({ ...start().data, chatKind: 'bogus' })?.chatKind, null);
   assert.equal(startOf(start().data)?.chatKind, null);
 });
 

@@ -107,6 +107,7 @@ pub const ROUTES: &[Route] = &[
     route("GET", "/api/banks", Access::SignedIn),
     route("GET", "/api/banks/download", Access::BankDownloader),
     route("GET", "/api/progress", Access::SignedIn),
+    route("GET", "/api/dashboard", Access::SignedIn),
     route("GET", "/api/imports", Access::BankManager),
     route("GET", "/api/records", Access::SignedIn),
     route("GET", "/api/record", Access::SignedIn),

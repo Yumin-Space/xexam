@@ -116,7 +116,7 @@ function settle(r: Route): Route {
       afterOpen();
       return r;
     }
-    return { name: 'home' };
+    return { name: 'study' };
   }
   if (r.name === 'result' && !S.result) return { name: 'records' };
   return r;
@@ -725,7 +725,7 @@ export function resumeAndSubmit(): void {
 
 /** "Save and exit" on the quiz page */
 export function leaveQuiz(): void {
-  navigate({ name: 'home' });
+  navigate({ name: 'study' });
 }
 
 export function go(i: number): void {
@@ -1041,7 +1041,7 @@ export async function submit(opts: SubmitOptions = {}): Promise<void> {
         clearSaved();
         S.session = null;
         toast(errorText(e), 9000);
-        navigate({ name: 'home' });
+        navigate({ name: 'study' });
         refreshLibrary().then(render, () => {});
         return;
       }

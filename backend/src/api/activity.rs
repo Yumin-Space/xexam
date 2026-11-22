@@ -15,6 +15,7 @@ use serde_json::{json, Value};
 /// The pages `POST /api/activity/visit` accepts (the route names of the frontend; no ids, no bank names).
 pub const PAGES: &[&str] = &[
     "home",
+    "study",
     "banks",
     "users",
     "logs",
@@ -335,7 +336,7 @@ mod tests {
 
     #[test]
     fn pages_are_the_contract_list() {
-        assert_eq!(PAGES.len(), 13);
+        assert_eq!(PAGES.len(), 14);
         assert!(PAGES.contains(&"aiSettings") && PAGES.contains(&"quiz"));
         assert!(!PAGES.contains(&"login"));
     }

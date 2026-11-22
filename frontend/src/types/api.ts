@@ -725,8 +725,8 @@ export interface AiChatSummary {
   pickEffort?: string | null;
 }
 
-export type AiChatKind = 'chat' | 'practice' | 'exam' | 'summary';
-export type AiMessageKind = 'chat' | 'hint' | 'explain' | 'summary';
+export type AiChatKind = 'chat' | 'practice' | 'exam' | 'summary' | 'assess';
+export type AiMessageKind = 'chat' | 'hint' | 'explain' | 'summary' | 'assess';
 
 export type AiMessageStatus = 'streaming' | 'done' | 'stopped' | 'error';
 
@@ -986,7 +986,7 @@ export interface ActivityPage {
   facets?: { users: { id: number; username: string; deleted: boolean }[] };
   settings: ActivitySettings;
 }
-export type VisitPage = 'home' | 'banks' | 'users' | 'logs' | 'records' | 'record' | 'wrong' | 'settings' | 'about'
+export type VisitPage = 'home' | 'study' | 'banks' | 'users' | 'logs' | 'records' | 'record' | 'wrong' | 'settings' | 'about'
   | 'quiz' | 'result' | 'ai' | 'aiSettings';
 
 export type AiSendMode = 'send' | 'regenerate' | 'edit';

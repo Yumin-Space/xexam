@@ -208,8 +208,8 @@ AI 路由（`/api/ai/*`）由 ai-service 响应，它有自己的三个级别（
 | HSTS | **不设置**：TLS 在 Cloudflare 终止，源站说的是 HTTP |
 | CORS | 不发送任何 CORS 头（同源） |
 | 方法 | `GET` / `HEAD` / `POST`；其他方法由 Nginx 直接回答 403（`limit_except`），所以到不了后端；后端自己对它们回答 405 + `Allow` |
-| 限流 | Nginx，按客户端地址：`/api/` 每秒 30 个请求（突发 120）；`/api/upload` 每秒 1 个请求（突发 5）；`/api/ai/` 每秒 30 个请求（突发 120），开始生成 AI 回答（`/api/ai/send`、`/api/ai/retry`，从 v0.9 起还有 `/api/ai/study/ask` 和 `/api/ai/summary/ask`）另外还按会话限制，每分钟 20 个（突发 10），这四个一起计数；超过 → 由 Nginx 自己回答 429（不是 JSON，和登录锁定不同）。在隧道后面，所有用户都来自隧道的地址，共用这些限额：打开一个页面大约是十个请求，开着的系统日志页每秒读取两次，所以这些数字给几个用户留出了余地，同时仍然能拦住失控的脚本。页面会把被拒绝的读取再试两次，然后显示 **请求太频繁** |
-| 超时 | 请求头 15 秒，请求体 30 秒（防慢速攻击）；上游连接 5 秒，读取 90 秒；六个流式的 AI 路由（send、retry、regenerate、edit、study/ask、summary/ask）读取 600 秒，不缓冲（AI 服务每 15 秒发一条 keep-alive 注释），AI 设置的测试（`connections/save`、`connections/test`、`models/pick`、`models/test`、`enable` 这 5 个路由）100 秒；认证步骤 5 秒 |
+| 限流 | Nginx，按客户端地址：`/api/` 每秒 30 个请求（突发 120）；`/api/upload` 每秒 1 个请求（突发 5）；`/api/ai/` 每秒 30 个请求（突发 120），开始生成 AI 回答（`/api/ai/send`、`/api/ai/retry`，从 v0.9 起还有 `/api/ai/study/ask` 和 `/api/ai/summary/ask`，从 v2.5 起还有 `/api/ai/assess/ask`）另外还按会话限制，每分钟 20 个（突发 10），这些一起计数；超过 → 由 Nginx 自己回答 429（不是 JSON，和登录锁定不同）。在隧道后面，所有用户都来自隧道的地址，共用这些限额：打开一个页面大约是十个请求，开着的系统日志页每秒读取两次，所以这些数字给几个用户留出了余地，同时仍然能拦住失控的脚本。页面会把被拒绝的读取再试两次，然后显示 **请求太频繁** |
+| 超时 | 请求头 15 秒，请求体 30 秒（防慢速攻击）；上游连接 5 秒，读取 90 秒；七个流式的 AI 路由（send、retry、regenerate、edit、study/ask、summary/ask、assess/ask）读取 600 秒，不缓冲（AI 服务每 15 秒发一条 keep-alive 注释），AI 设置的测试（`connections/save`、`connections/test`、`models/pick`、`models/test`、`enable` 这 5 个路由）100 秒；认证步骤 5 秒 |
 | 隐藏文件 | `/.xxx` 一律 404；不列目录 |
 | 访问日志 | Nginx 的访问日志（`docker compose logs frontend`）用自己的格式，记录请求的路径（`$uri`），从不记录它的查询字符串，所以已保存回答的查询（`GET /api/ai/study/saved`、`GET /api/ai/summary/saved`）里的会话 key 和记录时间不会出现在里面。Nginx 的错误日志在请求失败时（例如后端宕机时）仍然会写出完整的请求行；Nginx 无法对它做脱敏，而这两个值只会在这些失败的情形里出现在其中 |
 | `Server` 头 | 后端不发送；Nginx 设了 `server_tokens off` |
@@ -291,7 +291,7 @@ AI 对话在自己的容器 `xexam-ai-service` 里运行，有自己的数据库
 ### 请求和上限
 
 - `/api/ai/*` 只接受 GET 和 POST（其他方法 Nginx 回答 403，ai-service 回答 405）。POST 需要 `Content-Type: application/json`；请求体在 Nginx 最多 256 KiB，在 ai-service 最多 128 KiB，必须是 JSON 对象，未知的键会被拒绝（400）。错误回答从不包含服务商的文字或解析器的提示。
-- Nginx：所有 AI 路由按客户端地址每秒 30 个请求，突发 120；开始生成回答（`send`、`retry`、`study/ask`、`summary/ask`）还按会话限制，每分钟 20 个，突发 10。ai-service 再加上 AI 设置里的安全上限（默认每个用户一个正在生成的回答、同时 16 个模型调用，以及对话数、消息数和记忆数），消息长度为 16000 字符（固定的，不是管理员设置）。
+- Nginx：所有 AI 路由按客户端地址每秒 30 个请求，突发 120；开始生成回答（`send`、`retry`、`study/ask`、`summary/ask`、`assess/ask`）还按会话限制，每分钟 20 个，突发 10。ai-service 再加上 AI 设置里的安全上限（默认每个用户一个正在生成的回答、同时 16 个模型调用，以及对话数、消息数和记忆数），消息长度为 16000 字符（固定的，不是管理员设置）。
 - **每用户请求上限（v1.0）。** 每一次用户发起的模型调用都计数：AI 对话的发送和重试、AI 提示、解析和总结、重新生成，以及每条记忆建议。默认值是**每分钟 5 次、每小时 20 次、每天 100 次**；每天的计数从服务器时区（`TZ`）的 0:00 重新开始。普通用户受限制；**从 v1.3 起管理员默认不受限制**（`callsAdminsExempt`；他们的调用仍计入用量，取消勾选后上限对他们也生效），免费模式也计数。管理员的连接测试和模型列表不计数。被拒绝的调用会说明触及了哪个上限，以及什么时候可以再次使用。这些上限用来防止一个账户失控地消耗服务商账单和服务器，它们不是用来防备管理员的界限（管理员可以在 AI 设置里修改），也不替代上面的 Nginx 限制。
 - **回答和记忆长度（v1.0 起，v1.1 改为 Token）。** 回答长度（`replyMaxTokens`，默认 3000 个 Token，范围 1 到 250000）原样作为输出上限发给服务商，超过它的回答会被截断并标记为已达到长度上限。记忆长度（`memoryTokens`，默认 1000 个估算的 Token）限制每条保存的记忆。两者都是 AI 设置里的安全上限，不是保密控制。
 

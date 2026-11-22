@@ -28,6 +28,7 @@
 | GET | `/api/bank` | ログイン | ユーザーが使えるすべての問題集の問題（有効な問題のみ） | いいえ |
 | GET | `/api/banks` | ログイン | ユーザーが使える問題集と、そのワークシートと問題数 *(v0.5)* | いいえ |
 | GET | `/api/progress` | ログイン | ユーザーの学習の進み具合 | いいえ |
+| GET | `/api/dashboard` | ログイン | ホームのダッシュボード：ランキングとよく練習された問題 *(v2.5)* | いいえ |
 | GET | `/api/records` | ログイン | 保存されているユーザーのすべての学習記録（新しい順） *(v0.5)* | いいえ |
 | GET | `/api/record?id=<int>` | ログイン | 1 件の学習記録と、その問題ごとの明細 *(v0.5)* | いいえ |
 | GET | `/api/settings` | ログイン | ユーザーの画面の設定 *(v0.5)* | いいえ |
@@ -285,6 +286,18 @@ v0.5 からは、どの問題にも最後にキーが 1 つ追加されます。
 - `ownerId` / `owner` *(v0.7)*：その問題集を新しい問題集としてインポートしたユーザーの id とユーザー名です（v0.7 より前の問題集は最初の管理者のものです）。両方が得られるのは管理者だけです。ほかのユーザーには、自分の問題集のときだけ `ownerId` が入り（それ以外は `null`）、`owner` は常に `null` なので、問題集の一覧からほかのアカウントの名前は分かりません。
 - `manageable` *(v0.7)*：このユーザーがその問題集を更新・削除できるかどうか（管理者：常に、問題集の管理権限を持つユーザー：自分の問題集、それ以外：なし）。
 
+### `GET /api/dashboard`
+*(v2.5)* ログイン済み、読み取り専用（何も書き込まず、ボディもありません）。ホームのダッシュボードの 2 つのブロックを、2 つの集計クエリで返します。
+
+```json
+{"ranking": {"users": 12, "top": [{"rank": 1, "name": "a***e", "answered": 320, "correct": 290, "self": false}], "me": {"rank": 2, "answered": 300, "correct": 251}}, "popular": {"days": 30, "since": "2026-10-23 14:05", "items": [{"questionId": "1a2b3c4d5e6f", "bankId": 3, "times": 42, "correct": 30}]}}
+```
+
+- **`ranking`**：問題ごとの統計（古い学習記録が整理されても残ります）から出す累計の数字で、解答が 1 件以上ある有効なユーザーが対象です。管理者を含み、すべての問題集が対象です。順序は `correct` の降順、次に `answered` の昇順、次にユーザー ID です。`users` は順位のついたユーザー数、`top` は 0〜3 件です。`me` は必ずあり、解答のないユーザーでは `rank` が `null`、2 つの数は 0 です。
+- **名前** はどの閲覧者に対しても（管理者にも）サーバーが決めます。閲覧者自身の行の `name` はユーザー名そのまま（`self: true`）、他のユーザーはユーザー名そのままですが、メールアドレスの場合は伏せたローカル部分だけを送ります（最初の文字、`***`、最後の文字。1〜2 文字なら最初の文字と `***`、空なら `***`）。ドメイン、ユーザー ID、メールアドレスは送られません。
+- **`popular`**：現在までの直近 `days`（30）日間で、`since` が開始です。閲覧者が見られる問題集の **有効な** 問題について、全ユーザーの解答済みの項目（`answer` が null で不正解の未解答項目は数えません）を `times` の降順、次に `correct`、次に問題集と位置の順に最大 3 件。送るのは `questionId`、`bankId` と回数だけで、問題文はページが `GET /api/bank` から取り出します。廃止された問題と孤立した問題は含まれません。
+- 先にパスワード変更が必要なユーザーは、他のルートと同じく 403 になります。この呼び出しは通常の操作履歴の行になります。
+
 ### `GET /api/progress`
 ログイン。`questions` は、ユーザーの問題ごとの累計統計（何回解いたか、何回正解したか、何回間違えたか、現在何回連続で正解しているか）で、見られる問題集のものに限られます。`history` は直近 60 件の学習記録です（データベースには 500 件が残ります。`GET /api/records` を参照）。各記録の最後には `kind` *(v0.7)* が付きます。`masterStreak` は間違いノートから外れるまでに必要な連続正解回数（2）です。
 
@@ -495,7 +508,8 @@ v0.5 からは、どの問題にも最後にキーが 1 つ追加されます。
 - *(v1.4)* **最終アクティブと所在地の取得元。** ユーザー応答にはトップレベルのキーが 2 つ増え、`geoSource`（`"cloudflare"` または `"api"`）と `aiServiceUp`（ai-service が接続されている間 `true`。AI+ のオン・オフに関係なし）があります。各ユーザーには `lastActiveIp`（文字列または `null`）と `lastActiveLocation`（`{"country", "region", "city"}`、不明なものは `null`。3 つとも不明のときだけ全体が `null`）があり、どちらも目が閉じている間は `null` です。さらに `lastActiveUa`（最後の操作のクリーニング済み User-Agent、最大 256 文字。目が閉じていても入る）があります。これらは `lastActiveAt` と同時に、最大で 1 分に 1 回、IP と場所は目が開いている間だけ（User-Agent は常に）書かれ、匿名のリクエストでは書かれません。`lastLoginLocation` と `lastActiveLocation` の `country` には 2 文字の国コードまたは国名が入り、`country` 自体が `null` のこともあります。場所は取得元が決めます。Cloudflare モードではリクエストの `X-Geo-*`、`api` モードではその IP について記憶した照会結果です（5.9 節）。**`POST /api/users/signin-info/clear`** は `users.last_active_ip` / `_country` / `_region` / `_city`（`last_active_ua` は除く）と照会の記憶とキューも消去します。目を閉じる（`POST /api/users/signin-info`）と待機中の照会は破棄されます。
 - **`POST /api/users/geo-source`** *(v1.4、管理者)* `{"source": "cloudflare"}` のみ（`"api"` や他のキーは 400。外部の取得元への切り替えは、テスト済みの設定だけを有効にできるよう ai-service の `/api/ai/admin/geo/enable` を通ります）。`system_settings` の `geo.source` を書き、キューを空にして、ユーザー応答を返します。操作履歴 `users.geoSource`、`{"source": "cloudflare"}`。
 - **`GET /api/activity`**（管理者）`?before=<id>&after=<id>&limit=<1..200>&user=<id|system|anon>&group=<auth|users|banks|study|settings|visit|ai|system>&action=<code>&result=<ok|fail>&facets=<0|1>` は `{"entries": [...], "next", "newest", "facets", "settings"}` を返します。新しい順、キーセットによるページ送りです。`GET /api/activity/settings` と `POST /api/activity/settings`（`{"retentionDays": 7..3650, "userVisits": bool}`、どちらのキーも省略可）。ログイン情報がオフの間、`ip` と `location` は `null` です。これらの読み込みはセッションを延ばさず、記録もされません。
-- **`POST /api/activity/visit`** `{"page": "home"}`（ログイン中。`page` は `home`、`banks`、`users`、`logs`、`records`、`record`、`wrong`、`settings`、`about`、`quiz`、`result`、`ai`、`aiSettings` のいずれか。それ以外は 400）：管理者は記録され、ユーザーは設定がオンのときだけ記録されます。ユーザーごとに 1 分あたり最大 30 回の書き込みです。
+- **`POST /api/activity/visit`** `{"page": "home"}`（ログイン中。`page` は `home`、`study`、`banks`、`users`、`logs`、`records`、`record`、`wrong`、`settings`、`about`、`quiz`、`result`、`ai`、`aiSettings` のいずれか。それ以外は 400）：管理者は記録され、ユーザーは設定がオンのときだけ記録されます。ユーザーごとに 1 分あたり最大 30 回の書き込みです。
+  - *(v2.5)* `study` は **試験・練習** ページです。`home` はダッシュボードを指すようになりました。以前 `home` で書かれた履歴の行は **ホーム** のままです。
 - **`POST /api/attempt`**：同じ保存の繰り返し（同じ `key`、`startedAt`、種類）は何も書かず、最初の応答に `"duplicate": true` を加えて返します。
 - **`GET /api/bank`**、**`GET /api/banks`**：応答に `ETag` と `Cache-Control: private, no-cache` が付き、一致する `If-None-Match` には本文なしの `304` を返します。
 
@@ -526,7 +540,7 @@ v0.5 からは、どの問題にも最後にキーが 1 つ追加されます。
   | 503 | `ai.backendDown` | バックエンドが応答できなかった、または AI との接続がオフ（内部トークンがない） |
   | 502 | `ai.unavailable` | ai-serviceがない、停止している、または応答しない |
   | 413 | `ai.badRequest` | ボディが 256 KiB を超えている |
-  | 429 | （JSON ではない） | Nginx のレート制限：アドレスごとに 1 秒あたり 30 リクエスト（バースト 120）。`send`、`retry`、`study/ask`、`summary/ask` はさらにセッションごとに 1 分あたり 20 回の開始（バースト 10） |
+  | 429 | （JSON ではない） | Nginx のレート制限：アドレスごとに 1 秒あたり 30 リクエスト（バースト 120）。`send`、`retry`、`study/ask`、`summary/ask`、`assess/ask` はさらにセッションごとに 1 分あたり 20 回の開始（バースト 10） |
 
   フロントエンドは、`/api/ai/*` での JSON のない 5xx をすべて `ai.unavailable` として扱います。
 - **POST** には `Content-Type: application/json` が必要です（`; charset=utf-8` は付けても構いません。そうでなければ 415 `ai.badRequest`）。ボディは JSON のオブジェクトで（空のボディは `{}` とみなします）、最大 128 KiB です（413 `ai.badRequest`）。**ルートが挙げていないキーは拒否します**（400 `ai.badRequest`）。型の違う値も同じです。id は、ボディでもクエリ文字列でも正の整数です。
@@ -561,6 +575,8 @@ v0.5 からは、どの問題にも最後にキーが 1 つ追加されます。
 | GET | `/api/ai/study/saved` | 署名あり | `?mode=&key=`、または `&record=&source=&question=&kind=`（5.5） | `StudyAnswer` の `Saved` *(v0.9)* |
 | POST | `/api/ai/summary/ask` | AI ユーザー | `{"recordId": <id>, "lang"?: "en" \| "zh" \| "ja"}` | **イベントストリーム**（5.3、5.5） *(v0.9)* |
 | GET | `/api/ai/summary/saved` | 署名あり | `?record=<id>&at=<12 桁>`（5.5） | `SummaryAnswer` の `Saved` *(v0.9)* |
+| POST | `/api/ai/assess/ask` | AI ユーザー | `{"lang"?: "en" \| "zh" \| "ja"}` | **イベントストリーム**（5.3、5.5）*(v2.5)* |
+| GET | `/api/ai/assess/saved` | 署名あり | `?at=<12 桁>`（5.5） | `SummaryAnswer` の `Saved`（`date` と `basis` つき）*(v2.5)* |
 | GET | `/api/ai/memories` | 署名あり | | `{"memories": [Memory], "limit": 30, "maxTokens": 200}`（現在の上限。`maxTokens` は `memoryTokens`、v1.3 から既定 200（推定トークン数）） |
 | POST | `/api/ai/memories/add` | AI ユーザー | `{"content": "…", "source"?: "manual" \| "chat"}` | `{"memory": Memory}` |
 | POST | `/api/ai/memories/update` | AI ユーザー | `{"id": <id>, "content": "…"}` | `{"memory": Memory}` |
@@ -751,6 +767,7 @@ data: {"status":"done","tokensIn":38,"tokensOut":112,"truncated":false}
 | `ai.notRetryable` | 409 | この回答は再試行できません。*(v0.9)* すべてのヒント、解説、まとめも同じです。テキストは変わりません。 |
 | `ai.hintLeak` | （ストリーム） | *(v0.9)* ヒントが答えを明かしてしまうため、伏せられました（テキスト `这个提示透露了答案，已被隐藏。请重新生成。`。`withdraw: true` 付き）。 |
 | `ai.noWrong` | 409 | *(v0.9)* その記録には、まとめる間違いがありません（テキスト `这次没有答错的题（未作答的题不计入 AI 总结）。`）。 |
+| `ai.assessFew` | 409 | *(v2.5)* 保存された学習記録が 3 件未満なので、評価するものがありません（テキスト `学习记录太少，至少需要 3 条。`）。 |
 | `ai.noUsable` | 409 | *(v0.9)* その記録の間違いはすべて、削除された、またはユーザーにもう見えない問題のものです（テキスト `这些答错的题已经不可用（题库已删除或没有访问权限），无法总结。`）。 |
 | `ai.noDetail` | 409 | *(v0.9)* その記録には問題ごとの明細がありません（v0.5 より前に保存されたもの。テキスト `这条记录没有逐题记录，无法总结。`）。 |
 | `ai.badRequest` | 400 / 405 / 413 / 415 | リクエストが無効です。 |
@@ -856,6 +873,14 @@ data: {"chatId":12,"chatTitle":"2026-11-12 09:30","userMessageId":41,"assistantM
 #### `GET /api/ai/summary/saved`
 
 クエリ `record=<正の id>&at=<12 桁>`：`at` は、記録の `at` から句読点を除いたものです（`2026-11-10 15:10` は `202611101510`）。それ以外は 400 `ai.badRequest`。応答：`SummaryAnswer` の `Saved`。`latest` / `lastGood` の規則は同じです。バックエンドは呼び出さず、AI+ 機能も不要です。チャットは記録の id**と**その時刻で探すので、削除されて同じ id の別の記録に置き換わったときも、取り違えません。
+
+#### `POST /api/ai/assess/ask` *(v2.5)*
+
+ホームのダッシュボードの学習状況の評価です。ボディは `{"lang"?: "en" | "zh" | "ja"}` だけです（それ以外は 400 `ai.badRequest`）。ai-service は呼び出したユーザー自身の数字をバックエンドから受け取り（`/internal/ai/assess`、6 章）、それをもとに助言を書きます。モデルに渡るのはその数字だけで、問題、問題集、シート、ユーザー名、メモリは渡りません。まとめ機能をそのまま使います。同じ AI+ の確認（`Summary`）、同じ 1 日の上限と送信間隔、同じ思考の強さ、Nginx の同じ開始制限です。拒否：`send` と同じもの、および 409 `ai.assessFew`（保存された記録が 3 件未満）。チャットは参照 `assess@<ローカルの日付>`、その日付のタイトルの `summary` チャットとして保存され、1 日に 1 つです（同じ日に再度尋ねるとそこに 1 組追加されます）。一覧では種類が `assess` と表示され、保存されるユーザーメッセージは機械用の行 `[AI assessment] latest=<YYYY-MM-DD HH:MM> 30d <records>r <answered>q` で、画面ではラベルに置き換えられます。`start` イベントは `chatKind` と `kind` が `assess`、`questionId`、`questionNo`、`source`、`recordId`、`sample` が `null`、`lang`、`basis`（`{"days", "records", "answered", "latestAt"}`）です。
+
+#### `GET /api/ai/assess/saved` *(v2.5)*
+
+クエリ `at=<12 桁>`：最新の学習記録の時刻です（`2026-11-22 09:10` は `202611220910`）。それ以外は 400 `ai.badRequest` です。AI+ 機能は要りません。ユーザーの最新の `assess@` チャットについて `SummaryAnswer` の `Saved` を返しますが、最新の記録がこの時刻の記録の集まりに対して書かれた評価のときだけです。そうでなければ `latest` と `lastGood` は `null` です。どちらの場合も、`date`（評価の日、または `null`）と `basis`（`start` イベントと同じ、または `null`）の 2 つのキーが付きます。管理者以外にはモデルのキーは渡りません（7 章）。
 
 #### 混雑の応答
 
@@ -1019,6 +1044,7 @@ Cloudflare の所在地ヘッダーに代わる任意の手段です（[deployme
 | POST | `/internal/ai/question` | ai-service *(v0.9)* | `X-Xexam-Internal-Token` |
 | POST | `/internal/ai/record` | ai-service *(v0.9)* | `X-Xexam-Internal-Token` |
 | POST | `/internal/ai/record-info` | ai-service *(v0.9)* | `X-Xexam-Internal-Token` |
+| POST | `/internal/ai/assess` | ai-service *(v2.5)* | `X-Xexam-Internal-Token` |
 
 `/internal/` の下のほかのパス、間違ったメソッド、トークンがないか間違っているトークンのルート（またはトークンが読み込まれていない間）は、知らないパスとまったく同じく 404 `text/plain` の `not found` を返すので、ルートの存在は明かされません。拒否したトークンは、多くても約 1 分に 1 回ログに出します。トークンのルートには `Content-Type: application/json` と JSON のオブジェクトが必要で、その応答はバックエンドのいつもの JSON です。
 
@@ -1035,6 +1061,7 @@ Cloudflare の所在地ヘッダーに代わる任意の手段です（[deployme
   - **`POST /internal/ai/question`** `{"sid", "id", "questionId": "<^[0-9A-Za-z_-]{1,64}$>", "qlang": "en"|"zh"|"ja", "elang": "en"|"zh"|"ja", "record"?: {"id": <n>, "kind": "practice"|"exam"} | null}` → `{"ok": true, "uiLang": "en"|"zh"|"ja", "question": StudyQuestion, "solution": Solution, "item": {"seq": n, "answer": [str|n|null] | null, "correct": bool} | null, "record": {"id", "at", "kind", "key": str|null, "startedAt": n|null} | null}`。`item` と `record` が入るのは `record` が送られたときだけです（問題がその記録に 2 回あるときは最小の `seq`。未回答なら `answer` は `null`。今の問題に合わない項目は `null`）。`uiLang` はユーザーの設定の言語です。無効化された問題も見つかります（`active: false`）。
   - **`POST /internal/ai/record`** `{"sid", "id", "recordId", "max": 1..70, "elang"}` → `{"ok": true, "uiLang", "record": {"id", "at", "kind", "mode", "total", "correct", "answered": n|null, "detail": bool, "key": str|null, "startedAt": n|null}, "wrong": n, "usable": n, "items": [{"seq": n, "answer": [str|n|null], "question": StudyQuestion, "solution": Solution}], "budgetCut": bool}`。`wrong` は間違えた項目の数、`usable` はそのうち問題がまだ存在して見られるものの数です。`items` には、その usable な項目が最大 `max` 個、重複なしでランダムに選ばれ、`seq` の順に入ります。1 問のルートより短い上限で、合わせて最大 120 000 文字の文章です（`budgetCut` は、それで何かが切られたかどうか）。明細のない記録は、`detail: false`、`wrong: 0`、`usable: 0`、項目なしになります。
   - **`POST /internal/ai/record-info`** `{"sid", "id", "recordId"}` → `{"ok": true, "uiLang", "record": {"id", "at", "kind", "key": str|null, "startedAt": n|null}}`、または `reason` が `session` / `notFound`。
+  - **`POST /internal/ai/assess`** *(v2.5)* `{"sid", "id"}` だけ → {"ok": true, "uiLang", "today": "YYYY-MM-DD", "latestAt": "YYYY-MM-DD HH:MM", "basis": {"days": 30, "records", "practice", "exams", "answered", "correct", "unanswered", "activeDays", "daysSinceLast", "longestGapDays", "avgSecPerItem", "medianMinutes", "examAvgPercent": n|null, "timedExams", "timeUps", "weekdays": [7 counts, Mon..Sun], "dayparts": [4 counts: 0-5, 6-11, 12-17, 18-23 h], "weeks": [4 x {"answered", "correct"}, oldest first], "modes": {"<mode>": n}, "allTime": {"records", "seen", "answers", "correct", "notebookOpen", "mastered"}}}。呼び出したユーザー自身の直近 30 日間（29 日前の 0 時以降の `attempts.at`）の学習記録の射影です。`unanswered` は未解答の規則（`answer` が null で不正解）に従い、`allTime` は保存された記録（最大 500）と、問題ごとの統計から見た問題数、解答数、正解数、間違いノートの問題（`wrong > 0` でストリークが 2 未満）、習得済みの問題（ストリーク 2 以上）を数えます。保存された記録が 3 件未満なら `{"ok": false, "reason": "few"}` です。セッションの拒否は上と同じです。**送るもの**：件数と平均だけ。**読まない・送らないもの**：記録ごとのシート一覧、問題集、問題 ID と問題文、ユーザー名。
   - `StudyQuestion` は `{"id": str, "kind": "single"|"multi"|"hotspot", "lang": "en"|"zh"|"ja", "stem": str, "options": [{"key": "A".."H", "text": str}], "items": [{"text": str, "choices": [str]}], "active": bool, "cut": bool}` です（`options` は単一選択と複数選択、`items` はホットスポットの問題用。`lang` は文章が実際に書かれている言語で、問題に `qlang` への翻訳がないときは基準の言語です。`cut` は、文章または数が上限で切られたことを示します）。正解や解説は決して含みません。`Solution` は `{"answer": [str] | [n], "explanation": str, "mnemonic": str, "note": str, "explainLang": "en"|"zh"|"ja"|"", "keyTexts": [str]}` です：正解（文字、またはホットスポットの項目ごとに選んだ 1 つの添字）、希望の言語の解説（文章があるとき。なければ、ある別の言語のもので、`explainLang` がその言語を示します。言語ごとの解説がない問題では `""`）、そして `keyTexts` は、その問題がある言語すべてでの正しい選択肢の文章です。record のルートでは、`mnemonic` と `note` は `""`、`keyTexts` は `[]` です。どの文章も、最後の `…` を含めた上限で切られます。
 
 ### v1.3 の内部ルート *(v1.3)*

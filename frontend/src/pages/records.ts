@@ -345,7 +345,7 @@ function renderList(): HTMLElement {
       h('section', { class: 'panel rec-empty' },
         h('h2', { tabindex: '-1' }, t('records.empty.title')),
         h('p', { class: 'empty' }, t('records.empty.body')),
-        h('div', { class: 'acts' }, h('button', { class: 'btn primary', type: 'button', onclick: () => navigate({ name: 'home' }) }, t('records.empty.start')))),
+        h('div', { class: 'acts' }, h('button', { class: 'btn primary', type: 'button', onclick: () => navigate({ name: 'study' }) }, t('records.empty.start')))),
       retention);
     restoreFocusAfterDelete(page);
     return page;
@@ -743,7 +743,7 @@ function renderWrong(): HTMLElement {
       h('h2', null, t('records.wrong.empty.title')),
       h('p', { class: 'empty' }, t('records.wrong.empty.body')),
       h('p', { class: 'dim' }, tn('records.wrong.intro', ms)),
-      h('div', { class: 'acts' }, h('button', { class: 'btn primary', type: 'button', onclick: () => navigate({ name: 'home' }) }, t('records.empty.start')))));
+      h('div', { class: 'acts' }, h('button', { class: 'btn primary', type: 'button', onclick: () => navigate({ name: 'study' }) }, t('records.empty.start')))));
     return page;
   }
 

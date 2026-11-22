@@ -127,7 +127,7 @@ const obj = (v: unknown): Record<string, unknown> => (typeof v === 'object' && v
 const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 const str = (v: unknown): string => (typeof v === 'string' ? v : '');
 
-const KINDS: readonly string[] = ['chat', 'practice', 'exam', 'summary'];
+const KINDS: readonly string[] = ['chat', 'practice', 'exam', 'summary', 'assess'];
 const idList = (v: unknown): number[] | undefined => {
   if (!Array.isArray(v)) return undefined;
   const ids = v.filter((x): x is number => typeof x === 'number' && Number.isFinite(x));

@@ -4,6 +4,7 @@
 
 > This document covers every upgrade path, newest first:
 >
+> - **v2.4 → v2.5** (section 000000000000): nothing to do besides `docker compose pull` and `docker compose up -d`. No database change (main schema 11, AI schema 11), no new variable and no `docker-compose.yml` edit; Home becomes a dashboard and the old Home is the page Exam & practice. Rolling back to v2.4 needs no restore.
 > - **v2.3 → v2.3.1** (section 00000000000): nothing to do besides `docker compose pull` and `docker compose up -d`. The AI service's container is renamed from `ai-service` to `xexam-ai-service` (the Compose service keeps its name); no variable, no `docker-compose.yml` edit and no database change. Rolling back to v2.3 needs no restore.
 > - **v2.2 → v2.3** (section 0000000000): nothing to do. A change to the screens only (AI Chat layout and the top bar): no `docker-compose.yml` change, no new variable, and neither database changes. Rolling back to v2.2 needs no restore.
 > - **v2.1 → v2.2** (section 000000000): no `docker-compose.yml` change is required and no new variable (the compose files only show the internal ports). The AI database stays at schema 11; a one-time step moves the pacing default to 13 / 230 000 after the copy `backups/xexam-ai-schema11-<date-time>.db`. Rolling back to v2.1 needs no restore.
@@ -28,6 +29,28 @@
 > **Going straight to v1.0 from an older version** applies every step of the sections below in one go with the current images: one backup named after the schema the database had, then the migration to the current schema (6 for the main database, 4 for the AI database). The sections below are written for the version they lead to, so where one says schema 5, v1.0 ends at schema 6, the log says `Upgraded the database to schema 6`, `/api/info` shows `1.0` and ai-service creates its database at schema 4.
 >
 > **Every upgrade from v0.6 or older retires all your questions.** Since v0.7 only the six-column Excel layout can be imported, and every start retires the questions that were imported from the three- and four-column layouts of earlier versions; every question of v0.6 and older is in one of those. The banks, the study records and the statistics stay. Prepare a six-column version of each workbook before you upgrade (section 12 of [usage.md](usage.md)), and update each bank with it afterwards (section 2.4).
+
+## 000000000000. Upgrading from v2.4 to v2.5
+
+This section is numbered 000000000000 because it is the newest one. The older sections keep their numbers.
+
+### 000000000000.1 What changes
+
+- **Nothing in the data or the servers.** Neither database changes (the main database stays at schema 11, the AI database at schema 11), there is no new variable, and `docker-compose.yml` needs no edit. The new routes are read-only or reuse the existing AI tables: `GET /api/dashboard`, `POST /internal/ai/assess`, `POST /api/ai/assess/ask` and `GET /api/ai/assess/saved`. An AI study assessment is stored as a `summary` chat with the reference `assess@<date>`, which v2.4 simply shows as a summary chat.
+- **Behaviour you will notice** (section 2.1 and section 3 of [usage.md](usage.md)): Home is a dashboard with a greeting, page tiles, the leaderboard, the most practised questions and, for AI+ users, the AI study assessment; the old Home (banks, sheets, **Start exam**, **Start practice**) is the page **Exam & practice**, second in the menu, at `#/study`. A bookmark of `#/` now opens the dashboard.
+- **Nginx**: the frontend image's configuration also streams `/api/ai/assess/ask` without buffering. If you replaced the Nginx configuration of the image with your own, add `assess/ask` to the streamed AI routes (the regular expression that lists `send`, `retry`, `regenerate`, `edit`, `study/ask` and `summary/ask`).
+
+### 000000000000.2 Upgrade
+
+`docker compose pull`, then `docker compose up -d`. The data volumes stay as they are.
+
+### 000000000000.3 Check
+
+The app menu shows **Xexam v2.5** and lists **Home** and **Exam & practice** as its first two entries; Home shows the leaderboard.
+
+### 000000000000.4 Going back to v2.4
+
+Change `:latest` to `:v2.4` for the three images and run `docker compose up -d`. No restore is needed: nothing in the data changed, and the saved assessment chats show as ordinary summary chats.
 
 ## 00000000000. Upgrading from v2.3 to v2.3.1
 

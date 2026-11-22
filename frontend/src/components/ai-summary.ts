@@ -6,14 +6,15 @@
 // the record detail page.
 //   · installAiSummary(deps)   once, from main.ts: hashchange closes it, the sign-out hook forgets everything;
 //   · openAiSummary(args)      from the records table buttons and Home's button;
+//   · openAiAssess(args)       v2.5: the same window for the AI study assessment (dashboard button); runner key `assess:<digits>`;
 //   · closeAiSummary(), dropAiSummary(recordId, at) (a record was deleted: its cache entry goes, an open window stays),
 //     clearAiSummaryData().
-import { t } from '../i18n/index.ts';
-import { emptyEntry, entryView, isNothingToSummarise, summaryKey, type EntryView } from '../domain/ai-study.ts';
+import { t, type MsgKey } from '../i18n/index.ts';
+import { assessKey, emptyEntry, entryView, isNothingToSummarise, summaryKey, type EntryView } from '../domain/ai-study.ts';
 import { createRunner, type Runner } from '../domain/ai-run.ts';
-import { atDigits, basedKey, chatNameOf, replyLang } from '../domain/ai-plus.ts';
+import { assessDateTag, atDigits, basedKey, chatNameOf, replyLang } from '../domain/ai-plus.ts';
 import { savedInChat } from '../domain/ai-panel.ts';
-import { summarySpec } from '../domain/ai-spec.ts';
+import { assessSpec, summarySpec } from '../domain/ai-spec.ts';
 import { backdropCloses, focusTitleOnOpen, overlayTop, pickFocusTarget } from '../domain/ai-overlay.ts';
 import '../styles/ai-md.css';
 import '../styles/ai-summary.css';
@@ -27,13 +28,28 @@ import { miniIcon, type MiniIcon } from './mini-icons.ts';
 import { announce, focusOpener, kindWord, noteIsAlert, noteText, phaseKey, truncatedText, replaceKeepingFocus, safeInsets, stateText, type StudyUiDeps } from './ai-study-ui.ts';
 import type { AiCallBlock } from '../types/api.ts';
 
-export interface SummaryOpenArgs {
+/** The summary of one record (`target` may be left out: it is the original shape) */
+export interface SummaryRecordArgs {
+  target?: 'record';
   /** The record: its id, its time as the list shows it (`YYYY-MM-DD HH:MM`) and its kind */
   rec: { id: number; at: string; kind: 'practice' | 'exam' };
   /** `data-focus` key of the opener (`rec-ai-<id>` / `home-ai`): focus returns to it when the window closes */
   anchorKey: string;
   byKeyboard: boolean;
 }
+
+/** v2.5: the AI study assessment: `latestAt` = the newest saved record's time, `records` = how many are saved */
+export interface SummaryAssessArgs {
+  target: 'assess';
+  latestAt: string;
+  records: number;
+  anchorKey: string;
+  byKeyboard: boolean;
+}
+
+export type SummaryOpenArgs = SummaryRecordArgs | SummaryAssessArgs;
+
+const isAssess = (a: SummaryOpenArgs): a is SummaryAssessArgs => a.target === 'assess';
 
 const PAINT_MS = 100;
 /** Copy feedback on the button (icon becomes a tick, tip reads "Copied") */
@@ -58,7 +74,11 @@ let lastNoteSig = '';
 let downOnDialog = false;
 let actsSig = '';
 
-const specOf = (a: SummaryOpenArgs) => summarySpec(deps!.transport, a.rec, () => deps!.uiLang());
+const specOf = (a: SummaryOpenArgs) =>
+  isAssess(a) ? assessSpec(deps!.transport, a.latestAt, () => deps!.uiLang()) : summarySpec(deps!.transport, a.rec, () => deps!.uiLang());
+const keyOf = (a: SummaryOpenArgs): string => (isAssess(a) ? assessKey(atDigits(a.latestAt)) : summaryKey(a.rec.id, atDigits(a.rec.at)));
+// `dash.*` keys live in WP-F's catalog (i18n/catalog/dash.ts)
+const titleKey = (a: SummaryOpenArgs): MsgKey => (isAssess(a) ? 'dash.ai.title' : 'aiplus.sum.title');
 const viewOf = (): EntryView => entryView((runner && runner.entry(curKey)) || emptyEntry(), replyLang(deps ? deps.uiLang() : 'en'));
 
 export function installAiSummary(d: StudyUiDeps): void {
@@ -81,7 +101,7 @@ export function openAiSummary(args: SummaryOpenArgs): void {
   if (!deps || !runner) return;
   closeAiSummary(false);
   cur = args;
-  curKey = summaryKey(args.rec.id, atDigits(args.rec.at));
+  curKey = keyOf(args);
   lastText = null;
   lastPhase = null;
   lastNoteSig = '';
@@ -91,6 +111,9 @@ export function openAiSummary(args: SummaryOpenArgs): void {
   paint();
   if (focusTitleOnOpen(args.byKeyboard ? 0 : 1)) ui.title?.focus();
 }
+
+/** v2.5: opens the AI study assessment window (the generation, the saved answer and every control are the summary window's) */
+export const openAiAssess = (args: SummaryAssessArgs): void => openAiSummary(args);
 
 /** Closes the window. The generation goes on in the background and is saved (the chat keeps it) */
 export function closeAiSummary(returnFocus = true): void {
@@ -132,14 +155,14 @@ export function clearAiSummaryData(): void {
 function build(): void {
   if (!cur || !deps) return;
   actsSig = '';
-  ui.title = h('h2', { id: 'aip-sum-h', tabindex: '-1' }, t('aiplus.sum.title'));
+  ui.title = h('h2', { id: 'aip-sum-h', tabindex: '-1' }, t(titleKey(cur)));
   ui.head = h('div', { class: 'aip-sum-acts' });
   // The meta line is part of the header at every width; CSS puts it under the title, or (short landscape) between title and buttons
   ui.meta = h('p', { id: 'aip-sum-meta', class: 'aip-sum-meta', onclick: (e: Event) => (e.currentTarget as HTMLElement).classList.toggle('open') });
   ui.note = h('p', { id: 'aip-sum-note', class: 'aip-note' });
   ui.noteActs = h('span', { class: 'aip-sum-noteacts' });
   ui.noteRow = h('div', { class: 'aip-sum-noterow', hidden: true }, ui.note, ui.noteActs);
-  ui.body = h('div', { id: 'aip-sum-body', class: 'aip-sum-body ai-md', tabindex: '0', role: 'region', 'aria-label': t('aiplus.sum.title') });
+  ui.body = h('div', { id: 'aip-sum-body', class: 'aip-sum-body ai-md', tabindex: '0', role: 'region', 'aria-label': t(titleKey(cur)) });
   ui.state = h('span', { class: 'aip-state' });
   ui.foot = h('div', { class: 'aip-sum-foot' });
   ui.sr = h('div', { id: 'aip-sum-sr', class: 'sr-only', role: 'status', 'aria-live': 'polite' });
@@ -201,9 +224,9 @@ function headAction(icon: MiniIcon, label: string, onClick: () => void, describe
  * names the chat as AI Chat lists it: the server's title (the time) plus the localised summary suffix ("<time>-AI总结"); nothing
  * navigates. Without a chat it keeps its place, invisible.
  */
-function savedNote(visible: boolean, title: string | null): HTMLElement {
+function savedNote(visible: boolean, title: string | null, kind: 'summary' | 'assess' = 'summary'): HTMLElement {
   const id = 'aip-sum-saved-tip';
-  const name = title ? chatNameOf({ title, kind: 'summary' }, (k) => t(k)) : null;
+  const name = title ? (kind === 'assess' ? chatNameOf({ title, kind: 'assess' }, (k) => t(k)) : chatNameOf({ title, kind: 'summary' }, (k) => t(k))) : null;
   const tipText = visible && name ? t('aiplus.savedTip', { title: name }) : null;
   const txt = h('span', { class: 'aip-sum-saved', tabindex: tipText ? '0' : null, 'aria-describedby': tipText ? id : null }, t('aiplus.saved'));
   const tip = tipText ? h('span', { class: 'tip', role: 'tooltip', id }, tipText) : null;
@@ -233,8 +256,16 @@ function paint(): void {
   ui.body.setAttribute('aria-busy', String(v.phase === 'streaming' || v.phase === 'requesting'));
 
   // Meta: "<time> · <kind> · Based on …" (the sample is known once an answer exists)
-  const parts = [cur.rec.at, kindWord(cur.rec.kind)];
-  if (v.sample) parts.push(t(basedKey(v.sample), { used: v.sample.used, usable: v.sample.usable, wrong: v.sample.wrong }));
+  const parts: string[] = [];
+  if (isAssess(cur)) {
+    // The assessment: the basis (records, questions of the last 30 days) and, for an answer of an earlier day, its date
+    if (v.sample) parts.push(t('dash.ai.meta', { n: v.sample.usable, q: v.sample.used }));
+    const date = assessDateTag(entry?.shown);
+    if (date) parts.push(t('dash.ai.dated', { date }));
+  } else {
+    parts.push(cur.rec.at, kindWord(cur.rec.kind));
+    if (v.sample) parts.push(t(basedKey(v.sample), { used: v.sample.used, usable: v.sample.usable, wrong: v.sample.wrong }));
+  }
   ui.meta.textContent = parts.join(' · ');
 
   // Nothing to summarise is told in the body, everything else in the note
@@ -328,7 +359,7 @@ function paint(): void {
     copy.disabled = v.text.trim() === '';
     copyBtn = copy;
     foot.push(copy);
-    foot.push(savedNote(savedInChat(entry), entry?.chatTitle ?? null));
+    foot.push(savedNote(savedInChat(entry), entry?.chatTitle ?? null, isAssess(cur) ? 'assess' : 'summary'));
     replaceKeepingFocus(ui.foot, foot);
 
     // The busy flow's button is text (the meaning is unclear as an icon), in the note row

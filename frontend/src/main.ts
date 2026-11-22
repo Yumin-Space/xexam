@@ -19,13 +19,14 @@ import { renderAiChat, renderAiNoAccess, renderAiUnavailable } from './pages/ai.
 import { renderAiSettings } from './pages/ai-settings.ts';
 import { renderNewPassword, renderSignIn } from './pages/auth.ts';
 import { renderBanks } from './pages/banks.ts';
+import { renderDashboard } from './pages/dashboard.ts';
 import { renderForbidden } from './pages/forbidden.ts';
-import { renderHome } from './pages/home.ts';
 import { renderLogs } from './pages/logs.ts';
 import { installQuizKeys, renderQuiz } from './pages/quiz.ts';
 import { renderRecords } from './pages/records.ts';
 import { renderResult } from './pages/result.ts';
 import { renderSettings } from './pages/settings.ts';
+import { renderStudy } from './pages/study.ts';
 import { renderUsers } from './pages/users.ts';
 import { boot, isRetryingStart, refreshAi, retryStartup, setRenderer } from './state/actions.ts';
 import { aiStatus, onCallBlockChange } from './state/ai.ts';
@@ -89,8 +90,10 @@ function page(): { el: HTMLElement; title: string } {
       return isAdmin()
         ? { el: renderAiSettings(), title: t('ai.set.title') }
         : { el: renderForbidden('forbidden.aiSettings'), title: t('forbidden.title') };
+    case 'study':
+      return { el: renderStudy(), title: t('nav.study') };
     default:
-      return { el: renderHome(), title: t('nav.home') };
+      return { el: renderDashboard(), title: t('nav.home') };
   }
 }
 

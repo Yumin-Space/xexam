@@ -25,6 +25,8 @@ export interface Answer {
   sample: Sample | null;
   /** A reasoning model is thinking: the `thinking` event came and no text yet (live only, never saved) */
   thinking?: boolean;
+  /** Study assessment (v2.5): the local day it was written (`YYYY-MM-DD`) */
+  date?: string | null;
 }
 
 /** The answer of GET /api/ai/study/saved and /api/ai/summary/saved, normalised */
@@ -102,6 +104,9 @@ export const sessionPart = (i: { key: string | null; recordId: number | null }):
 
 export const summaryKey = (recordId: number, atDigitsText: string | null): string => `${recordId}@${atDigitsText ?? ''}`;
 
+/** The runner key of the study assessment (v2.5): the newest record's time as digits */
+export const assessKey = (atDigitsText: string | null): string => `assess:${atDigitsText ?? ''}`;
+
 /** The cache bound of the panel (and the overlay): the oldest entries are dropped */
 export const MAX_ENTRIES = 200;
 
@@ -124,6 +129,17 @@ const strOrNull = (v: unknown): string | null => (typeof v === 'string' && v !==
 const LANGS = new Set(['en', 'zh-CN', 'ja']);
 const STATUSES = new Set(['streaming', 'done', 'stopped', 'error']);
 
+/**
+ * The study assessment's `basis` ({records, answered, ...}) as a `Sample` the shared views already carry (v2.5): `usable` =
+ * records, `used` = answered questions, `wrong` 0. Null without both numbers.
+ */
+export function basisSample(v: unknown): Sample | null {
+  const o = obj(v);
+  const records = numOrNull(o.records);
+  const answered = numOrNull(o.answered);
+  return records == null || answered == null ? null : { used: answered, usable: records, wrong: 0 };
+}
+
 function sampleOf(v: unknown): Sample | null {
   const o = obj(v);
   const used = numOrNull(o.used);
@@ -145,14 +161,20 @@ export function answerOf(v: unknown): Answer | null {
     lang: typeof o.lang === 'string' && LANGS.has(o.lang) ? (o.lang as ReplyLang) : null,
     createdAt: numOrNull(o.createdAt),
     finishedAt: numOrNull(o.finishedAt),
-    sample: sampleOf(o.sample),
+    sample: sampleOf(o.sample) ?? basisSample(o.basis),
+    ...(typeof o.date === 'string' && o.date ? { date: o.date } : {}),
   };
 }
 
 /** The saved answers of a saved route: `{chatId, latest, lastGood}` */
 export function parseSaved(json: unknown): SavedPayload {
   const o = obj(json);
-  return { chatId: numOrNull(o.chatId), chatTitle: strOrNull(o.chatTitle), latest: answerOf(o.latest), lastGood: answerOf(o.lastGood) };
+  // v2.5: a saved study assessment carries `date` and `basis` beside the answers; they join the answers that lack them
+  const date = strOrNull(o.date);
+  const basis = basisSample(o.basis);
+  const join = (a: Answer | null): Answer | null =>
+    a && (date || basis) ? { ...a, sample: a.sample ?? basis, ...(a.date == null && date ? { date } : {}) } : a;
+  return { chatId: numOrNull(o.chatId), chatTitle: strOrNull(o.chatTitle), latest: join(answerOf(o.latest)), lastGood: join(answerOf(o.lastGood)) };
 }
 
 /** The `running` object of a 409 ai.busy answer, or null */
@@ -161,8 +183,8 @@ export function runningOf(v: unknown): RunningInfo | null {
   const chatId = numOrNull(o.chatId);
   const messageId = numOrNull(o.messageId);
   if (chatId == null || messageId == null) return null;
-  const kinds = ['chat', 'hint', 'explain', 'summary'];
-  const chatKinds = ['chat', 'practice', 'exam', 'summary'];
+  const kinds = ['chat', 'hint', 'explain', 'summary', 'assess'];
+  const chatKinds = ['chat', 'practice', 'exam', 'summary', 'assess'];
   const sources = ['practice', 'result'];
   return {
     chatId, messageId,
@@ -243,7 +265,7 @@ function onEvent(e: Entry, ev: StreamEvent, now: number | null): Entry {
     case 'start': {
       const chatId = numOrNull(d.chatId);
       const lang = typeof d.lang === 'string' && LANGS.has(d.lang) ? (d.lang as ReplyLang) : null;
-      const sample = sampleOf(d.sample);
+      const sample = sampleOf(d.sample) ?? basisSample(d.basis);
       const at: Answer = { ...blank(numOrNull(d.assistantMessageId), now), lang, sample };
       // Without a title in the event, the known one stays only while the chat is the same one
       const chatTitle = strOrNull(d.chatTitle) ?? (chatId == null || chatId === e.chatId ? e.chatTitle : null);
@@ -390,7 +412,7 @@ export const refreshesStatus = (e: AskError): boolean =>
   (e.code != null && REFRESH_CODES.has(e.code)) || (e.status === 503 && e.code === 'ai.backendDown');
 
 /** Refusals of a summary that are shown in the body (nothing to summarise) */
-export const isNothingToSummarise = (code: string | null): boolean => code === 'ai.noWrong' || code === 'ai.noUsable' || code === 'ai.noDetail';
+export const isNothingToSummarise = (code: string | null): boolean => code === 'ai.noWrong' || code === 'ai.noUsable' || code === 'ai.noDetail' || code === 'ai.assessFew';
 
 export function isAskError(v: unknown): v is AskError {
   const o = obj(v);

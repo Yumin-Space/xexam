@@ -208,10 +208,10 @@ function checkConfirm(): void {
   const job = aiGenStatus()?.job ?? null;
   if (!awaitsConfirm(job)) return;
   const r = route();
-  if ((r === 'home' || r === 'banks') && !confirmDialogShown.has(job.id)) {
+  if ((r === 'study' || r === 'banks') && !confirmDialogShown.has(job.id)) {
     confirmDialogShown.add(job.id);
     for (const fn of confirmHooks) fn(job);
-  } else if (r !== 'quiz' && r !== 'home' && r !== 'banks' && !recognisedToastShown.has(job.id)) {
+  } else if (r !== 'quiz' && r !== 'study' && r !== 'banks' && !recognisedToastShown.has(job.id)) {
     recognisedToastShown.add(job.id);
     toast(t('aigen.imp.toast.recognised', { file: job.file?.name ?? '' }), 5000);
   }

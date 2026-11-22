@@ -218,7 +218,7 @@ export function pollInterval(route: string, visible: boolean, job: GenJob | null
   const active = job.state === 'queued' || job.state === 'running';
   if (!active) return null;
   if (job.phase === 'confirm') return 10_000;
-  return (route === 'home' || route === 'banks') && visible ? 2_000 : 10_000;
+  return (route === 'study' || route === 'banks') && visible ? 2_000 : 10_000;
 }
 
 /** A job that went from active to a finished state between two statuses (the toast / refresh moment); null when none did */
@@ -271,7 +271,7 @@ export function applyItems(state: ItemsState, a: Pick<GenJobAnswer, 'items' | 'l
 export function wantsItems(route: string, visible: boolean, job: GenJob | null): boolean {
   if (!job || !visible || job.source === 'file') return false;
   if (job.state !== 'queued' && job.state !== 'running') return false;
-  return route === 'home' || route === 'banks';
+  return route === 'study' || route === 'banks';
 }
 
 /** The placeholder bank row of a running generation, or null (no row for an import, a finished job or the quiz route) */

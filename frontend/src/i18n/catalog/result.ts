@@ -22,7 +22,7 @@ export default defineCatalog({
     'result.again': 'Retake exam',
     'result.againPractice': 'Retake practice',
     'result.viewRecord': 'View study record',
-    'result.home': 'Back to home',
+    'result.home': 'Back to Exam & practice',
 
     'result.review.heading': 'Answers',
     'result.review.filter': 'Questions to show',
@@ -75,7 +75,7 @@ export default defineCatalog({
     'result.timeUp.body': 'Time ran out and the exam was submitted. The {n} questions not completed are not counted as wrong and are not added to the wrong-answer notebook; they are listed under “Not completed”.',
     'result.timeUp.body_one': 'Time ran out and the exam was submitted. The {n} question not completed is not counted as wrong and is not added to the wrong-answer notebook; it is listed under “Not completed”.',
     'result.timeUp.bodyNone': 'Time ran out and the exam was submitted.',
-    'result.timeUp.notSaved': 'Time ran out, but the result could not be saved. Your answers are still in this browser: on the home page, press “Submit” to try again.',
+    'result.timeUp.notSaved': 'Time ran out, but the result could not be saved. Your answers are still in this browser: on the Exam & practice page, press “Submit” to try again.',
     'result.openNote': 'Questions not completed are not counted as wrong and are not added to the wrong-answer notebook; the score counts every question.',
 
     'result.unsaved': 'This result is not saved to your study records yet (unstable network). Your answers are still on this device.',
@@ -98,7 +98,7 @@ export default defineCatalog({
     'result.again': '再考一次',
     'result.againPractice': '再练一次',
     'result.viewRecord': '查看学习记录',
-    'result.home': '返回主页',
+    'result.home': '返回考试&练习',
 
     'result.review.heading': '答案与解析',
     'result.review.filter': '显示哪些题',
@@ -145,7 +145,7 @@ export default defineCatalog({
     'result.timeUp.title': '考试已经结束',
     'result.timeUp.body': '时间到，已自动交卷。没有完成的 {n} 道题不算错题，也不进错题本，列在「没有完成的题」里。',
     'result.timeUp.bodyNone': '时间到，已自动交卷。',
-    'result.timeUp.notSaved': '时间到了，但成绩没能保存。答案还留在浏览器里：回到主页按「交卷」再试一次。',
+    'result.timeUp.notSaved': '时间到了，但成绩没能保存。答案还留在浏览器里：回到考试&练习页按「交卷」再试一次。',
     'result.openNote': '没有完成的题不算错题，也不进错题本；分数按全部题目计算。',
 
     'result.unsaved': '成绩还没有保存到学习记录（网络不稳定）。答案还在这台设备上。',
@@ -168,7 +168,7 @@ export default defineCatalog({
     'result.again': 'もう一度受ける',
     'result.againPractice': 'もう一度練習する',
     'result.viewRecord': '学習記録を見る',
-    'result.home': 'ホームに戻る',
+    'result.home': '試験・練習に戻る',
 
     'result.review.heading': '正解と解説',
     'result.review.filter': '表示する問題',
@@ -215,7 +215,7 @@ export default defineCatalog({
     'result.timeUp.title': '試験は終了しました',
     'result.timeUp.body': '時間切れのため自動で提出しました。未回答の {n} 問は不正解に数えず、間違いノートにも追加しません（「未回答」に表示しています）。',
     'result.timeUp.bodyNone': '時間切れのため自動で提出しました。',
-    'result.timeUp.notSaved': '時間切れになりましたが、結果を保存できませんでした。回答はこのブラウザに残っています。ホームの「提出する」でもう一度試してください。',
+    'result.timeUp.notSaved': '時間切れになりましたが、結果を保存できませんでした。回答はこのブラウザに残っています。試験・練習ページの「提出する」でもう一度試してください。',
     'result.openNote': '未回答の問題は不正解に数えず、間違いノートにも追加しません。得点はすべての問題で計算します。',
 
     'result.unsaved': 'この結果はまだ学習記録に保存されていません（通信が不安定です）。解答はこの端末に残っています。',

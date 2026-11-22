@@ -1961,3 +1961,379 @@ fn a_schema_6_database_is_read_by_the_columns_only_this_version_knows() {
         1
     );
 }
+
+// ---------------------------------------------------------------- v2.5: POST /internal/ai/assess
+
+/// Monday 2026-11-23 12:00 for the assessment tests (a fixed clock).
+const NOW: &str = "2026-11-23 12:00";
+
+fn app_at(now: &str) -> App {
+    let dir = dbc::tmp();
+    let db = dir.path().join("xexam.db");
+    let store = Arc::new(
+        Store::open_with_clock(
+            &db,
+            Arc::new(xexam_backend::database::FixedClock(now.to_string())),
+        )
+        .expect("store"),
+    );
+    let engine = Arc::new(RealEngine::new(store.clone()));
+    let state = AppState::new_with_logs(
+        apic::default_config(),
+        store.clone(),
+        engine,
+        None,
+        Arc::new(LogBuffer::default()),
+    );
+    assert!(state
+        .0
+        .ai_link
+        .set_token(InternalToken::new(TOKEN).expect("token")));
+    App {
+        router: build_router(state),
+        store,
+        db,
+        _dir: dir,
+    }
+}
+
+async fn ask_assess(a: &App, body: Value) -> Resp {
+    internal(
+        a,
+        "POST",
+        "/internal/ai/assess",
+        Some(TOKEN),
+        &body.to_string(),
+    )
+    .await
+}
+
+fn abody(w: &Who) -> Value {
+    json!({"sid": w.sid, "id": w.id})
+}
+
+/// Seeds a question bank with one question and returns nothing: the stem, bank and sheet names must never come back.
+fn seed_assess_bank(c: &Connection) {
+    let bank = put_bank(c, "BANK-NAME-NEVER-SENT");
+    put_q(
+        c,
+        "qa1",
+        Some(bank),
+        true,
+        &six("STEM-NEVER-SENT which fruit is yellow?"),
+        1,
+    );
+}
+
+#[tokio::test]
+async fn assess_rejects_bad_keys_sessions_and_users_without_ai() {
+    let a = app_at(NOW);
+    let w = user(&a, "asa", true);
+    let other = user(&a, "asb", true);
+    let plain = user(&a, "asc", false);
+    for bad in [
+        json!({}),
+        json!({"sid": w.sid}),
+        json!({"id": w.id}),
+        json!({"sid": w.sid, "id": w.id, "extra": 1}),
+        json!({"sid": "XYZ", "id": w.id}),
+        json!({"sid": w.sid, "id": 0}),
+        json!({"sid": w.sid, "id": "1"}),
+    ] {
+        let r = ask_assess(&a, bad.clone()).await;
+        assert_eq!(r.status, 400, "{bad}");
+        assert!(r.text().contains(MSG_BAD_REQUEST), "{bad}");
+    }
+    // another user's sid
+    let r = ask_assess(&a, json!({"sid": other.sid, "id": w.id})).await;
+    assert_eq!(r.status, 200);
+    assert_eq!(r.json(), json!({"ok": false, "reason": "session"}));
+    // no AI+
+    let r = ask_assess(&a, abody(&plain)).await;
+    assert_eq!(r.json(), json!({"ok": false, "reason": "notAllowed"}));
+    // the token gate
+    let r = internal(
+        &a,
+        "POST",
+        "/internal/ai/assess",
+        None,
+        &abody(&w).to_string(),
+    )
+    .await;
+    assert_eq!(r.status, 404);
+}
+
+#[tokio::test]
+async fn assess_needs_three_saved_records() {
+    let a = app_at(NOW);
+    let c = raw(&a.db);
+    seed_assess_bank(&c);
+    let w = user(&a, "asd", true);
+    for i in 0..2 {
+        put_record(
+            &c,
+            w.id,
+            "practice",
+            &format!("2026-11-2{i} 10:00"),
+            &[row("qa1", Some("[\"A\"]"), true)],
+            None,
+            None,
+        );
+    }
+    let r = ask_assess(&a, abody(&w)).await;
+    assert_eq!(r.json(), json!({"ok": false, "reason": "few"}));
+    put_record(
+        &c,
+        w.id,
+        "practice",
+        "2026-11-22 10:00",
+        &[row("qa1", Some("[\"A\"]"), true)],
+        None,
+        None,
+    );
+    let r = ask_assess(&a, abody(&w)).await;
+    assert_eq!(r.json()["ok"], json!(true), "{}", r.text());
+}
+
+#[tokio::test]
+async fn assess_has_exactly_the_documented_keys_and_numbers() {
+    let a = app_at(NOW);
+    let c = raw(&a.db);
+    seed_assess_bank(&c);
+    let w = user(&a, "ase", true);
+    let rival = user(&a, "asf", true);
+    let item = |ok: bool| row("qa1", Some("[\"A\"]"), ok);
+    // today 2026-11-23 is a Monday. Practice Sunday 22nd 09:10, exam Friday 20th 20:30 (timed, time up),
+    // practice 29 days ago (the oldest day of the window), practice 31 days ago (outside).
+    put_record(
+        &c,
+        w.id,
+        "practice",
+        "2026-11-22 09:10",
+        &[item(true), item(false), row("qa1", None, false)],
+        None,
+        None,
+    );
+    let exam = put_record(
+        &c,
+        w.id,
+        "exam",
+        "2026-11-20 20:30",
+        &[item(true), item(true)],
+        None,
+        None,
+    );
+    c.execute(
+        "UPDATE attempts SET time_limit = 600, ended = 'timeUp', percent = 80 WHERE id = ?1",
+        params![exam],
+    )
+    .expect("timed");
+    put_record(
+        &c,
+        w.id,
+        "practice",
+        "2026-10-25 03:00",
+        &[item(true)],
+        None,
+        None,
+    );
+    put_record(
+        &c,
+        w.id,
+        "practice",
+        "2026-10-23 03:00",
+        &[item(true), item(true), item(true)],
+        None,
+        None,
+    );
+    // another user's records never count
+    put_record(
+        &c,
+        rival.id,
+        "exam",
+        "2026-11-23 08:00",
+        &[item(true)],
+        None,
+        None,
+    );
+    c.execute(
+        "INSERT INTO user_stats(user_id, question_id, attempts, correct, wrong, streak, last, at) \
+         VALUES(?1, 'qa1', 7, 5, 2, 0, 0, '2026-11-22 09:10')",
+        params![w.id],
+    )
+    .expect("stats");
+    c.execute(
+        "INSERT INTO user_stats(user_id, question_id, attempts, correct, wrong, streak, last, at) \
+         VALUES(?1, 'qa2', 3, 3, 0, 3, 1, '2026-11-22 09:10')",
+        params![w.id],
+    )
+    .expect("stats");
+    c.execute(
+        "INSERT INTO user_stats(user_id, question_id, attempts, correct, wrong, streak, last, at) \
+         VALUES(?1, 'qa3', 4, 1, 3, 1, 0, '2026-11-22 09:10')",
+        params![w.id],
+    )
+    .expect("stats");
+    let r = ask_assess(&a, abody(&w)).await;
+    let v = r.json();
+    assert_eq!(
+        keys(&v),
+        ["ok", "uiLang", "today", "latestAt", "basis"],
+        "{}",
+        r.text()
+    );
+    assert_eq!(v["today"], "2026-11-23");
+    assert_eq!(v["latestAt"], "2026-11-22 09:10");
+    let b = &v["basis"];
+    assert_eq!(
+        keys(b),
+        [
+            "days",
+            "records",
+            "practice",
+            "exams",
+            "answered",
+            "correct",
+            "unanswered",
+            "activeDays",
+            "daysSinceLast",
+            "longestGapDays",
+            "avgSecPerItem",
+            "medianMinutes",
+            "examAvgPercent",
+            "timedExams",
+            "timeUps",
+            "weekdays",
+            "dayparts",
+            "weeks",
+            "modes",
+            "allTime"
+        ]
+    );
+    assert_eq!(
+        keys(&b["allTime"]),
+        [
+            "records",
+            "seen",
+            "answers",
+            "correct",
+            "notebookOpen",
+            "mastered"
+        ]
+    );
+    // window: 22nd, 20th, 25 Oct (29 days ago); the 23 Oct record is 31 days back and out
+    assert_eq!(b["days"], 30);
+    assert_eq!(b["records"], 3);
+    assert_eq!(b["practice"], 2);
+    assert_eq!(b["exams"], 1);
+    assert_eq!(b["answered"], 5);
+    assert_eq!(b["correct"], 4);
+    assert_eq!(b["unanswered"], 1);
+    assert_eq!(b["activeDays"], 3);
+    assert_eq!(b["daysSinceLast"], 1);
+    assert_eq!(b["longestGapDays"], 26);
+    assert_eq!(b["examAvgPercent"], 80);
+    assert_eq!(b["timedExams"], 1);
+    assert_eq!(b["timeUps"], 1);
+    assert_eq!(b["medianMinutes"], 1);
+    // Sunday (22nd) 1, Friday (20th) 1, Sunday (25 Oct) 1
+    assert_eq!(b["weekdays"], json!([0, 0, 0, 0, 1, 0, 2]));
+    // 09:10 morning, 20:30 evening, 03:00 night
+    assert_eq!(b["dayparts"], json!([1, 1, 0, 1]));
+    assert_eq!(
+        b["weeks"],
+        json!([
+            {"answered": 1, "correct": 1},
+            {"answered": 0, "correct": 0},
+            {"answered": 0, "correct": 0},
+            {"answered": 4, "correct": 3}
+        ])
+    );
+    assert_eq!(b["modes"], json!({"all": 3}));
+    assert_eq!(
+        b["allTime"],
+        json!({"records": 4, "seen": 3, "answers": 14, "correct": 9, "notebookOpen": 2, "mastered": 1})
+    );
+    let sum = |k: &str| {
+        b[k].as_array()
+            .expect("array")
+            .iter()
+            .filter_map(Value::as_i64)
+            .sum::<i64>()
+    };
+    assert_eq!(sum("weekdays"), 3);
+    assert_eq!(sum("dayparts"), 3);
+    // no exam in the window: null
+    let none = user(&a, "asg", true);
+    for day in [20, 21, 22] {
+        put_record(
+            &c,
+            none.id,
+            "practice",
+            &format!("2026-11-{day} 12:00"),
+            &[item(true)],
+            None,
+            None,
+        );
+    }
+    let v = ask_assess(&a, abody(&none)).await.json();
+    assert_eq!(v["basis"]["examAvgPercent"], Value::Null);
+    assert_eq!(v["basis"]["longestGapDays"], 1);
+}
+
+/// `latestAt` is the largest `at`, not the time of the newest id: after local time ran backwards (a DST fall-back hour)
+/// the newest record has the earlier time, and the page matches saved assessments by the largest `at` of its list.
+#[tokio::test]
+async fn assess_latest_at_is_the_largest_time_not_the_newest_id() {
+    let a = app_at(NOW);
+    let c = raw(&a.db);
+    seed_assess_bank(&c);
+    let w = user(&a, "asl", true);
+    for at in ["2026-11-20 10:00", "2026-11-22 01:50", "2026-11-22 01:10"] {
+        put_record(
+            &c,
+            w.id,
+            "practice",
+            at,
+            &[row("qa1", Some("[\"A\"]"), true)],
+            None,
+            None,
+        );
+    }
+    let v = ask_assess(&a, abody(&w)).await.json();
+    assert_eq!(v["ok"], json!(true), "{v}");
+    assert_eq!(v["latestAt"], "2026-11-22 01:50");
+    assert_eq!(v["basis"]["daysSinceLast"], 1, "{v}");
+}
+
+#[tokio::test]
+async fn assess_never_carries_stems_banks_sheets_ids_or_names() {
+    let a = app_at(NOW);
+    let c = raw(&a.db);
+    seed_assess_bank(&c);
+    let w = user(&a, "NAME-NEVER-SENT", true);
+    for day in [20, 21, 22] {
+        put_record(
+            &c,
+            w.id,
+            "practice",
+            &format!("2026-11-{day} 12:00"),
+            &[row("qa1", Some("[\"A\"]"), false)],
+            None,
+            None,
+        );
+    }
+    let r = ask_assess(&a, abody(&w)).await;
+    assert_eq!(r.json()["ok"], json!(true));
+    let body = r.text();
+    for never in [
+        "STEM-NEVER-SENT",
+        "BANK-NAME-NEVER-SENT",
+        "SHEET-NEVER-SENT",
+        "NAME-NEVER-SENT",
+        "qa1",
+        "[\"S\"]",
+    ] {
+        assert!(!body.contains(never), "{never} in {body}");
+    }
+}

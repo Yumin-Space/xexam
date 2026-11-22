@@ -55,6 +55,7 @@ use std::time::Duration;
 mod activity;
 mod ai_gen;
 mod banks;
+mod dashboard;
 mod migrate;
 mod records;
 mod settings;

@@ -1,0 +1,112 @@
+/* Home dashboard (v2.5): one calm column, lots of whitespace, existing tokens only (light and dark both come from main.css).
+   Accents: the navy hero tile and the amber AI button; everything else is quiet. Prefix dash-. */
+
+.page-dash { max-width: 560px; margin-inline: auto; display: grid; gap: var(--sp-5); min-width: 0; }
+.page-dash > * { min-width: 0; }
+.page-dash .panel + .panel { margin-top: 0; }
+.page-dash .resume { margin-bottom: 0; }
+
+/* ---------- Greeting ---------- */
+.dash-hello h1 { font-size: 26px; line-height: 1.3; font-weight: 600; letter-spacing: -.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dash-sub { margin-top: 4px; font-size: 14px; color: var(--ink3); overflow-wrap: anywhere; }
+
+/* ---------- Tiles ---------- */
+.dash-tiles { display: grid; gap: var(--sp-2); }
+.dash-tile { display: flex; text-decoration: none; color: var(--ink); border-radius: 12px; min-width: 0; -webkit-tap-highlight-color: transparent; }
+.dash-tile:focus-visible { outline: 2px solid var(--print); outline-offset: 2px; }
+.dash-ico { width: 28px; height: 28px; flex: none; }
+
+.dash-hero { align-items: center; gap: 16px; min-height: 80px; padding: 16px 20px; background: var(--primary); color: var(--on-primary); }
+.dash-hero-text { flex: 1 1 auto; min-width: 0; display: grid; gap: 2px; }
+.dash-hero-label { font-size: 17px; font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; }
+/* Full --on-primary (no opacity): 85 % white on the dark theme's blue falls under 4.5:1; size and weight carry the hierarchy */
+.dash-hero-sub { font-size: 13px; line-height: 1.4; overflow-wrap: anywhere; }
+.dash-chev { width: 20px; height: 20px; flex: none; opacity: .85; }
+
+.dash-row { display: flex; gap: var(--sp-2); }
+.dash-row .dash-tile {
+  flex: 1 1 0; flex-direction: column; align-items: center; justify-content: center; gap: 8px; min-height: 96px; padding: 12px 8px;
+  background: var(--card); border: 1px solid var(--line-soft); box-shadow: var(--shadow-xs); text-align: center;
+}
+.dash-row .dash-ico { color: var(--ink2); }
+.dash-tile-label { font-size: 14px; font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; max-width: 100%;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.dash-tile:active { transform: scale(.98); }
+
+@media (hover: hover) {
+  .dash-hero:hover { background: var(--primary-hover); }
+  .dash-row .dash-tile:hover { background: linear-gradient(var(--hover), var(--hover)), var(--card); }
+}
+
+/* ---------- AI assessment ---------- */
+.dash-ai { display: grid; gap: 8px; justify-items: start; }
+.dash-ai .aip-grp-inline { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; max-width: 100%; }
+.dash-ai .btn { min-height: 44px; padding-inline: 20px; }
+/* The 无法使用 tag: the group's gap alone spaces it */
+.dash-ai .aip-grp-inline > .aip-na { margin-left: 0; }
+.dash-note { font-size: 13px; color: var(--ink3); overflow-wrap: anywhere; }
+
+/* ---------- Blocks ---------- */
+.dash-h { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 2px 12px; margin-bottom: 8px; }
+.page-dash .dash-h h2 { font-size: 15px; font-weight: 600; margin: 0; }
+.dash-meta { font-size: var(--fs-xs); color: var(--ink3); }
+.dash-cols { font-size: var(--fs-xs); color: var(--ink3); text-align: right; margin-bottom: 2px; }
+.dash-none { margin-top: 12px; font-size: 13.5px; overflow-wrap: anywhere; }
+.dash-fail { display: grid; gap: 8px; justify-items: start; }
+
+.dash-list { list-style: none; margin: 0; padding: 0; }
+.dash-list > li { border-top: 1px solid var(--line-soft); }
+.dash-list > li:first-child { border-top: 0; }
+
+/* Leaderboard rows: rank, name, answered, correct */
+.dash-rank-row { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto auto; align-items: center; gap: 12px; min-height: 44px; padding: 0 4px; }
+.dash-no { color: var(--ink3); text-align: right; }
+/* #1 stands out by weight: the gold --mark is under 3:1 on the light card, so it is not used for text */
+.dash-no.first { color: var(--ink); font-weight: 700; }
+/* The name row is flex; the text sits in its own shrinking item so it gets the ellipsis and the "You" tag stays visible */
+.dash-name { min-width: 0; overflow: hidden; white-space: nowrap; display: flex; align-items: center; gap: 8px; }
+.dash-name-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dash-n { min-width: 2.5ch; text-align: right; font-variant-numeric: tabular-nums; color: var(--ink2); }
+.dash-good { color: var(--answer-right); font-weight: 600; }
+.dash-you { flex: none; }
+.dash-list > li.dash-self { background: var(--print-soft); border-radius: 8px; border-top-color: transparent; }
+/* The light green is 4.46:1 on the blue tint of the viewer's row: a darker green there; the dark theme keeps its green */
+.dash-list > li.dash-self .dash-good { color: var(--answer-right-solid-active); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .dash-list > li.dash-self .dash-good { color: var(--answer-right); }
+}
+:root[data-theme="dark"] .dash-list > li.dash-self .dash-good { color: var(--answer-right); }
+.dash-list > li.dash-self + li { border-top-color: transparent; }
+.dash-list > li.dash-me { margin-top: 8px; border-top: 1px dashed var(--line); }
+.dash-list > li.dash-me.dash-self { border-top-left-radius: 0; border-top-right-radius: 0; }
+
+/* Most practised rows: stem (one line) over "bank · sheet", count tag on the right */
+.dash-hot-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; min-height: 52px; padding: 6px 4px; }
+.dash-hot-text { min-width: 0; display: grid; gap: 2px; }
+.dash-stem { font-size: 14.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dash-hot-meta { font-size: var(--fs-xs); color: var(--ink3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dash-times { font-variant-numeric: tabular-nums; }
+
+/* Loading: quiet bars the height of a real row's text, no shimmer */
+.dash-skel > li { display: flex; align-items: center; min-height: 44px; padding: 0 4px; }
+.dash-bar { display: block; width: 100%; height: 10px; border-radius: 5px; background: var(--fill); }
+.dash-skel > li:nth-child(2) .dash-bar { width: 80%; }
+.dash-skel > li:nth-child(3) .dash-bar { width: 60%; }
+.dash-hot .dash-skel > li { min-height: 52px; }
+
+@media (max-width: 480px) {
+  .page-dash { gap: var(--sp-4); }
+  .dash-hello h1 { font-size: 22px; }
+  .dash-hero { min-height: 72px; padding: 14px 16px; gap: 12px; }
+  .dash-row { gap: 8px; }
+  .dash-row .dash-tile { min-height: 88px; padding: 10px 6px; }
+  /* The AI button keeps its own width on phones too: a full-width amber bar would be the loudest thing on a calm page */
+  .dash-ai .btn { max-width: 100%; }
+}
+@media (min-width: 481px) {
+  .dash-tiles, .dash-row { gap: var(--sp-3); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dash-tile:active { transform: none; }
+}

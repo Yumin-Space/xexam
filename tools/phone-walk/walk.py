@@ -51,7 +51,7 @@ from device import NAMED_SIZES  # noqa: E402
 from browser import find_chrome, kill_tree, popen_group, remove_dir  # noqa: E402
 
 REPO = retake.REPO
-PAGES = ['home', 'quiz', 'result', 'records', 'ai', 'ai-settings', 'users', 'logs', 'settings', 'banks', 'about',
+PAGES = ['home', 'study', 'quiz', 'result', 'records', 'ai', 'ai-settings', 'users', 'logs', 'settings', 'banks', 'about',
          'signin', 'forbidden', 'menu']
 LANGS = ['zh', 'en', 'ja']
 THEMES = ['light', 'dark']

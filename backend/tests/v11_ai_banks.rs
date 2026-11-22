@@ -84,6 +84,42 @@ fn text(c: &Connection, sql: &str) -> String {
     c.query_row(sql, [], |r| r.get(0)).expect("text")
 }
 
+/// The bank, question and import rows as text. A request also refreshes its session (at most once a minute, on the real
+/// clock), so "nothing written" compares these rows instead of the raw database bytes.
+fn bank_rows(p: &Path) -> String {
+    let c = raw(p);
+    ["banks", "questions", "imports"]
+        .iter()
+        .map(|t| {
+            let mut st = c
+                .prepare(&format!("SELECT * FROM {t} ORDER BY rowid"))
+                .expect("prepare");
+            let n = st.column_count();
+            let rows: Vec<String> = st
+                .query_map([], |r| {
+                    Ok((0..n)
+                        .map(|i| format!("{:?}", r.get_ref(i).map(|v| v.to_owned()).ok()))
+                        .collect::<Vec<_>>()
+                        .join("|"))
+                })
+                .expect("query")
+                .map(|r| r.expect("row"))
+                .collect();
+            format!(
+                "{t}:{}",
+                rows.join(
+                    "
+"
+                )
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(
+            "
+",
+        )
+}
+
 struct Who {
     id: i64,
     cookie: String,
@@ -2347,7 +2383,7 @@ async fn an_excel_import_into_an_ai_bank_is_refused_at_preview_and_at_confirm() 
     )
     .expect("make it an AI bank");
     drop(c);
-    let after_update = dbc::db_bytes(&db);
+    let after_update = bank_rows(&db);
     let r = apic::post_json(
         &app,
         "/api/import/confirm",
@@ -2360,7 +2396,7 @@ async fn an_excel_import_into_an_ai_bank_is_refused_at_preview_and_at_confirm() 
         "{}",
         r.text()
     );
-    assert_eq!(dbc::db_bytes(&db), after_update, "nothing written");
+    assert_eq!(bank_rows(&db), after_update, "nothing written");
     // the store refuses it as well
     let err = store
         .apply_import_as(&admin, ImportTarget::Bank(ai), "x.xlsx", &[], &[])

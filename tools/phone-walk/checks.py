@@ -31,6 +31,7 @@ for _p in (SHOTS, HERE):
         sys.path.insert(0, _p)
 
 import seed  # noqa: E402
+from device import SETUP  # noqa: E402
 
 LANGS = ['zh', 'en', 'ja']
 MATRIX = [(360, 740), (390, 844), (412, 915), (740, 360), (844, 390), (768, 1024), (1280, 800)]
@@ -338,7 +339,7 @@ TICK_ALL_JS = """(() => { const boxes = [...document.querySelectorAll('.home-pic
 
 def start_quiz(d, kind, count=None):
     # v1.1 (TL-6): leaving a quiz page saves its session on pagehide, so the saved session is cleared only after leaving it
-    goto(d, '#/', 0.8)
+    goto(d, SETUP, 0.8)
     d.js(CLEAR_SESSION)
     d.reload(1.4)
     d.js(CHECKS_JS)
@@ -424,6 +425,7 @@ def v_menu(rc, d, s):
 # (page, state, user, setup)
 VISITS = [
     ('home', 'lee', 'lee', v_goto('#/')), ('home', 'riley', 'riley', v_goto('#/')),
+    ('study', 'lee', 'lee', v_goto(SETUP)), ('study', 'riley', 'riley', v_goto(SETUP)),
     ('quiz', 'practice', 'sam', v_quiz('practice')), ('quiz', 'exam', 'riley', v_quiz('exam')),
     ('quiz', 'panel-open', 'sam', v_panel), ('result', 'exam', 'sam', v_result),
     ('records', 'list', 'lee', v_goto('#/records')), ('records', 'detail', 'lee', v_record),
@@ -518,8 +520,8 @@ def toast_verdict(r):
 
 def toast_case(rc, lang, theme, size):
     for page, user, setup, bar in (('quiz', 'sam', lambda d: start_quiz(d, 'practice'), '.pfoot'),
-                                   ('home', 'lee', lambda d: goto(d, '#/'), '.home-go'),
-                                   ('home', 'alex', lambda d: goto(d, '#/'), '.home-go'),
+                                   ('home', 'lee', lambda d: goto(d, SETUP), '.home-go'),
+                                   ('home', 'alex', lambda d: goto(d, SETUP), '.home-go'),
                                    ('ai', 'sam', lambda d: goto(d, '#/ai/%d' % rc.chat_id('sam'), 2.0), '.ai-composer')):
         d = rc.dev(user, lang, theme, size)
         setup(d)
@@ -560,7 +562,7 @@ def pinned_case(rc, lang, theme, size):
     portrait = size[0] < size[1]
     insets = {'top': 47, 'bottom': 34, 'left': 0, 'right': 0} if portrait else {'top': 0, 'bottom': 21, 'left': 47, 'right': 47}
     for page, user, setup, bar in (('quiz', 'sam', lambda d: start_quiz(d, 'practice'), '.pfoot'),
-                                   ('home', 'lee', lambda d: goto(d, '#/'), '.home-go'),
+                                   ('home', 'lee', lambda d: goto(d, SETUP), '.home-go'),
                                    ('ai', 'sam', lambda d: goto(d, '#/ai/%d' % rc.chat_id('sam'), 2.0), '.ai-composer')):
         if not rc.walk.wants_page(page):
             continue
@@ -600,7 +602,7 @@ def g_contrast(rc):
 
 
 def contrast_case(rc, lang, theme, size):
-    plan = [('home', 'lee', lambda d: goto(d, '#/')), ('quiz', 'alex', lambda d: start_quiz(d, 'practice')),
+    plan = [('home', 'lee', lambda d: goto(d, SETUP)), ('quiz', 'alex', lambda d: start_quiz(d, 'practice')),
             ('logs', 'admin', lambda d: goto(d, '#/logs')), ('ai-settings', 'admin', lambda d: goto(d, '#/ai-settings', 2.0)),
             ('quiz-saved', 'sam', saved_setup)]
     for page, user, setup in plan:
@@ -1009,7 +1011,7 @@ def g_home(rc):
 
 def home_case(rc, lang, theme, size):
     d = rc.dev('lee', lang, theme, size)
-    goto(d, '#/', 1.8)
+    goto(d, SETUP, 1.8)
     row = W(d, 'oneRow', '.home-latest-acts, .home-latest .acts', 'a, button', 4)
     edge = d.js("""(() => { const g = document.querySelector('.home-go'); if (!g) return null; const p = g.closest('.panel'); if (!p) return null;
       const a = g.getBoundingClientRect(), b = p.getBoundingClientRect(); return {dl: a.left - b.left, dr: a.right - b.right} })()""")
@@ -1866,7 +1868,7 @@ FOOTER_JS = """(async (ver) => {
   }
   if (innerWidth <= 900 && document.querySelector('.page-ai') && (!g.closest('.ai-list') || g.closest('.ai-conv, .ai-scroll'))) out.problems.push('AI Chat: the line is not in the chat list pane');
   return out })"""
-SH10_VISITS = [('home', 'lee', v_goto('#/')), ('quiz', 'sam', v_quiz('practice')), ('quiz', 'riley', v_quiz('exam')),
+SH10_VISITS = [('home', 'lee', v_goto('#/')), ('study', 'lee', v_goto(SETUP)), ('quiz', 'sam', v_quiz('practice')), ('quiz', 'riley', v_quiz('exam')),
                ('result', 'sam', v_result), ('records', 'lee', v_goto('#/records')), ('ai', 'sam', v_goto('#/ai')),
                ('ai-settings', 'admin', v_goto('#/ai-settings')), ('users', 'admin', v_goto('#/users')),
                ('logs', 'admin', v_goto('#/logs')), ('settings', 'sam', v_goto('#/settings')), ('banks', 'admin', v_goto('#/banks')),
@@ -2030,10 +2032,10 @@ def sh8_result(rc, lang, theme, size):
 
 def sh8_summary(rc, lang, theme, size):
     d = rc.dev('sam', lang, theme, size)
-    goto(d, '#/', 1.8)
+    goto(d, SETUP, 1.8)
     if not d.js("!!document.querySelector('.home-latest button.aip-sum-btn:not([aria-disabled=true])')"):
         make_result(d, 4)
-        goto(d, '#/', 1.8)
+        goto(d, SETUP, 1.8)
     problems = []
     if not d.js("!!document.querySelector('.home-latest button.aip-sum-btn')"):
         rc.rec('W-SH-8', 'home', 'summary', 'sam', size, lang, theme, None, 'no AI summary button on Home')
@@ -2089,10 +2091,10 @@ def tab_ring(d, what):
 
 def sh9_case(rc, lang, theme, size):
     d = rc.dev('sam', lang, theme, size)
-    goto(d, '#/', 1.8)
+    goto(d, SETUP, 1.8)
     if not d.js("!!document.querySelector('.home-latest button.aip-sum-btn:not([aria-disabled=true])')"):
         make_result(d, 4)
-        goto(d, '#/', 1.8)
+        goto(d, SETUP, 1.8)
     problems = []
     how = 'tap' if phone(size) else 'click'
     d.tap_sel('.home-latest button.aip-sum-btn', wait=1.2)
@@ -2202,7 +2204,7 @@ def l26_case(rc, lang, theme, size):
     """L-26: a generation started from Home, whose job finishes while the user stays on Home, shows its new bank row there
     without a reload"""
     d = rc.dev('admin', lang, theme, size)
-    goto(d, '#/', 2.0)
+    goto(d, SETUP, 2.0)
     # an AI+ bank in the scope greys the button: untick the AI+ banks first (order-independent)
     d.js("""(() => { for (const row of document.querySelectorAll('.home-setup input[type=checkbox]')) { const host = row.closest('.home-bankhead'); if (row.checked && host && host.querySelector('.ai-badge')) row.click(); } return 1 })()""")
     time.sleep(0.5)
@@ -2312,7 +2314,7 @@ def aibtn_case(rc, lang, theme, size):
     problems = []
     seen = []
     # Home: no AI+ bank ticked -> usable orange; one ticked -> grey with the tip only
-    goto(d, '#/', 2.0)
+    goto(d, SETUP, 2.0)
     # v2.4: nothing is ticked at first; tick every bank, then untick the AI+ ones
     d.js(TICK_ALL_JS)
     time.sleep(0.3)
@@ -2433,7 +2435,7 @@ def bk29_case(rc, lang, theme, size):
     goto(d, '#/banks', 2.0)
     if not d.js("!!document.querySelector('.bk-bank .ai-badge')"):
         # the check needs a bank row with the AI+ badge: make one (long name) from Home, once per stack
-        goto(d, '#/', 2.0)
+        goto(d, SETUP, 2.0)
         if d.js("!!document.querySelector('.home-setup-head .gen-btn:not([aria-disabled=true])')"):
             d.tap_sel('.home-setup-head .gen-btn')
             if until(d, "document.querySelector('dialog[open] #gen-name')", 6.0):
@@ -2485,7 +2487,7 @@ def bk29_case(rc, lang, theme, size):
 
 def gb1_case(rc, lang, theme, size):
     d = rc.dev('sam', lang, theme, size)
-    goto(d, '#/', 2.0)
+    goto(d, SETUP, 2.0)
     r = d.js("""(() => { const b = document.querySelector('.home-setup-head .gen-btn'); if (!b) return null;
       const r = b.getBoundingClientRect(); return {h: Math.round(r.height), w: Math.round(r.width), right: Math.round(r.right), vw: innerWidth} })()""")
     if r is None:
@@ -2503,7 +2505,7 @@ def gb1_case(rc, lang, theme, size):
 def bt1_case(rc, lang, theme, size):
     problems = []
     d = rc.dev('admin', lang, theme, size)
-    for route in ('#/', '#/settings', '#/users', '#/ai-settings?tab=users'):
+    for route in ('#/', SETUP, '#/settings', '#/users', '#/ai-settings?tab=users'):
         goto(d, route, 2.0)
         for b in d.js(BADGE_TIPS) or []:
             if not b['tip']:
@@ -2783,7 +2785,7 @@ def ab1_case(rc, lang, theme, size):
     """A-OWNER-27 / 28 / 28b: the AI+题集 badge (with its tip and the caution line) on the live question card and on the review
     cards of the result page; one AI bank is generated for it and deleted again"""
     d = rc.dev('admin', lang, theme, size)
-    goto(d, '#/', 2.0)
+    goto(d, SETUP, 2.0)
     started = d.js("""(async () => { const post = async (u, b) => { const r = await fetch(u, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(b)}); return [r.status, await r.json().catch(() => null)]; };
       const banks = (await (await fetch('/api/banks')).json()).banks; const g = banks.find(b => !b.ai && b.sheets.length);
       if (!g) return ['no source bank'];
@@ -2801,7 +2803,7 @@ def ab1_case(rc, lang, theme, size):
         rc.rec('W-AB-1', 'quiz', 'ai-badge', 'admin', size, lang, theme, None, 'no AI bank to look at (%s)' % state)
         return
     try:
-        goto(d, '#/', 2.0)
+        goto(d, SETUP, 2.0)
         if not d.js("(() => { const b = [...document.querySelectorAll('.gen-card .btn.primary')][0]; if (!b) return false; b.click(); return true })()"):
             rc.rec('W-AB-1', 'quiz', 'ai-badge', 'admin', size, lang, theme, False, 'no practice button on the finished AI card', d)
             return
@@ -3125,7 +3127,7 @@ def ab2_case(rc, lang, theme, size):
     """L-53 badge word (the practice set for a bank generated from a scope) and L-52 (an AI bank among the ticked sheets
     greys the generate button); one AI bank is generated and deleted again"""
     d = rc.dev('admin', lang, theme, size)
-    goto(d, '#/', 2.0)
+    goto(d, SETUP, 2.0)
     started = d.js("""(async () => { const post = async (u, b) => { const r = await fetch(u, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(b)}); return [r.status, await r.json().catch(() => null)]; };
       const banks = (await (await fetch('/api/banks')).json()).banks; const g = banks.find(b => !b.ai && b.sheets.length);
       if (!g) return ['no source bank'];
@@ -3152,7 +3154,7 @@ def ab2_case(rc, lang, theme, size):
             problems.append('no AI+ badge on the AI bank in Bank management')
         elif word not in badge:
             problems.append('badge word is "%s", expected "%s"' % (badge, word))
-        goto(d, '#/', 2.0)
+        goto(d, SETUP, 2.0)
         home = d.js(grab)
         if home is not None and word not in home:
             problems.append('Home badge word is "%s"' % home)
@@ -3297,7 +3299,7 @@ def g_s10(rc):
         return
     if rc.want('W-JC-1'):
         d = rc.dev('admin', 'zh', 'light', (390, 844))
-        goto(d, '#/', 2.0)
+        goto(d, SETUP, 2.0)
         rc.notes.append('jobs for the cards: %s' % ensure_jobs(rc, d))
     if rc.want('W-L59'):
         rc.paging_users()
@@ -3653,8 +3655,9 @@ from checks_v12_charts import GROUPS_V12_CHARTS  # noqa: E402
 from checks_v13 import GROUPS_V13  # noqa: E402
 from checks_v22 import GROUPS_V22  # noqa: E402
 from checks_v23 import GROUPS_V23  # noqa: E402
+from checks_v25 import GROUPS_V25  # noqa: E402
 
-GROUPS = GROUPS + GROUPS_V12_QUIZ + GROUPS_V12_AI + GROUPS_V12_TOKENS + GROUPS_V12_CHARTS + GROUPS_V13 + GROUPS_V22 + GROUPS_V23
+GROUPS = GROUPS + GROUPS_V12_QUIZ + GROUPS_V12_AI + GROUPS_V12_TOKENS + GROUPS_V12_CHARTS + GROUPS_V13 + GROUPS_V22 + GROUPS_V23 + GROUPS_V25
 
 
 def run(walk):

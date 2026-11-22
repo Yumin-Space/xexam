@@ -349,7 +349,7 @@ function genCard(job: GenJob): HTMLElement {
  * exam. A tap opens the list of written questions in the progress card. Gone when the job ends (the real bank replaces it)
  * and on the quiz route. `where` only tells the two pages apart for styling.
  */
-export function placeholderRow(where: 'home' | 'banks'): HTMLElement {
+export function placeholderRow(where: 'study' | 'banks'): HTMLElement {
   const host = h('div', { class: `gen-ph-host gen-ph-${where}` });
   const draw = (): void => {
     const ph = placeholderOf(aiGenStatus(), S.route.name);
@@ -389,7 +389,7 @@ export function practiceBank(job: GenJob): void {
     S.cfg.selected = new Set(bank.sheets.filter((s) => s.usable > 0).map((s) => sheetKey(bank.id, s.name)));
     S.cfg.mode = 'all';
   }
-  navigate({ name: 'home' });
+  navigate({ name: 'study' });
   void dismissJob(job);
   setTimeout(() => document.getElementById('home-setup-h')?.scrollIntoView({ block: 'start' }), 80);
 }
@@ -398,7 +398,7 @@ export function practiceBank(job: GenJob): void {
  * The card host (C-F1): the client-only upload card first, then the active job and the unseen finished ones (at most 3).
  * It draws itself from state/ai-gen.ts. Never on the quiz page (no page puts it there).
  */
-export function genCardHost(where: 'home' | 'banks'): HTMLElement {
+export function genCardHost(where: 'study' | 'banks'): HTMLElement {
   const host = h('div', { class: 'gen-cards', 'data-gen-host': where });
   const draw = (): void => {
     const gen = aiGenStatus();

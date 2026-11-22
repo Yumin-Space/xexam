@@ -25,7 +25,7 @@ import time
 import urllib.request
 
 import seed
-from checks import CHECKS_JS, LANGS, W, goto, make_result, phone, sz, until
+from checks import CHECKS_JS, LANGS, SETUP, W, goto, make_result, phone, sz, until
 
 SIZES = [(393, 852), (360, 740), (320, 640), (1280, 800)]
 
@@ -393,7 +393,7 @@ FAIL_ATTEMPT = """(() => { if (window.__failAttempt) return 1; window.__failAtte
 
 def rs_case(rc, lang, theme, size):
     d = rc.dev('sam', lang, theme, size)
-    goto(d, '#/', 0.8)
+    goto(d, SETUP, 0.8)
     script = d.cdp.call('Page.addScriptToEvaluateOnNewDocument', source=FAIL_ATTEMPT)    # survives the reload the quiz start does
     try:
         got = make_result(d, 5)

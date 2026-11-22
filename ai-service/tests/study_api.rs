@@ -6,6 +6,8 @@ mod common;
 mod access;
 #[path = "study_api/admin.rs"]
 mod admin;
+#[path = "study_api/assess.rs"]
+mod assess;
 #[path = "study_api/bounds.rs"]
 mod bounds;
 #[path = "study_api/hide_model.rs"]

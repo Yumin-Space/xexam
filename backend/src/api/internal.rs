@@ -7,7 +7,8 @@
 //! the token routes: `POST /internal/ai/introspect` (re-checks a session during a running answer),
 //! `POST /internal/ai/users` (which users exist and who has AI+), `POST /internal/ai/log` (its lines for the System log),
 //! `POST /internal/ai/heartbeat` (its state, [`ServiceReport`]) and, since v0.9, the three study-data routes
-//! `POST /internal/ai/question`, `POST /internal/ai/record` and `POST /internal/ai/record-info` (see `internal_study`), and,
+//! `POST /internal/ai/question`, `POST /internal/ai/record` and `POST /internal/ai/record-info` (see `internal_study`), since v2.5 `POST /internal/ai/assess` (the counts behind the
+//! study assessment), and,
 //! since v1.1, the four AI-bank routes `POST /internal/ai/gen/source`, `/gen/seeds`, `/gen/create` and `/gen/lookup` (see
 //! `internal_gen`), and, since v1.4, the three place-lookup routes `POST /internal/ai/geo/next` (a long poll: which addresses
 //! need a place), `/geo/result` (the places, or why not) and `/geo/source` (set or read the place source), see [`crate::geo`].
@@ -589,6 +590,7 @@ pub(super) async fn dispatch(
             | "/internal/ai/question"
             | "/internal/ai/record"
             | "/internal/ai/record-info"
+            | "/internal/ai/assess"
             | "/internal/ai/gen/source"
             | "/internal/ai/gen/seeds"
             | "/internal/ai/gen/corpus"
@@ -629,6 +631,7 @@ pub(super) async fn dispatch(
                 "/internal/ai/question" => super::internal_study::question(st, &data).await,
                 "/internal/ai/record" => super::internal_study::record(st, &data).await,
                 "/internal/ai/record-info" => super::internal_study::record_info(st, &data).await,
+                "/internal/ai/assess" => super::internal_study::assess(st, &data).await,
                 "/internal/ai/gen/source" => super::internal_gen::source(st, &data).await,
                 "/internal/ai/gen/seeds" => super::internal_gen::seeds(st, &data).await,
                 "/internal/ai/gen/corpus" => super::internal_gen::corpus(st, &data).await,

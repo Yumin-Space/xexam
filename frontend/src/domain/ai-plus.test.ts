@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { AiStatus } from '../state/ai.ts';
 import {
-  aiControls, aiPlusView, atDigits, basedKey, buildStudyAsk, buildSummaryAsk, busyView, chatDisplayTitle, chatNameOf, controlState,
-  dockKey, focusKey, popTitleKey, recordSummaryExtra, replyLang, resultExtra, type RunningInfo, unavailableParts,
+  aiControls, aiPlusView, assessDateTag, assessExtra, atDigits, basedKey, buildAssessAsk, buildStudyAsk, buildSummaryAsk, busyView, chatDisplayTitle, chatNameOf, controlState,
+  dockKey, focusKey, localDay, newestRecordAt, popTitleKey, recordSummaryExtra, replyLang, resultExtra, type RunningInfo, unavailableParts,
 } from './ai-plus.ts';
 
 const ready = (enabled: boolean, suspended = false): AiStatus =>
@@ -308,5 +308,60 @@ describe('v1.1: reasons off / down and the feature switch (BT-2, FP-3)', () => {
     assert.deepEqual(controlState(view, null, 'summary'), { show: true, usable: false, reason: 'featureOff', tag: true, tip: { key: 'ai.err.featureOff' } });
     assert.equal((controlState(view, 'noWrong', 'summary') as { reason: string }).reason, 'featureOff');
     assert.deepEqual(controlState(view, null, 'hint'), { show: true, usable: true });
+  });
+});
+
+describe('v2.5: study assessment', () => {
+  const usable = { show: true, usable: true } as const;
+  it('assessExtra: fewer than 3 saved records is assessFew; not loaded is no reason', () => {
+    assert.equal(assessExtra(null), null);
+    assert.equal(assessExtra([]), 'assessFew');
+    assert.equal(assessExtra([1, 2]), 'assessFew');
+    assert.equal(assessExtra([1, 2, 3]), null);
+  });
+  it('controlState greys with the assessFew tip and no tag', () => {
+    assert.deepEqual(controlState(usable, 'assessFew', 'summary'), {
+      show: true, usable: false, reason: 'assessFew', tag: false, tip: { key: 'aiplus.why.assessFew' },
+    });
+    assert.deepEqual(controlState(usable, null, 'summary'), usable);
+  });
+  it('a service problem still wins over assessFew', () => {
+    const s = controlState({ show: true, usable: false, reason: 'off' }, 'assessFew', 'summary');
+    assert.equal(s.show && !s.usable && s.reason, 'off');
+  });
+  it('buildAssessAsk sends only the reply language', () => {
+    assert.deepEqual(buildAssessAsk('zh'), { lang: 'zh-CN' });
+    assert.deepEqual(buildAssessAsk('ja'), { lang: 'ja' });
+  });
+  it('assess chats get their own suffix and busy note', () => {
+    assert.deepEqual(chatDisplayTitle({ title: '2026-11-22', kind: 'assess' }), { text: '2026-11-22', suffixKey: 'aiplus.chat.suffix.assess' });
+    assert.equal(chatNameOf({ title: 'T', kind: 'assess' }, (k) => k), 'T-aiplus.chat.suffix.assess');
+    const running: RunningInfo = { chatId: 1, messageId: 2, chatKind: 'assess', kind: 'assess', questionId: null, questionNo: null, source: null, recordId: null };
+    assert.deepEqual(busyView(running, null), { kind: 'assess', noteKey: 'aiplus.busy.assess', canShow: false });
+  });
+});
+
+describe('v2.5: the assessment newest record and date tag', () => {
+  it('newestRecordAt is the largest at of all records, as the server MAX(at), not the first row by id', () => {
+    assert.equal(newestRecordAt(null), null);
+    assert.equal(newestRecordAt([]), null);
+    // id order (newest id first) with a smaller at on top: a DST fall-back hour or a time-zone change
+    const records = [{ id: 11, at: '2026-11-01 01:10' }, { id: 10, at: '2026-11-01 01:50' }, { id: 9, at: '2026-10-31 23:00' }];
+    assert.equal(newestRecordAt(records), '2026-11-01 01:50');
+    assert.equal(newestRecordAt([{ at: '2026-11-22 07:00' }]), '2026-11-22 07:00');
+  });
+  it('assessDateTag takes the day from createdAt in local time and compares it with the local today', () => {
+    const now = new Date(2026, 10, 22, 7, 5);
+    const secs = (d: Date): number => Math.floor(d.getTime() / 1000);
+    // Made minutes ago: no tag, even when the server's calendar day (date) is still the day before
+    assert.equal(assessDateTag({ createdAt: secs(new Date(2026, 10, 22, 7, 0)), date: '2026-11-21' }, now), null);
+    // Made on an earlier local day: that local day, whatever the server's day was
+    assert.equal(assessDateTag({ createdAt: secs(new Date(2026, 10, 20, 23, 30)), date: '2026-11-21' }, now), '2026-11-20');
+    // No createdAt: the server's date is the fallback
+    assert.equal(assessDateTag({ createdAt: null, date: '2026-11-19' }, now), '2026-11-19');
+    assert.equal(assessDateTag({ createdAt: null, date: '2026-11-22' }, now), null);
+    assert.equal(assessDateTag({ createdAt: null }, now), null);
+    assert.equal(assessDateTag(null, now), null);
+    assert.equal(localDay(new Date(2026, 0, 5, 0, 0)), '2026-01-05');
   });
 });

@@ -811,6 +811,232 @@ impl Store {
     }
 }
 
+// ---------------------------------------------------------------- the study assessment
+
+/// Records an assessment needs at least (fewer answers `{"ok": false, "reason": "few"}`).
+pub const ASSESS_MIN_RECORDS: i64 = 3;
+/// Days the assessment looks back, today included.
+const ASSESS_DAYS: i64 = 30;
+
+/// One saved record in the assessment window.
+struct AssessRow {
+    date: jiff::civil::Date,
+    hour: usize,
+    kind: String,
+    mode: String,
+    seconds: i64,
+    percent: i64,
+    timed: bool,
+    time_up: bool,
+    answered: i64,
+    correct: i64,
+    unanswered: i64,
+}
+
+fn parse_day(at: &str) -> Option<jiff::civil::Date> {
+    at.get(..10)?.parse().ok()
+}
+
+fn day_diff(later: jiff::civil::Date, earlier: jiff::civil::Date) -> i64 {
+    i64::from((later - earlier).get_days())
+}
+
+/// A mode key the AI service accepts (1..=16 lower-case letters), anything else counts as `other`.
+fn mode_key(m: &str) -> &str {
+    if (1..=16).contains(&m.len()) && m.bytes().all(|b| b.is_ascii_lowercase()) {
+        m
+    } else {
+        "other"
+    }
+}
+
+/// `{"ok": true, ...}` for the dashboard's study assessment of `user`, or the `few` refusal. Only counts and times of the
+/// caller's own records: never sheets, banks, question ids or texts, nor user names. Read-only.
+fn assess_basis(c: &Connection, user: i64, now: &str) -> Result<Value, DbError> {
+    let Some(today) = parse_day(now) else {
+        return Ok(json!({"ok": false, "reason": "few"}));
+    };
+    // `latestAt` is the largest `at` of the user's records, not the time of the newest id (they differ after local time ran
+    // backwards: a DST fall-back hour, a TZ change). The page sends back the largest `at` of its record list to look up a
+    // saved assessment, so both sides must keep this same rule.
+    let (records_all, latest_at): (i64, Option<String>) = c.query_row(
+        "SELECT COUNT(*), MAX(at) FROM attempts WHERE user_id = ?1",
+        params![user],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
+    let Some(latest_at) = latest_at.filter(|_| records_all >= ASSESS_MIN_RECORDS) else {
+        return Ok(json!({"ok": false, "reason": "few"}));
+    };
+    let start = today
+        .checked_sub(jiff::Span::new().days(ASSESS_DAYS - 1))
+        .map_err(|_| DbError::Unsupported)?;
+    let from = format!("{start} 00:00");
+    let mut st = c.prepare(
+        "SELECT a.at, a.kind, a.mode, a.seconds, a.percent, a.time_limit IS NOT NULL, a.ended = 'timeUp', \
+                COALESCE(SUM(NOT (i.answer IS NULL AND i.correct = 0)), 0), \
+                COALESCE(SUM(i.correct), 0), \
+                COALESCE(SUM(i.answer IS NULL AND i.correct = 0), 0) \
+         FROM attempts a LEFT JOIN attempt_items i ON i.attempt_id = a.id \
+         WHERE a.user_id = ?1 AND a.at >= ?2 GROUP BY a.id ORDER BY a.at",
+    )?;
+    let rows: Vec<AssessRow> = st
+        .query_map(params![user, from], |r| {
+            let at: String = r.get(0)?;
+            Ok((
+                at,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, i64>(3)?,
+                r.get::<_, i64>(4)?,
+                r.get::<_, bool>(5)?,
+                r.get::<_, Option<bool>>(6)?.unwrap_or(false),
+                r.get::<_, i64>(7)?,
+                r.get::<_, i64>(8)?,
+                r.get::<_, i64>(9)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .filter_map(
+            |(at, kind, mode, seconds, percent, timed, time_up, answered, correct, unanswered)| {
+                Some(AssessRow {
+                    date: parse_day(&at)?,
+                    hour: at.get(11..13).and_then(|h| h.parse().ok()).unwrap_or(0),
+                    kind,
+                    mode,
+                    seconds,
+                    percent,
+                    timed,
+                    time_up,
+                    answered,
+                    correct,
+                    unanswered,
+                })
+            },
+        )
+        .collect();
+
+    let mut weekdays = [0_i64; 7];
+    let mut dayparts = [0_i64; 4];
+    let mut weeks = [(0_i64, 0_i64); 4];
+    let mut modes = serde_json::Map::new();
+    let mut days: Vec<jiff::civil::Date> = Vec::new();
+    let (mut practice, mut exams, mut answered, mut correct, mut unanswered) = (0, 0, 0, 0, 0);
+    let (mut seconds_sum, mut timed_exams, mut time_ups) = (0_i64, 0, 0);
+    let mut exam_percent: Vec<i64> = Vec::new();
+    let mut durations: Vec<i64> = Vec::new();
+    for r in &rows {
+        if r.kind == "exam" {
+            exams += 1;
+            exam_percent.push(r.percent);
+            timed_exams += i64::from(r.timed);
+            time_ups += i64::from(r.time_up);
+        } else {
+            practice += 1;
+        }
+        answered += r.answered;
+        correct += r.correct;
+        unanswered += r.unanswered;
+        seconds_sum += r.seconds;
+        durations.push(r.seconds);
+        weekdays[r.date.weekday().to_monday_zero_offset() as usize] += 1;
+        dayparts[r.hour.min(23) / 6] += 1;
+        let ago = day_diff(today, r.date).clamp(0, ASSESS_DAYS - 1);
+        let w = 3 - (ago / 7).min(3) as usize;
+        weeks[w].0 += r.answered;
+        weeks[w].1 += r.correct;
+        let key = mode_key(&r.mode).to_string();
+        let n = modes.get(&key).and_then(Value::as_i64).unwrap_or(0);
+        modes.insert(key, json!(n + 1));
+        if days.last() != Some(&r.date) {
+            days.push(r.date);
+        }
+    }
+    let longest_gap = days
+        .windows(2)
+        .map(|w| day_diff(w[1], w[0]))
+        .max()
+        .unwrap_or(0);
+    durations.sort_unstable();
+    // median in minutes, rounded
+    let median_minutes = match durations.len() {
+        0 => 0,
+        n => {
+            let twice = if n % 2 == 1 {
+                durations[n / 2] * 2
+            } else {
+                durations[n / 2 - 1] + durations[n / 2]
+            };
+            (twice + 60) / 120
+        }
+    };
+    let avg_sec = if answered > 0 {
+        (seconds_sum + answered / 2) / answered
+    } else {
+        0
+    };
+    let exam_avg = if exam_percent.is_empty() {
+        Value::Null
+    } else {
+        let n = exam_percent.len() as i64;
+        json!((exam_percent.iter().sum::<i64>() + n / 2) / n)
+    };
+    let since_last = parse_day(&latest_at).map_or(0, |d| day_diff(today, d).max(0));
+    let (seen, answers, good, open, mastered): (i64, i64, i64, i64, i64) = c.query_row(
+        "SELECT COUNT(*), COALESCE(SUM(attempts), 0), COALESCE(SUM(correct), 0), \
+                COALESCE(SUM(wrong > 0 AND streak < ?2), 0), COALESCE(SUM(streak >= ?2), 0) \
+         FROM user_stats WHERE user_id = ?1",
+        params![user, crate::database::MASTER_STREAK],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+    )?;
+    Ok(json!({
+        "ok": true,
+        "uiLang": ui_lang(c, user)?,
+        "today": today.to_string(),
+        "latestAt": latest_at,
+        "basis": {
+            "days": ASSESS_DAYS,
+            "records": rows.len(),
+            "practice": practice,
+            "exams": exams,
+            "answered": answered,
+            "correct": correct,
+            "unanswered": unanswered,
+            "activeDays": days.len(),
+            "daysSinceLast": since_last,
+            "longestGapDays": longest_gap,
+            "avgSecPerItem": avg_sec,
+            "medianMinutes": median_minutes,
+            "examAvgPercent": exam_avg,
+            "timedExams": timed_exams,
+            "timeUps": time_ups,
+            "weekdays": weekdays,
+            "dayparts": dayparts,
+            "weeks": weeks.iter().map(|(a, k)| json!({"answered": a, "correct": k})).collect::<Vec<_>>(),
+            "modes": Value::Object(modes),
+            "allTime": {
+                "records": records_all,
+                "seen": seen,
+                "answers": answers,
+                "correct": good,
+                "notebookOpen": open,
+                "mastered": mastered,
+            },
+        },
+    }))
+}
+
+impl Store {
+    /// `POST /internal/ai/assess` for `user` (the route has bound the session already): the counts behind the AI study
+    /// assessment (see [`assess_basis`]). Fewer than [`ASSESS_MIN_RECORDS`] saved records answer `{"ok": false, "reason":
+    /// "few"}`. Reads only.
+    pub fn study_assess(&self, user: i64) -> Result<Value, DbError> {
+        let now = self.clock.now();
+        let g = self.lock();
+        assess_basis(&g, user, &now)
+    }
+}
+
 /// The keys of a JSON object in order (tests that compare key lists).
 #[cfg(test)]
 fn keys(v: &Value) -> Vec<String> {

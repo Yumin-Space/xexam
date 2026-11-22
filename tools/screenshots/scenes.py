@@ -5,8 +5,8 @@ shoot_language() writes, into one folder, the 33 images the READMEs and docs use
 iPhone images 390 x 844, both at device scale 2). Since v1.0 the UI is phone-first (icons with tap-and-hold labels, a
 one-row practice bar, a collapsible AI+ panel under the card, a centered GitHub footer line); the scenes follow it:
 
-  desktop-1-home        Home with the saved exam to continue (green Start exam, orange Start practice), the whole page down
-                        to the compact footer (disclaimer, then the centered "GitHub | Xexam <version>" line)
+  desktop-1-home        (v2.5) the Home dashboard (#/): greeting, the saved exam to continue, the page tiles, the AI study
+                        assessment button, the leaderboard and the most practised questions
   desktop-2-quiz        an exam in progress, on a hotspot question with its first item answered
   desktop-3-result      the result of a whole exam: the score and the first answer card (an orange wrong option, the verdict)
   desktop-4-records     Study records
@@ -58,10 +58,14 @@ one-row practice bar, a collapsible AI+ panel under the card, a centered GitHub 
                         the top row, a few questions answered
   desktop-23-exam-submit (v1.1) the submit confirm of that exam with questions not completed (they are not counted as wrong)
   desktop-24-not-completed (v1.1) its result, the review filter on "Not completed" (the questions listed separately)
-  desktop-25-ai-bank-home (v1.1) Home after an AI generation from the checked sheets (made by the stub provider, a name typed
+  desktop-26-study      (v2.5) the Exam & practice page (#/study, the old Home) with the saved exam to continue (green Start
+                        exam, orange Start practice), the whole page down to the compact footer (disclaimer, then the
+                        centered "GitHub | Xexam <version>" line)
+  desktop-25-ai-bank-home (v1.1) the Exam & practice page (#/study) after an AI generation from the checked sheets (made by the stub provider, a name typed
                         per language): the AI+ Set row in the bank list and the done card; the bank is deleted again after
                         this scene, desktop-21 and iphone-8 (so no other scene asks its made-up questions)
-  iphone-1-home         Home with the latest card (one-row actions) and the start bar
+  iphone-1-home         (v2.5) the Home dashboard on a phone: tiles, AI button, leaderboard
+  iphone-9-study        (v2.5) the Exam & practice page with the latest card (one-row actions) and the start bar
   iphone-2-quiz         an exam: compact top row, one-row bar (previous, Next, flag), collapsed answer sheet
   iphone-3-menu         the menu
   iphone-4-records      Study records: compact KPIs, folded filters, three-row cards
@@ -104,8 +108,17 @@ SCENES = ['desktop-%d-%s.png' % kv for kv in enumerate(
      'timed-exam', 'exam-submit', 'not-completed', 'ai-bank-home'],
     start=1)] + [
     'iphone-1-home.png', 'iphone-2-quiz.png', 'iphone-3-menu.png', 'iphone-4-records.png', 'iphone-5-ai-hint.png',
-    'iphone-6-result.png', 'iphone-7-ai-chat.png', 'iphone-8-banks.png']
+    'iphone-6-result.png', 'iphone-7-ai-chat.png', 'iphone-8-banks.png', 'iphone-9-study.png']
 
+# v2.5: the old Home is the Exam & practice page at #/study (desktop-26-study); 'home' is the dashboard at #/
+SETUP = '#/study'
+
+# v2.5: the Exam & practice images show every bank ticked (the page starts with nothing ticked since v2.4)
+JS_TICK_ALL = """(() => { const boxes = [...document.querySelectorAll('.home-picklist input[type=checkbox]')];
+  if (!boxes.some((b) => b.checked)) { const all = document.querySelector('.home-pickacts .btn');
+    if (all) all.click(); else boxes.forEach((b) => { if (!b.checked) b.click(); }); }
+  return boxes.filter((b) => b.checked).length })()"""
+SCENES.insert(SCENES.index('desktop-25-ai-bank-home.png') + 1, 'desktop-26-study.png')
 SCENES.insert(SCENES.index('desktop-10-users.png') + 1, 'desktop-10-users-signin.png')
 
 BROWSER_LANG = {'en': 'en-US', 'zh-CN': 'zh-CN', 'ja': 'ja'}
@@ -651,7 +664,7 @@ JS_EXAM_BAR = r"""(() => {
 # selected one]
 JS_AI_TABS = r"""((expected) => {
   const bad = [];
-  const tabs = window.__qa('button[aria-pressed][aria-controls]').filter(b => window.__shown(b));
+  const tabs = window.__qa('button[id^="ais-tab-"][aria-pressed]').filter(b => window.__shown(b));   // not the AI safety sub-tabs (v1.9)
   if (tabs.length !== 5) bad.push(tabs.length + ' category tabs (five expected: the fifth, AI banks, is new in v1.1)');
   const on = tabs.filter(b => b.getAttribute('aria-pressed') === 'true');
   if (on.length !== 1) bad.push(on.length + ' tabs selected (one expected)');
@@ -834,7 +847,8 @@ class Shooter:
         self.cdp.call('Emulation.setDeviceMetricsOverride', width=w, height=int(h), deviceScaleFactor=2, mobile=mobile,
                       screenWidth=w, screenHeight=int(h))
 
-    def nav(self, route='#/', settle=1.6):
+    def nav(self, route=SETUP, settle=1.6):
+        # the default is the exam setup (#/study); the dashboard is s.nav('#/')
         # a URL that differs only in its hash would not reload the page (and not read the settings again)
         self.cdp.call('Page.navigate', url='about:blank')
         time.sleep(0.2)
@@ -1023,9 +1037,18 @@ def _desktop_scenes(s, base, cookie, code, upload, with_log):
     print('  quiz:', s.js(JS_QUIZ))
     s.page('desktop-2-quiz.png', cap=900, to_footer=True)
     s.js(JS_SAVE_EXIT)
+    if s.wanted('desktop-26-study.png'):
+        _footer(s, 'Exam & practice')
+    s.js(JS_TICK_ALL)
+    s.page('desktop-26-study.png', cap=1500)
     if s.wanted('desktop-1-home.png'):
-        _footer(s, 'Home')
-    s.page('desktop-1-home.png', cap=1500)
+        # the dashboard, with the saved exam as its resume card; no sideways scroll, no @ in the ranking names
+        s.nav('#/', settle=2.8)
+        _expect(s.js("(() => { const bad = []; const de = document.documentElement; if (de.scrollWidth > de.clientWidth + 1) bad.push('the page scrolls horizontally'); "
+                     "if (!document.querySelector('.dash-hero')) bad.push('no hero tile'); "
+                     "if ([...document.querySelectorAll('.dash-name')].some(e => e.textContent.includes('@'))) bad.push('an @ in a ranking name'); return bad; })()"),
+                'the Home dashboard')
+        s.page('desktop-1-home.png', cap=1500)
     if s.wanted('desktop-5-banks.png'):
         s.nav('#/banks')
         print('  banks:', s.js(JS_UPDATE))
@@ -1058,6 +1081,7 @@ def _desktop_scenes(s, base, cookie, code, upload, with_log):
         admin = seed.Session(base)
         admin.cookie[seed.COOKIE] = cookie
         alex = admin.user_id('alex')
+        s.nav('#/users?tab=users', settle=2.6)   # the sign-in tab shot above leaves the page on the other tab
         print('  banks dialog:', s.js("(async () => { document.querySelector('#us-banks-%d').click(); await window.__wait(900); "
                                       "return document.querySelector('dialog[open]') ? 'open' : 'no dialog' })()" % alex))
         # tall enough for the whole dialog with some backdrop above and below it
@@ -1227,7 +1251,7 @@ def _v11_scenes(s, base, cookie, code):
     try:
         if state != 'done' or not bank:
             raise AssertionError('the AI generation of the screenshots did not finish: %s' % state)
-        s.nav(settle=2.4)
+        s.nav(SETUP, settle=2.4)
         s.page('desktop-25-ai-bank-home.png', cap=1500)
         if s.wanted('desktop-21-ai-banks.png'):
             # desktop-21 (v1.1): the AI banks tab, from the status chips through the card of the AI generation jobs (the job list)
@@ -1294,9 +1318,16 @@ def _check_practice_bar(s, base, cookie, code):
 def _phone_scenes(s, base, cookie, code):
     s.iphone()
     s.nav()
+    if s.wanted('iphone-9-study.png'):
+        _footer(s, 'Exam & practice on a phone', touch=True)
+    s.js(JS_TICK_ALL)
+    s.phone('iphone-9-study.png')
     if s.wanted('iphone-1-home.png'):
-        _footer(s, 'Home on a phone', touch=True)
-    s.phone('iphone-1-home.png')
+        s.nav('#/', settle=2.8)
+        _expect(s.js("(() => { const bad = []; const de = document.documentElement; if (de.scrollWidth > de.clientWidth + 1) bad.push('the page scrolls horizontally'); "
+                     "if (!document.querySelector('.dash-hero')) bad.push('no hero tile'); return bad; })()"), 'the Home dashboard on a phone')
+        s.phone('iphone-1-home.png')
+        s.nav()
     s.js(JS_RESUME)
     if s.wanted('iphone-2-quiz.png'):
         _expect(s.js(JS_EXAM_BAR), 'the exam bar on a phone')

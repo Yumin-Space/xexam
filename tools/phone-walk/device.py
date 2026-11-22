@@ -10,7 +10,7 @@ Device(chrome_exe, base, cookie, lang='zh', theme='light', width=390, height=844
   .set_theme(t)            prefers-color-scheme light / dark;  .set_reduced_motion(on)
   .keyboard(True / False)  simulates the on-screen keyboard by shrinking the viewport height to 55 % (no emulator shows the
                            real iOS keyboard, so this is the closest that exists; it never replaces the owner's iPhone check)
-  .nav('#/route')          opens a route and waits;  .js(code) / .js_call(fn, *args)  evaluates in the page
+  .nav('#/route')          opens a route and waits (default '#/' = dashboard; SETUP = '#/study' = exam setup);  .js(code) / .js_call(fn, *args)  evaluates in the page
   .rect(sel, idx)          box of the idx-th visible element (scrolled into view unless scroll=False)
   .tap(x, y) / .tap_sel(sel, idx)   a real touch tap (Input.dispatchTouchEvent);  .swipe(x, y, dy)  a touch swipe
   .type(text) / .key(name)  text and keys;  .scroll(y)
@@ -49,6 +49,8 @@ NAMED_SIZES = {'iphone16': (393, 852), 'iphone16pro': (402, 874), 'iphone16plus'
 KEYBOARD_SHARE = 0.55          # the simulated on-screen keyboard leaves 55 % of the viewport height (spec 5.4)
 PORTRAIT_INSETS = {'top': 47, 'bottom': 34, 'left': 0, 'right': 0}
 LANDSCAPE_INSETS = {'top': 0, 'bottom': 21, 'left': 47, 'right': 47}
+# v2.5: '#/' is the dashboard; the exam setup (the old Home) lives at '#/study'
+SETUP = '#/study'
 
 
 class EventCDP(CDP):
@@ -170,9 +172,9 @@ class Device:
         if cookie:
             self.cdp.call('Network.setCookie', name=seed.COOKIE, value=cookie, url=self.base + '/', httpOnly=True,
                           sameSite='Strict')
-            self.nav('#/')
+            self.nav(SETUP)
             self.save_settings(**(settings or {}))
-        self.nav('#/')
+        self.nav(SETUP)
 
     def save_settings(self, **kw):
         body = {'uiLang': self.lang, 'questionLang': self.lang, 'theme': self.theme, 'autoAdvance': False}

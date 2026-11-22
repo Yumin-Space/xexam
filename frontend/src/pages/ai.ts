@@ -1662,12 +1662,17 @@ export function chatTitleEl(c: { title: string; kind?: AiChatKind | null }): HTM
   return h('span', { class: 'ai-chat-t' }, chatTitleText(c));
 }
 
+/** v2.5: a user message that asked for the AI study assessment (the wire kind `assess`) */
+const isAssessMessage = (m: AiMessage): boolean => m.role === 'user' && m.kind === 'assess';
+
 /**
  * What a user message shows (v0.9): an AI Chat message is its own bubble; a study question (hint / explanation) is a label
  * line ("AI hint · question 3") above the bubble; a summary request is only its label ("AI summary · 8 of 9 wrong answers"),
  * never the machine text the model was given.
  */
 export function userBody(m: AiMessage): Child[] {
+  // v2.5: the study assessment request is only its title, never the machine line the model was given
+  if (isAssessMessage(m)) return [h('p', { class: 'ai-study-label' }, t('dash.ai.title'))];
   if (m.kind === 'summary') {
     const sm = m.sample;
     return [sm ? h('p', { class: 'ai-study-label' }, t('aiplus.chat.label.summary', { used: sm.used, wrong: sm.wrong })) : null];
@@ -2146,6 +2151,7 @@ function copyButton(m: AiMessage, text: string): HTMLElement {
 /** What Copy copies: the text shown. A summary request shows only its label, so Copy copies that label, not the
  *  machine line the model received (v0.9). */
 function copySource(m: AiMessage): string {
+  if (isAssessMessage(m)) return t('dash.ai.title');
   if (m.role !== 'user' || m.kind !== 'summary') return m.content;
   const sm = m.sample;
   return sm ? t('aiplus.chat.label.summary', { used: sm.used, wrong: sm.wrong }) : '';

@@ -16,4 +16,5 @@ test('a route-name change is reported, the first page too', () => {
 test('the same name (another record, a redraw) and an unknown name are not reported', () => {
   assert.equal(visitToReport(true, 'record', 'record'), null);
   assert.equal(visitToReport(true, 'home', 'nowhere'), null);
+  assert.equal(visitToReport(true, 'home', 'study'), 'study');
 });

@@ -470,6 +470,31 @@ async fn visits_follow_role_switch_merge_and_guard() {
     assert!(total < 61);
 }
 
+// v2.5: `study` is a visit page (the exam setup moved off `home`); `dashboard` is an API name, not a page
+#[tokio::test]
+async fn visit_pages_include_study_but_not_dashboard() {
+    let _serial = SERIAL.lock().await;
+    let a = app();
+    let adm = admin(&a);
+    assert_eq!(
+        post(&a, "/api/activity/visit", &adm, &json!({"page": "study"}))
+            .await
+            .status,
+        200
+    );
+    assert_eq!(
+        post(
+            &a,
+            "/api/activity/visit",
+            &adm,
+            &json!({"page": "dashboard"})
+        )
+        .await
+        .status,
+        400
+    );
+}
+
 // ---------------------------------------------------------------- reading
 
 #[tokio::test]

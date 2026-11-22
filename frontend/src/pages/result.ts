@@ -35,7 +35,7 @@ export function renderResult(): HTMLElement {
   const again = (): void => void startExam(shuffle(R.results.map((r) => r.q)), R.mode, R.kind);
   const retryWrong = (): void => void startExam(shuffle(R.results.filter((r) => !r.correct && !r.unanswered).map((r) => r.q)), 'retry', R.kind);
   const practice = R.kind === 'practice';
-  const home = (): void => navigate({ name: 'home' });
+  const home = (): void => navigate({ name: 'study' });
   const recordId = R.recordId;
 
   const meta = { mode: modeName(R.mode), time: fmtTime(R.seconds) };
@@ -73,7 +73,7 @@ export function renderResult(): HTMLElement {
   }));
 
   // Icon actions (RS-1): the same DOM at every width; the text label shows beside the icon except on phones (CSS, `.lbl`)
-  const action = (icon: 'retake' | 'list' | 'home', label: string, onClick: () => void): HTMLElement => {
+  const action = (icon: 'retake' | 'list' | 'study', label: string, onClick: () => void): HTMLElement => {
     const b = iconButton({ icon, label, onClick });
     b.classList.add('res-act');
     b.append(h('span', { class: 'lbl', 'aria-hidden': 'true' }, label));
@@ -97,6 +97,6 @@ export function renderResult(): HTMLElement {
         wrong ? h('button', { class: 'btn primary', type: 'button', onclick: retryWrong }, t('result.retryWrong')) : null,
         action('retake', t(practice ? 'result.againPractice' : 'result.again'), again),
         recordId != null ? action('list', t('result.viewRecord'), () => navigate({ name: 'record', id: recordId })) : null,
-        action('home', t('result.home'), home))),
+        action('study', t('result.home'), home))),
     reviewBlock(rows, { get: () => S.rvFilter, set: (f) => { S.rvFilter = f; } }));
 }

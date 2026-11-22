@@ -149,14 +149,14 @@ test('runningLine: queued / writing / saving and the percentage', () => {
 });
 
 test('pollInterval: 2 s on Home / Bank management while visible, 10 s elsewhere, never on the quiz', () => {
-  assert.equal(pollInterval('home', true, job()), 2000);
+  assert.equal(pollInterval('study', true, job()), 2000);
   assert.equal(pollInterval('banks', true, job()), 2000);
   assert.equal(pollInterval('banks', false, job()), 10000);
   assert.equal(pollInterval('records', true, job()), 10000);
   assert.equal(pollInterval('quiz', true, job()), null);
-  assert.equal(pollInterval('home', true, null), null);
-  assert.equal(pollInterval('home', true, job({ state: 'done' })), null);
-  assert.equal(pollInterval('home', true, job({ source: 'file', phase: 'confirm' })), 10000);
+  assert.equal(pollInterval('study', true, null), null);
+  assert.equal(pollInterval('study', true, job({ state: 'done' })), null);
+  assert.equal(pollInterval('study', true, job({ source: 'file', phase: 'confirm' })), 10000);
 });
 
 test('finishedBetween: active -> done / failed only', () => {

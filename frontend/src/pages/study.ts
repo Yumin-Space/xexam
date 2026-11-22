@@ -35,7 +35,7 @@ const resetLimitDraft = (): void => {
   limitDraft.raw = '';
 };
 onRouteChange((from) => {
-  if (from.name === 'home') resetLimitDraft();
+  if (from.name === 'study') resetLimitDraft();
 });
 onClearUserData(resetLimitDraft);
 
@@ -106,7 +106,7 @@ async function discardSaved(practice: boolean): Promise<void> {
   render();
 }
 
-function resumeCard(): HTMLElement | null {
+export function resumeCard(): HTMLElement | null {
   const sv = loadSaved(S.bank);
   if (!sv) return null;
   const practice = sv.kind === 'practice';
@@ -276,7 +276,7 @@ function startPanel(nb: Notebook): HTMLElement {
       allKeys.length > 1 ? h('div', { class: 'home-pickacts' },
         h('button', { class: 'btn quiet', type: 'button', onclick: () => toggle(allKeys, true) }, t('home.pick.all')),
         h('button', { class: 'btn quiet', type: 'button', onclick: () => toggle(allKeys, false) }, t('home.pick.none'))) : null),
-    h('div', { class: 'home-picklist' }, placeholderRow('home'), groups),
+    h('div', { class: 'home-picklist' }, placeholderRow('study'), groups),
     hidden ? h('p', { class: 'dim home-note' }, tn('home.pick.hiddenBanks', hidden)) : null);
 
   // Range (mode)
@@ -550,14 +550,14 @@ function overviewCard(nb: Notebook): HTMLElement {
       canManageBanks() ? link({ name: 'banks' }, t('nav.banks'), nb.total ? 'btn quiet' : 'btn') : null) : null);
 }
 
-export function renderHome(): HTMLElement {
+export function renderStudy(): HTMLElement {
   // the start panel sets it again when it has its bar (no questions: no bar, toasts at the default height)
   liftToastAbove(null);
   const nb = notebook();
   return h('div', { class: 'page page-home' },
-    pageHead(t('home.title')),
+    pageHead(t('nav.study')),
     h('div', { class: 'home-grid' },
       // the generation progress card (GB-7) sits at the top of the main column, above the resume card
-      h('div', { class: 'home-main' }, genCardHost('home'), resumeCard(), startPanel(nb)),
+      h('div', { class: 'home-main' }, genCardHost('study'), resumeCard(), startPanel(nb)),
       h('div', { class: 'home-side' }, latestCard(), overviewCard(nb))));
 }

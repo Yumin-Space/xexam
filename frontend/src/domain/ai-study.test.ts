@@ -325,3 +325,24 @@ describe('call-cap refusals expire by themselves', () => {
     assert.equal(v.note, null);
   });
 });
+
+describe('v2.5: study assessment parsing', () => {
+  it('runningOf accepts the assess kinds', () => {
+    const r = runningOf({ chatId: 2, messageId: 8, chatKind: 'assess', kind: 'assess' });
+    assert.equal(r?.chatKind, 'assess');
+    assert.equal(r?.kind, 'assess');
+  });
+  it('a saved assessment carries date and basis onto its answers', () => {
+    const ans = { status: 'done', content: 'x', messageId: 4 };
+    const p = parseSaved({ chatId: 1, latest: ans, lastGood: ans, date: '2026-11-22', basis: { days: 30, records: 12, answered: 340, latestAt: '2026-11-22 09:10' } });
+    assert.equal(p.lastGood?.date, '2026-11-22');
+    assert.deepEqual(p.lastGood?.sample, { used: 340, usable: 12, wrong: 0 });
+  });
+  it('a start event basis becomes the sample; a summary sample wins', () => {
+    const e = reduce(emptyEntry(), { type: 'event', ev: { event: 'start', data: { chatId: 1, assistantMessageId: 5, basis: { records: 4, answered: 50 } } } } as Action);
+    assert.deepEqual(e.attempt?.sample, { used: 50, usable: 4, wrong: 0 });
+  });
+  it('assessFew is a body refusal', () => {
+    assert.equal(isNothingToSummarise('ai.assessFew'), true);
+  });
+});

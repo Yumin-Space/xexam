@@ -772,7 +772,7 @@ function doneBox(d: Done): HTMLElement {
       tn('banks.done.total', d.total),
       d.plan.skipped ? tn('banks.done.skipped', d.plan.skipped) : null)),
     h('div', { class: 'acts' },
-      h('button', { class: 'btn primary', type: 'button', onclick: () => navigate({ name: 'home' }) }, t('banks.done.start'))));
+      h('button', { class: 'btn primary', type: 'button', onclick: () => navigate({ name: 'study' }) }, t('banks.done.start'))));
 }
 
 /** The upload form: the target pills (for the heading row), the bank picker under them, the hint line and the file row */

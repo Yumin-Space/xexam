@@ -663,6 +663,10 @@ async fn get_route(
             let v = viewer_of(st, authed).await?;
             blocking(move || eng.progress_as(&v)).await?
         }
+        "/api/dashboard" => {
+            let v = viewer_of(st, authed).await?;
+            blocking(move || eng.dashboard_as(&v)).await?
+        }
         "/api/records" => blocking(move || eng.records(user)).await?,
         "/api/record" => {
             let id = query_id(query).ok_or_else(bad_request)?;

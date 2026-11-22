@@ -57,6 +57,8 @@ export function icon(shapes: Shape[], cls = 'ico'): SVGSVGElement {
 
 export const ICONS = {
   home: [{ d: 'M3.5 11 12 4l8.5 7' }, { d: 'M6 9.5V20h12V9.5' }, { d: 'M10 20v-5.5h4V20' }],
+  /** v2.5, Exam & practice: a clipboard with a tick */
+  study: [{ d: 'M8.5 5H6v15.5h12V5h-2.5' }, { d: 'M9 3.5h6v3H9z' }, { d: 'M9 13.5l2.2 2.2 4.3-4.7' }],
   banks: [{ d: 'M4 6.5C4 5.1 7.6 4 12 4s8 1.1 8 2.5S16.4 9 12 9 4 7.9 4 6.5Z' }, { d: 'M4 6.5v5C4 12.9 7.6 14 12 14s8-1.1 8-2.5v-5' }, { d: 'M4 11.5v5C4 17.9 7.6 19 12 19s8-1.1 8-2.5v-5' }],
   records: [{ d: 'M3.5 20h17' }, { d: 'M6.5 20v-7' }, { d: 'M12 20V5' }, { d: 'M17.5 20v-10' }],
   /** v1.0 (MN-3), Settings: a hub ring with eight teeth, so it no longer looks like AI settings' sliders */
@@ -97,6 +99,7 @@ export const ICONS = {
 // now or has AI chats or memories to read (hidden, not "unavailable", otherwise); AI settings for administrators, always.
 const NAV: Array<{ section: NavSection; route: Route; label: MsgKey; icon: Shape[]; need?: NavNeed }> = [
   { section: 'home', route: { name: 'home' }, label: 'nav.home', icon: ICONS.home },
+  { section: 'study', route: { name: 'study' }, label: 'nav.study', icon: ICONS.study },
   { section: 'banks', route: { name: 'banks' }, label: 'nav.banks', icon: ICONS.banks, need: 'banks' },
   { section: 'records', route: { name: 'records' }, label: 'nav.records', icon: ICONS.records },
   { section: 'ai', route: { name: 'ai' }, label: 'nav.aiChat', icon: ICONS.sparkle, need: 'ai' },
@@ -107,7 +110,7 @@ const NAV: Array<{ section: NavSection; route: Route; label: MsgKey; icon: Shape
 ];
 
 const HREF: Record<NavSection, string> = {
-  home: '#/', banks: '#/banks', records: '#/records', ai: '#/ai', users: '#/users', aiSettings: '#/ai-settings', logs: '#/logs',
+  home: '#/', study: '#/study', banks: '#/banks', records: '#/records', ai: '#/ai', users: '#/users', aiSettings: '#/ai-settings', logs: '#/logs',
   settings: '#/settings', about: '#/about',
 };
 

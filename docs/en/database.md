@@ -242,6 +242,10 @@ For clients that know only one explanation, `explanation`, `mnemonic` and `note`
 - **Bank managers** (`users.can_manage_banks = 1`) also see the banks they own (`banks.owner_id`) while they have the permission, and may update and delete only those. A bank imported as a new bank belongs to the user who imported it; banks from before v0.7, and banks created without a signed-in user (the command-line `import`), belong to the first administrator.
 - Deleting a user deletes their sessions, study records (with their detail), statistics, settings and `user_banks` rows; the banks they own move to the administrator who deletes them. Their AI chats and memories are in the AI database: the AI service removes them at its next reconcile (section 8.3).
 
+### 4.9 The dashboard queries (v2.5, read only)
+
+`GET /api/dashboard` writes nothing and changes no table. The leaderboard is one aggregate over `user_stats` joined to `users` (enabled users with at least one answer, ordered by correct answers descending, then answers ascending, then user id); it uses the per-question statistics because they survive the pruning of old records to 500. The most practised list is one aggregate over `attempts` (filtered by time), `attempt_items` and `questions` for the last 30 days: active questions with an owning bank only, and never an item that was not answered (`answer IS NULL AND correct = 0`). The bank scope of the viewer is applied afterwards in the code. The answer carries question ids and counts, never text, user ids or e-mail domains.
+
 ## 5. Backup and restore
 
 Since v0.8 there are **two data volumes** to back up: `xexam_backend_data` (this database) and `xexam_ai_data` (the AI database and its key file, section 8.4). `xexam_ai_auth` needs no backup. The commands below are for `xexam_backend_data`; the AI volume works the same way.
@@ -715,6 +719,10 @@ The AI database stays at **schema 11**, and the main database does not change. T
 - **`chats.pick_effort`** may also hold the literal `default` (send nothing, any family).
 
 **Going back to v2.1** needs no restore: the schema is the same. The flag `pace_default_230k` is ignored there, and `default` in `chats.pick_effort` is ignored like any other value that does not fit.
+
+### 8.2j v2.5 (no schema change)
+
+The AI database stays at schema 11. The study assessment of the Home dashboard is stored in the existing tables as a `summary` chat whose `ref` is `assess@<YYYY-MM-DD>` (the user's local day; one chat per user and day, a second ask the same day appends a user and assistant pair); its `title` is that date and `record_id` is empty. The stored user message is the machine line `[AI assessment] latest=<YYYY-MM-DD HH:MM> 30d <n>r <n>q`, and the usage purpose is `summary`. The CHECK constraints of `chats.kind`, `messages.kind` and `usage.purpose` are column constraints, and `chats` is referenced by foreign keys, so adding a kind would need a rebuild of the tables; instead the SELECTs that read chats and messages map `kind = 'summary'` with a `ref` beginning `assess@` to the wire kind `assess`, and the summary lookups of a record never see these chats. Retention, the per-user chat limit and deleting chats work as for every other chat.
 
 ### 8.3 What the service does with it
 

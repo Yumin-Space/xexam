@@ -1,5 +1,6 @@
 //! Users, chats, messages and memories. Every query of user content filters by the owner's id.
 use crate::identity::Identity;
+use crate::study::assess::{parse_assess_line, AssessLine, ASSESS_REF_PREFIX};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -256,8 +257,13 @@ pub fn suspended_ids(c: &Connection, limit: usize) -> rusqlite::Result<Vec<i64>>
 }
 
 /// The pick is read through `connections`: a pick whose connection is gone reads as no pick (the chat default).
+///
+/// A study assessment is stored as a `summary` chat whose ref starts with `assess@` (the CHECKs of `chats.kind` stay
+/// as they are); it is read as the wire kind `assess` ([`CHAT_KIND_SQL`], [`MSG_KIND_SQL`]).
 const CHAT_COLS: &str = "c.id, c.title, c.created_at, c.updated_at,
-     (SELECT COUNT(*) FROM messages m WHERE m.chat_id = c.id), c.kind, c.record_id, c.leaf_id,
+     (SELECT COUNT(*) FROM messages m WHERE m.chat_id = c.id),
+     CASE WHEN c.kind = 'summary' AND c.ref LIKE 'assess@%' THEN 'assess' ELSE c.kind END,
+     c.record_id, c.leaf_id,
      (SELECT k.id FROM connections k WHERE k.id = c.pick_conn), c.pick_model, c.pick_effort";
 
 fn chat_from(r: &rusqlite::Row<'_>) -> rusqlite::Result<ChatRow> {
@@ -306,10 +312,18 @@ fn sample_of(used: Option<i64>, usable: Option<i64>, wrong: Option<i64>) -> Opti
     }
 }
 
+/// The wire kind of a chat row `c` (see [`CHAT_COLS`]).
+const CHAT_KIND_SQL: &str =
+    "CASE WHEN c.kind = 'summary' AND c.ref LIKE 'assess@%' THEN 'assess' ELSE c.kind END";
+/// The wire kind of a message row `m` of a chat row `c`.
+const MSG_KIND_SQL: &str =
+    "CASE WHEN m.kind = 'summary' AND c.ref LIKE 'assess@%' THEN 'assess' ELSE m.kind END";
+
 /// Columns of a message as [`MessageRow`] reads them (the query joins `chats c`).
 const MSG_COLS: &str =
     "m.id, m.role, m.content, m.status, m.error_code, m.truncated, m.model, m.created_at, m.free,
-                m.kind, m.question_id, m.question_no, m.source, m.lang,
+                CASE WHEN m.kind = 'summary' AND c.ref LIKE 'assess@%' THEN 'assess' ELSE m.kind END,
+                m.question_id, m.question_no, m.source, m.lang,
                 CASE WHEN m.source = 'result' OR m.kind = 'summary' THEN c.record_id END,
                 m.sample_used, m.sample_usable, m.sample_wrong, m.parent_id, m.connection,
                 m.reasoning, m.reasoning_ms, m.reasoning_truncated";
@@ -1260,6 +1274,104 @@ pub fn summary_saved(c: &Connection, user: i64, chat_ref: &str) -> rusqlite::Res
     saved_with(c, chat, SQL_SUMMARY_LATEST, SQL_SUMMARY_LAST_GOOD, &[])
 }
 
+/// A saved assessment: the answer rows, the day of its chat and the numbers of its stored line.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AssessSaved {
+    pub saved: Saved,
+    /// `YYYY-MM-DD`, from the ref of the chat that holds the newest matching attempt
+    pub date: String,
+    pub line: AssessLine,
+}
+
+/// Every assistant assessment answer of the user, newest first, across all of the user's `assess@` chats, with the
+/// stored user line it answers (its parent; the user message just before it when the parent is missing). The order is
+/// by message id, so a follow-up that touches an older chat does not change which attempt is the newest.
+const SQL_ASSESS_ATTEMPTS: &str = "SELECT a.id, a.status, a.content <> '', ch.id, ch.ref,
+        COALESCE(
+          (SELECT u.content FROM messages u WHERE u.id = a.parent_id AND u.chat_id = a.chat_id AND u.role = 'user'),
+          (SELECT u.content FROM messages u WHERE u.chat_id = a.chat_id AND u.role = 'user' AND u.id < a.id
+           ORDER BY u.id DESC LIMIT 1))
+     FROM messages a JOIN chats ch ON ch.id = a.chat_id
+     WHERE ch.user_id = ?1 AND ch.kind = 'summary' AND ch.ref LIKE 'assess@%'
+       AND a.role = 'assistant' AND a.kind = 'summary'
+     ORDER BY a.id DESC";
+
+/// The user's assessment made for the record set whose newest record is at `latest_at` (`YYYY-MM-DD HH:MM`), or None
+/// when no attempt was made for it. Every `assess@` chat of the user is searched, and only attempts whose stored line
+/// carries `latest_at` count: `latest` is the newest of them whatever its status (a streaming answer is followed, a
+/// stopped or failed one is shown, never asked again on its own), `last_good` the newest finished, non-empty one when
+/// `latest` is not `done` (as [`summary_saved`] gives them).
+pub fn assess_saved(
+    c: &Connection,
+    user: i64,
+    latest_at: &str,
+) -> rusqlite::Result<Option<AssessSaved>> {
+    struct Attempt {
+        id: i64,
+        chat: i64,
+        chat_ref: String,
+        line: AssessLine,
+    }
+    let mut st = c.prepare(SQL_ASSESS_ATTEMPTS)?;
+    let mut rows = st.query([user])?;
+    let mut latest: Option<Attempt> = None;
+    let mut good: Option<i64> = None;
+    while let Some(r) = rows.next()? {
+        let stored: Option<String> = r.get(5)?;
+        let Some(line) = stored.as_deref().and_then(parse_assess_line) else {
+            continue;
+        };
+        if line.latest_at != latest_at {
+            continue;
+        }
+        let status: String = r.get(1)?;
+        let is_good = status == "done" && r.get::<_, bool>(2)?;
+        let id: i64 = r.get(0)?;
+        if latest.is_none() {
+            latest = Some(Attempt {
+                id,
+                chat: r.get(3)?,
+                chat_ref: r.get(4)?,
+                line,
+            });
+        }
+        if is_good {
+            good = Some(id);
+            break;
+        }
+    }
+    drop(rows);
+    let Some(top) = latest else {
+        return Ok(None);
+    };
+    let latest_row = answer_by_id(c, top.id)?;
+    // like `saved_with`: the last good answer is sent only beside a latest one that is not `done`
+    let last_good = match good {
+        Some(id) if latest_row.status != "done" => Some(answer_by_id(c, id)?),
+        _ => None,
+    };
+    let chat_title = c
+        .query_row("SELECT title FROM chats WHERE id = ?1", [top.chat], |r| {
+            r.get::<_, String>(0)
+        })
+        .optional()?;
+    let date = top
+        .chat_ref
+        .strip_prefix(ASSESS_REF_PREFIX)
+        .unwrap_or_default()
+        .to_string();
+    Ok(Some(AssessSaved {
+        saved: Saved {
+            chat_id: Some(top.chat),
+            chat_title,
+            latest: Some(latest_row),
+            last_good,
+        },
+        date,
+        line: top.line,
+    }))
+}
+
 /// `RunningInfo` of an answer of the user, or None.
 pub fn running_info(
     c: &Connection,
@@ -1267,24 +1379,23 @@ pub fn running_info(
     chat: i64,
     message: i64,
 ) -> rusqlite::Result<Option<Value>> {
-    c.query_row(
-        "SELECT c.id, m.id, c.kind, m.kind, m.question_id, m.question_no, m.source,
+    let sql = format!(
+        "SELECT c.id, m.id, {CHAT_KIND_SQL}, {MSG_KIND_SQL}, m.question_id, m.question_no, m.source,
                 CASE WHEN m.source = 'result' OR m.kind = 'summary' THEN c.record_id END
          FROM messages m JOIN chats c ON c.id = m.chat_id
-         WHERE m.id = ?1 AND c.id = ?2 AND c.user_id = ?3",
-        params![message, chat, user],
-        |r| {
-            Ok(json!({
-                "chatId": r.get::<_, i64>(0)?,
-                "messageId": r.get::<_, i64>(1)?,
-                "chatKind": r.get::<_, String>(2)?,
-                "kind": r.get::<_, String>(3)?,
-                "questionId": r.get::<_, Option<String>>(4)?,
-                "questionNo": r.get::<_, Option<i64>>(5)?,
-                "source": r.get::<_, Option<String>>(6)?,
-                "recordId": r.get::<_, Option<i64>>(7)?,
-            }))
-        },
-    )
+         WHERE m.id = ?1 AND c.id = ?2 AND c.user_id = ?3"
+    );
+    c.query_row(&sql, params![message, chat, user], |r| {
+        Ok(json!({
+            "chatId": r.get::<_, i64>(0)?,
+            "messageId": r.get::<_, i64>(1)?,
+            "chatKind": r.get::<_, String>(2)?,
+            "kind": r.get::<_, String>(3)?,
+            "questionId": r.get::<_, Option<String>>(4)?,
+            "questionNo": r.get::<_, Option<i64>>(5)?,
+            "source": r.get::<_, Option<String>>(6)?,
+            "recordId": r.get::<_, Option<i64>>(7)?,
+        }))
+    })
     .optional()
 }

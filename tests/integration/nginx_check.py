@@ -76,7 +76,7 @@ AI_OTHER = 'xexam-nginxcheck-aio-' + RUN   # v1.9: a second fake AI service (ali
 #  backend: GET /internal/ai/auth answers by the session cookie (good... -> 204 + an identity built from the X-Original-*
 #           headers; pw / guard -> 403 + X-Xexam-Deny; down -> 502; anything else -> 401 + X-Xexam-Deny: signin)
 #           GET /api/etag answers 200 with ETag "v1" and 304 when If-None-Match is "v1"
-#  ai-service: POST /api/ai/send, retry, regenerate, edit, study/ask and summary/ask stream text/event-stream (an "echo" event with what arrived, then one
+#  ai-service: POST /api/ai/send, retry, regenerate, edit, study/ask, summary/ask and assess/ask stream text/event-stream (an "echo" event with what arrived, then one
 #           "delta" event per second for 4 s); POST /api/ai/admin/connections/test?delay=N waits N seconds before its
 #           answer; a POST whose query holds capped=1 answers 429 JSON with Retry-After: 17 (v1.0 per-user caps);
 #           everything else answers a JSON echo of the request
@@ -126,7 +126,7 @@ class H(http.server.BaseHTTPRequestHandler):
             if self.headers.get("If-None-Match") == '"v1"':
                 return self._send(304, headers=[("ETag", '"v1"')])
             return self._send(200, b'{"etag": "v1"}', [("ETag", '"v1"'), ("Content-Type", "application/json")])
-        if NAME == "ai-service" and self.command == "POST" and self.path in ("/api/ai/send", "/api/ai/retry", "/api/ai/regenerate", "/api/ai/edit", "/api/ai/study/ask", "/api/ai/summary/ask"):
+        if NAME == "ai-service" and self.command == "POST" and self.path in ("/api/ai/send", "/api/ai/retry", "/api/ai/regenerate", "/api/ai/edit", "/api/ai/study/ask", "/api/ai/summary/ask", "/api/ai/assess/ask"):
             self.send_response(200)
             self.send_header("X-Echo-Name", NAME)
             self.send_header("Content-Type", "text/event-stream; charset=utf-8")
@@ -309,7 +309,7 @@ try:
            'for f in /docker-entrypoint.d/1*-xexam-*.sh; do "$f" || exit 1; done && nginx -T', check=False)
     SNIPPETS.update(snippet_map(r.stdout))
     ok(set(SNIPPETS) >= {'ai-proxy.conf', 'api-proxy.conf'}, 'nginx -T lists the snippets api-proxy.conf and ai-proxy.conf. Found %r' % sorted(SNIPPETS))
-    STREAM_SPEC = '~ ^/api/ai/(send|retry|regenerate|edit|study/ask|summary/ask)$'
+    STREAM_SPEC = '~ ^/api/ai/(send|retry|regenerate|edit|study/ask|summary/ask|assess/ask)$'
     ADMIN_SPEC = '~ ^/api/ai/admin/(connections/save|connections/test|models/pick|models/test|enable)$'
     ai_prefix = location_block(r.stdout, '/api/ai/')
     ai_stream = location_block(r.stdout, STREAM_SPEC)
@@ -569,7 +569,7 @@ try:
                     body=b'x' * (300 * 1024))
     ok(st == 413 and (jbody(b) or {}).get('code') == 'ai.badRequest', '300 KiB to /api/ai/send -> 413 JSON ai.badRequest. Actual %d %r' % (st, b[:120].decode('utf-8', 'replace')))
     # The regenerate / edit streams and the study streams (hints / explanations, record summaries) use the streaming location too: no buffering, POST only
-    for path in ('/api/ai/regenerate', '/api/ai/edit', '/api/ai/study/ask', '/api/ai/summary/ask'):
+    for path in ('/api/ai/regenerate', '/api/ai/edit', '/api/ai/study/ask', '/api/ai/summary/ask', '/api/ai/assess/ask'):
         t0 = time.time()
         c = http.client.HTTPConnection('127.0.0.1', PORT, timeout=15)
         c.putrequest('POST', path, skip_host=True, skip_accept_encoding=True)
@@ -637,7 +637,7 @@ try:
 
     # v1.0 per-user call caps: ai-service answers 429 JSON with Retry-After; Nginx hands it on unchanged on every kind of AI
     # location (no error_page swap, no buffering of the refusal into HTML)
-    for path in ('/api/ai/send', '/api/ai/regenerate', '/api/ai/study/ask', '/api/ai/summary/ask', '/api/ai/memories/suggest',
+    for path in ('/api/ai/send', '/api/ai/regenerate', '/api/ai/study/ask', '/api/ai/summary/ask', '/api/ai/assess/ask', '/api/ai/memories/suggest',
                  '/api/ai/admin/connections/test'):
         st, hh, b = req('POST', path + '?capped=1', host=host,
                         headers={'Cookie': 'xexam_session=good-cap', 'Content-Type': 'application/json'}, body=b'{}')

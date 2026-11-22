@@ -1,5 +1,5 @@
-//! v0.9: the three token routes the AI service calls to read study data, `POST /internal/ai/question`,
-//! `POST /internal/ai/record` and `POST /internal/ai/record-info` (the projections themselves are in
+//! v0.9: the token routes the AI service calls to read study data, `POST /internal/ai/question`,
+//! `POST /internal/ai/record`, `POST /internal/ai/record-info` and (v2.5) `POST /internal/ai/assess` (the projections themselves are in
 //! `database/store/study.rs`).
 //!
 //! [`super::internal::dispatch`] has already checked the internal token, the method, the content type and the body size
@@ -183,6 +183,20 @@ pub(super) async fn record_info(
     let store = st.0.store.clone();
     let found = blocking(move || store.study_record_info(user, record_id)).await?;
     Ok(found.unwrap_or_else(|| refused("notFound")))
+}
+
+/// `POST /internal/ai/assess {"sid", "id"}`: the counts behind the caller's study assessment, or `{"ok": false, "reason":
+/// "few"}` below 3 saved records (see `Store::study_assess`). Needs the AI+ feature.
+pub(super) async fn assess(st: &AppState, data: &Map<String, Value>) -> Result<Value, AppError> {
+    check_keys(data, &["sid", "id"], &[])?;
+    let sid = sid(data)?;
+    let id = positive(data, "id")?;
+    let user = match bind_session(st, sid, id, true).await? {
+        Ok(user) => user,
+        Err(answer) => return Ok(answer),
+    };
+    let store = st.0.store.clone();
+    blocking(move || store.study_assess(user)).await
 }
 
 #[cfg(test)]

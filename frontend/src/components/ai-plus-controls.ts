@@ -4,7 +4,7 @@
 // themselves are components/ai-panel.ts and ai-summary.ts). A control a user may not see is never built (null): without the
 // AI+ feature the DOM stays the v0.8 one.
 import {
-  aiControls, aiPlusView, buildStudyAsk, controlState, dockKey, focusKey, resultExtra, unavailableParts,
+  aiControls, aiPlusView, buildStudyAsk, controlState, dockKey, focusKey, newestRecordAt, resultExtra, unavailableParts,
   type AiPlusView, type ControlSpec, type ControlState, type QuestionLang, type RunningInfo, type StudyKind,
 } from '../domain/ai-plus.ts';
 import { studySavedQuery, studySpec } from '../domain/ai-spec.ts';
@@ -16,7 +16,7 @@ import { S } from '../state/store.ts';
 import { h } from '../utils/dom.ts';
 import { aiBadge } from './ai-badge.ts';
 import { openAiPanel, type PanelOpenArgs } from './ai-panel.ts';
-import { openAiSummary } from './ai-summary.ts';
+import { openAiAssess, openAiSummary } from './ai-summary.ts';
 import { iconButton, withReason } from './icon-button.ts';
 import { miniIcon } from './mini-icons.ts';
 import { holdTip } from './tooltip.ts';
@@ -239,6 +239,34 @@ export function summaryButton(
     control.classList.add('aip-tipwrap');
   }
   const tag = o.tag ? naTag(state) : null;
+  return tag ? h('span', { class: 'aip-grp-inline' }, control, tag) : control;
+}
+
+/**
+ * v2.5: the AI study assessment button of the dashboard: the flat amber `.btn.aip-sum-btn.big` with the sparkle icon. `state` =
+ * controlState(aiPlusNow(), assessExtra(S.records), 'summary'); null when !state.show. A greyed one carries the 无法使用 tag
+ * (service problems) and the reason as tip; usable, it opens the assessment window of the newest saved record.
+ */
+export function assessButton(state: ControlState, o: { anchorKey: string }): HTMLElement | null {
+  if (!state.show) return null;
+  const label = t(msg('dash.ai'));
+  const btn = h('button', {
+    class: 'btn aip-sum-btn big', type: 'button', 'data-focus': o.anchorKey, 'data-aip-opener': '', 'aria-haspopup': 'dialog',
+  }, miniIcon('sparkle', 'aip-mi'), label);
+  let control: HTMLElement = btn;
+  if (state.usable) {
+    btn.addEventListener('click', (e) => {
+      // The same newest-record time the server stores with the answer (MAX(at)), so the saved answer is found again
+      const records = S.records;
+      const latestAt = newestRecordAt(records);
+      if (!records || latestAt === null) return;
+      openAiAssess({ target: 'assess', latestAt, records: records.length, anchorKey: o.anchorKey, byKeyboard: e.detail === 0 });
+    });
+  } else {
+    control = withReason(btn, greyText(state, label));
+    control.classList.add('aip-tipwrap');
+  }
+  const tag = naTag(state);
   return tag ? h('span', { class: 'aip-grp-inline' }, control, tag) : control;
 }
 

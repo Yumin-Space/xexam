@@ -106,7 +106,7 @@
   .score .acts { flex-wrap: nowrap; margin: 4px 0 0; }
   /* One row: the three icons keep their size, a long "retry wrong answers" label wraps inside its button instead */
   .score .acts > .btn.primary { flex: 0 1 auto; min-width: 0; white-space: normal; line-height: 1.25; text-align: center; }
-  .score .acts .res-act { width: 40px; padding: 0; }
+  .score .acts .res-act { width: 44px; padding: 0; }   /* 44 px touch target */
   .score .acts .res-act .lbl { display: none; }
   /* RS-2: the keys fold behind one summary row */
   .strip-wrap { margin: 0 0 16px; }

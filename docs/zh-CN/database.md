@@ -241,6 +241,10 @@ sha1( 工作表名 + "\n" + 去空白(题干)[:300] + "|" + 去空白(第一个�
 - **可管理题库的用户**（`users.can_manage_banks = 1`）在拥有这个权限期间，还能看到自己拥有的题库（`banks.owner_id`），也只能更新和删除这些题库。作为新题库导入的题库属于导入它的用户；v0.7 之前的题库，以及没有登录用户时新建的题库（命令行的 `import`），属于第一个管理员。
 - 删除用户会删除他的会话、学习记录（含详情）、统计、设置和 `user_banks` 行；他拥有的题库转到删除他的那位管理员名下。他的 AI 对话和记忆在 AI 数据库里：AI 服务会在下一次对账时删除它们（第 8.3 节）。
 
+### 4.9 仪表盘的查询（v2.5，只读）
+
+`GET /api/dashboard` 不写任何东西，也不改任何表。排行是 `user_stats` 联结 `users` 的一条汇总（至少答过一题的未停用用户，按答对数降序、再答题数升序、再用户 id 排序）；用逐题统计，是因为它在旧记录被清理到 500 条后依然保留。最常练的题是对最近 30 天的 `attempts`（按时间筛选）、`attempt_items` 和 `questions` 的一条汇总：只算有所属题库的有效题，并且不算没有作答的项目（`answer IS NULL AND correct = 0`）。查看者的题库范围随后在代码里应用。返回的只有题目编号和次数，没有题目文字、用户 id 和邮箱域名。
+
 ## 5. 备份和恢复
 
 从 v0.8 起，要备份的是**两个数据卷**：`xexam_backend_data`（这个数据库）和 `xexam_ai_data`（AI 数据库和它的密钥文件，第 8.4 节）。`xexam_ai_auth` 不用备份。下面的命令针对 `xexam_backend_data`；AI 卷的做法一样。
@@ -716,6 +720,10 @@ AI 数据库仍是 **schema 11**，主数据库也不变。和 v2.1 相比有三
 - **`chats.pick_effort`** 也可能存着字面量 `default`（任何家族都不发送）。
 
 **回退到 v2.1** 不需要还原：schema 相同。标记 `pace_default_230k` 在那里会被忽略，`chats.pick_effort` 里的 `default` 也像其他对不上的值一样被忽略。
+
+### 8.2j v2.5（没有 schema 变化）
+
+AI 库仍是 schema 11。主页仪表盘的学习状态评估存在现有的表里，是 `ref` 为 `assess@<YYYY-MM-DD>`（用户的本地日期；每个用户每天一个对话，同一天再问一次就追加一对用户消息和助手消息）的 `summary` 对话；`title` 是这个日期，`record_id` 为空。保存的用户消息是机器行 `[AI assessment] latest=<YYYY-MM-DD HH:MM> 30d <n>r <n>q`，用量用途是 `summary`。`chats.kind`、`messages.kind` 和 `usage.purpose` 的 CHECK 是列约束，而 `chats` 又被外键引用，增加一种类型就要重建表；所以改成由读取对话和消息的 SELECT 把 `ref` 以 `assess@` 开头的 `kind = 'summary'` 映射成对外的类型 `assess`，而按记录查找总结时不会看到这些对话。保留期限、每个用户的对话数上限和删除对话都和其他对话一样。
 
 ### 8.3 服务怎样使用它
 

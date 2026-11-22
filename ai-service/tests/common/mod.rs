@@ -191,6 +191,8 @@ pub struct BackendState {
     pub study_switch: StudySwitch,
     /// The `uiLang` of every study answer
     pub ui_lang: String,
+    /// The local day `/internal/ai/assess` reports as today (v2.5)
+    pub assess_today: String,
     /// The generation and import routes
     pub gen: genkit::GenBackend,
     /// The external IP-location routes (v1.4)
@@ -436,7 +438,10 @@ async fn backend_handler(State(st): State<Arc<Mutex<BackendState>>>, req: Reques
             }
             json!({"ok": true})
         }
-        "/internal/ai/question" | "/internal/ai/record" | "/internal/ai/record-info" => {
+        "/internal/ai/question"
+        | "/internal/ai/record"
+        | "/internal/ai/record-info"
+        | "/internal/ai/assess" => {
             match s.study_switch {
                 StudySwitch::Http404 => return text_answer(404, "not found"),
                 StudySwitch::Unreadable => return text_answer(200, "<html>nope</html>"),
@@ -549,6 +554,36 @@ fn study_answer(s: &BackendState, path: &str, body: &Value) -> Value {
             };
             json!({"ok": true, "uiLang": s.ui_lang, "question": question, "solution": q.solution,
                    "item": item, "record": record})
+        }
+        "/internal/ai/assess" => {
+            if !u.ai_allowed() {
+                return refusal("notAllowed");
+            }
+            let mine: Vec<&FakeRecord> = s.records.values().filter(|r| r.user == u.id).collect();
+            if mine.len() < 3 {
+                return refusal("few");
+            }
+            let latest = mine.iter().map(|r| r.at.as_str()).max().unwrap_or("");
+            let answered: usize = mine
+                .iter()
+                .map(|r| r.items.iter().filter(|i| !i.answer.is_null()).count())
+                .sum();
+            let correct: usize = mine
+                .iter()
+                .map(|r| r.items.iter().filter(|i| i.correct).count())
+                .sum();
+            let exams = mine.iter().filter(|r| r.kind == "exam").count();
+            json!({"ok": true, "uiLang": s.ui_lang, "today": s.assess_today, "latestAt": latest, "basis": {
+                "days": 30, "records": mine.len(), "practice": mine.len() - exams, "exams": exams,
+                "answered": answered, "correct": correct, "unanswered": 0,
+                "activeDays": 3, "daysSinceLast": 0, "longestGapDays": 4, "avgSecPerItem": 30, "medianMinutes": 10,
+                "examAvgPercent": null, "timedExams": 0, "timeUps": 0,
+                "weekdays": [1, 1, 1, 0, 0, 0, 0], "dayparts": [0, 1, 1, 1],
+                "weeks": [{"answered": 0, "correct": 0}, {"answered": 0, "correct": 0},
+                          {"answered": 0, "correct": 0}, {"answered": answered, "correct": correct}],
+                "modes": {"all": mine.len()},
+                "allTime": {"records": mine.len(), "seen": answered, "answers": answered, "correct": correct,
+                            "notebookOpen": 0, "mastered": 0}}})
         }
         _ => {
             if !u.ai_allowed() {
@@ -671,6 +706,7 @@ pub async fn fake_backend() -> FakeBackend {
         records: BTreeMap::new(),
         study_switch: StudySwitch::Normal,
         ui_lang: "en".to_string(),
+        assess_today: "2026-11-22".to_string(),
         gen: genkit::GenBackend::default(),
         geo: geokit::GeoBackend::default(),
     }));

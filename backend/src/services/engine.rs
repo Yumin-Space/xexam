@@ -163,6 +163,10 @@ pub trait Engine: Send + Sync + 'static {
             Err(DbError::Unsupported)
         }
     }
+    /// `GET /api/dashboard` as `v` sees it: the leaderboard and the most practised questions.
+    fn dashboard_as(&self, _v: &Viewer) -> Result<Value, DbError> {
+        Err(DbError::Unsupported)
+    }
     /// `GET /api/record?id=` of `v.user` (questions of banks they cannot see show as deleted).
     fn record_as(&self, v: &Viewer, id: i64) -> Result<Option<Value>, DbError> {
         if v.scope.is_all() {
@@ -383,6 +387,9 @@ impl Engine for RealEngine {
     }
     fn progress_as(&self, v: &Viewer) -> Result<Value, DbError> {
         self.store.progress_as(v.user, &v.scope)
+    }
+    fn dashboard_as(&self, v: &Viewer) -> Result<Value, DbError> {
+        self.store.dashboard_as(v)
     }
     fn record_as(&self, v: &Viewer, id: i64) -> Result<Option<Value>, DbError> {
         self.store.record_as(v.user, &v.scope, id)

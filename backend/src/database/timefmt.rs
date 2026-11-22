@@ -96,6 +96,25 @@ pub fn local_file_stamp() -> String {
     format_file_stamp(&Zoned::now())
 }
 
+/// `now` (`YYYY-MM-DD HH:MM`) moved back by `days` calendar days, in the same format. `None` when `now` does not parse or the
+/// result is out of range.
+pub fn minus_days(now: &str, days: i64) -> Option<String> {
+    // Exactly `YYYY-MM-DD HH:MM`: a date alone is not a timestamp
+    let (d, t) = now.trim().split_once(' ')?;
+    let dt = format!("{d}T{t}").parse::<jiff::civil::DateTime>().ok()?;
+    let earlier = dt
+        .checked_sub(jiff::Span::new().try_days(days).ok()?)
+        .ok()?;
+    Some(format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}",
+        earlier.year(),
+        earlier.month(),
+        earlier.day(),
+        earlier.hour(),
+        earlier.minute()
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -152,5 +171,32 @@ mod tests {
         let n = SystemClock.now();
         assert_eq!(n.len(), 16, "{n}");
         assert_eq!(n.as_bytes().get(10), Some(&b' '));
+    }
+
+    #[test]
+    fn minus_days_handles_edges() {
+        assert_eq!(
+            minus_days("2026-11-22 14:05", 30).as_deref(),
+            Some("2026-10-23 14:05")
+        );
+        assert_eq!(
+            minus_days("2026-03-01 00:00", 1).as_deref(),
+            Some("2026-02-28 00:00")
+        );
+        assert_eq!(
+            minus_days("2028-03-01 09:30", 1).as_deref(),
+            Some("2028-02-29 09:30")
+        );
+        assert_eq!(
+            minus_days("2026-01-10 23:59", 30).as_deref(),
+            Some("2025-12-11 23:59")
+        );
+        assert_eq!(
+            minus_days("2026-11-22 14:05", 0).as_deref(),
+            Some("2026-11-22 14:05")
+        );
+        for bad in ["", "nope", "2026-13-01 10:00", "2026-11-22"] {
+            assert_eq!(minus_days(bad, 3), None, "{bad}");
+        }
     }
 }

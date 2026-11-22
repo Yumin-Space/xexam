@@ -66,7 +66,7 @@ test('reportVisit posts the page and swallows every error', async () => {
   await reportVisit('quiz');
   assert.deepEqual(calls[0]?.body, { page: 'quiz' });
   replies = [json(500, { code: 'x' })];
-  await reportVisit('home');
+  await reportVisit('study');
   replies = [];
   await reportVisit('about'); // network down
   assert.equal(calls.length, 3);

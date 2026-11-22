@@ -15,6 +15,8 @@ Users after the whole seeding (all passwords are made-up demo values):
   lee    administrator (60 records)           alex   user, AI+ paused
   riley  user, NO AI+                         kim    user, disabled
   jordan user, locked
+  casey@example.invalid   user with an e-mail-shaped sample name, 4 practice records (the dashboard masks it)
+  morgan.long.sample.username   user with a long plain sample name, 3 practice records (ellipsis in the dashboard ranking)
 """
 import os
 import sys
@@ -35,6 +37,8 @@ BANK_NAME = 'Long sample bank'
 BANK_FILE = BANK_NAME + '.xlsx'
 RECORDS_OF_LEE = 60
 LOCKED_USER = 'jordan'
+EMAIL_USER = 'casey@example.invalid'          # e-mail-shaped sample name (example.invalid only)
+LONG_USER = 'morgan.long.sample.username'
 LETTERS = 'ABCDE'
 
 
@@ -185,6 +189,12 @@ def extra(base, cookie, folder):
         _attempt(lee, pool, 'exam' if i % 3 == 0 else 'practice', wrong, 120 + (i * 37) % 900)
     n_records = len(lee.call('/api/records')['records'])
     _attempt(riley, pool, 'practice', {0, 2}, 210)
+    # v2.5: two more answering users so the dashboard ranking has plain, long and e-mail-shaped sample names
+    for name, rounds in ((EMAIL_USER, 4), (LONG_USER, 3)):
+        admin.call('/api/users/create', {'username': name, 'password': seed.INITIAL, 'role': 'user', 'banks': 'all'})
+        who = seed.Session(base).sign_in(name, seed.INITIAL)
+        for i in range(rounds):
+            _attempt(who, pool, 'practice', {(i + k) % len(pool) for k in range(2 + i % 3)}, 150 + 40 * i)
     # a made-up user that is guessed until the account locks
     admin.call('/api/users/create', {'username': LOCKED_USER, 'password': seed.INITIAL, 'role': 'user', 'banks': 'all'})
     codes = []
@@ -194,7 +204,7 @@ def extra(base, cookie, folder):
             codes.append(200)
         except urllib.error.HTTPError as e:
             codes.append(e.code)
-    summary = {'questions': len(bank), 'leeRecords': n_records, 'lockedAnswers': codes}
+    summary = {'questions': len(bank), 'leeRecords': n_records, 'lockedAnswers': codes, 'sampleUsers': [EMAIL_USER, LONG_USER]}
     print('  extra data: %d questions visible, %d records for lee, %s sign-in answers %s'
           % (len(bank), n_records, LOCKED_USER, ' '.join(map(str, codes))))
     return summary

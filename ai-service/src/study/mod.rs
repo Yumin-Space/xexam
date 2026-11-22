@@ -1,6 +1,7 @@
 //! AI+ study features (v0.9): hint, explanation and summary prompts, the hint guard, the chat titles, the strict wire
 //! types of the backend's data routes and the record-identity cache. Everything here is pure (no I/O) except the cache,
 //! which only holds memory.
+pub mod assess;
 pub mod cache;
 pub mod explain;
 pub mod guard;
@@ -38,6 +39,10 @@ pub fn lang_code(lang: Lang) -> &'static str {
     }
 }
 
+pub use assess::{
+    assess_line, assess_prompt, assess_ref, parse_assess_line, AllTime, AssessBasis, AssessLine,
+    Week,
+};
 pub use explain::{explain_prompt, practice_explain_prompt, result_explain_prompt, Mine};
 pub use hint::{hint_prompt, study_user_message};
 pub use model::{HotspotItem, KeyAnswer, OptionText, QKind, Solution, StudyQuestion, UserEntry};

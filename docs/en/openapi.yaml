@@ -430,6 +430,27 @@ paths:
               schema: { $ref: "#/components/schemas/Progress" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/ForbiddenGet" }
+  /api/dashboard:
+    get:
+      tags: [progress]
+      summary: "(v2.5) The Home dashboard: the leaderboard and the most practised questions"
+      x-access: SignedIn
+      description: |
+        Read only; nothing is written. `ranking` is all-time and comes from the per-question statistics: enabled users with at least
+        one answer, administrators included, every bank, ordered by correct answers descending, then answers ascending, then user id.
+        `top` holds at most 3 entries and `me` (always present) the caller's own position. A user's `name` is decided on the server
+        for every viewer: the caller's own row has the full user name (`self: true`); another user's name is shown in full unless it
+        is an e-mail address, and then only a masked local part is sent. The domain, the user id and the e-mail address are never
+        sent. `popular` covers the last 30 days: answered items of all users, of active questions in the banks the caller may see,
+        at most 3. Only question ids and counts leave; the page reads the stems from /api/bank.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Dashboard" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/ForbiddenGet" }
   /api/imports:
     get:
       tags: [import]
@@ -1338,6 +1359,76 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/AiSummarySaved" }
+        "400": { $ref: "#/components/responses/AiError" }
+        "401": { $ref: "#/components/responses/AiSignIn" }
+        "502": { $ref: "#/components/responses/AiUnavailable" }
+        "503": { $ref: "#/components/responses/AiBackendDown" }
+  /api/ai/assess/ask:
+    post:
+      tags: [ai]
+      summary: "(v2.5) Ask for the AI study assessment of the Home dashboard; the answer arrives as an event stream"
+      x-access: AiUser
+      description: |
+        The summary feature applied to the caller's own study habits. ai-service asks the backend for numbers only (counts and
+        averages of the caller's records of the last 30 days; never a question, bank, sheet or user name) and writes advice for the
+        next 7 days from them. The same AI+ gate, daily caps, pacing, thinking strength and Nginx start limit as /api/ai/summary/ask.
+        Errors: as /api/ai/study/ask, plus 409 `ai.assessFew` (fewer than 3 saved study records). The chat is a `summary` chat with the
+        reference `assess@<local date>`, titled with that date, one per day (asking again the same day adds a pair), listed with
+        the kind `assess`. The `start` event has `chatKind` and `kind` `assess`, `questionId`, `questionNo`, `source`, `recordId`
+        and `sample` null, `lang`, and `basis` ({days, records, answered, latestAt}). The stored user message is the machine line
+        `[AI assessment] latest=<YYYY-MM-DD HH:MM> 30d <records>r <answered>q`. Nginx: the same 20 starts a minute per session as send.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                lang: { type: string, enum: [en, zh, ja, zh-CN], description: "The reply language; missing = the user's Settings language as the backend knows it" }
+      responses:
+        "200": { $ref: "#/components/responses/AiStream" }
+        "400": { $ref: "#/components/responses/AiError" }
+        "401": { $ref: "#/components/responses/AiSignIn" }
+        "403": { $ref: "#/components/responses/AiForbidden" }
+        "409": { $ref: "#/components/responses/AiError" }
+        "413": { $ref: "#/components/responses/AiError" }
+        "415": { $ref: "#/components/responses/AiError" }
+        "429": { $ref: "#/components/responses/AiCallLimit" }
+        "502": { $ref: "#/components/responses/AiUnavailable" }
+        "503": { $ref: "#/components/responses/AiBackendDown" }
+  /api/ai/assess/saved:
+    get:
+      tags: [ai]
+      summary: "(v2.5) The saved AI study assessment, when it was made for the caller's newest study record"
+      x-access: AiSigned
+      description: |
+        Needs no AI+ feature and does not call the backend. The caller's newest `assess@` chat is returned only when its stored
+        line names the same newest record time as `at`; otherwise `latest` and `lastGood` are null. `date` and `basis` are
+        null when nothing matches.
+      parameters:
+        - { name: at, in: query, required: true, description: "The time of the caller's newest study record without punctuation: 2026-11-22 09:10 is 202611220910", schema: { type: string, pattern: "^[0-9]{12}$" } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/AiSummarySaved" }
+                  - type: object
+                    required: [date, basis]
+                    properties:
+                      date: { type: string, nullable: true, example: "2026-11-22", description: "The day of the assessment" }
+                      basis:
+                        type: object
+                        nullable: true
+                        required: [days, records, answered, latestAt]
+                        properties:
+                          days: { type: integer, example: 30 }
+                          records: { type: integer }
+                          answered: { type: integer }
+                          latestAt: { type: string, example: "2026-11-22 09:10" }
         "400": { $ref: "#/components/responses/AiError" }
         "401": { $ref: "#/components/responses/AiSignIn" }
         "502": { $ref: "#/components/responses/AiUnavailable" }
@@ -2508,7 +2599,7 @@ paths:
               required: [page]
               additionalProperties: false
               properties:
-                page: { type: string, enum: [home, banks, users, logs, records, record, wrong, settings, about, quiz, result, ai, aiSettings] }
+                page: { type: string, enum: [home, study, banks, users, logs, records, record, wrong, settings, about, quiz, result, ai, aiSettings] }
       responses:
         "200": { description: "`{\"ok\": true}`" }
         "400": { $ref: "#/components/responses/BadRequest" }
@@ -3158,12 +3249,12 @@ components:
         is `event: <name>` + `data: <one line of compact JSON>` + a blank line: `start` (AiStreamStart) first, then (round 2) at
         most one `thinking` (AiStreamThinking, only before the first delta), then (v1.3, AI Chat only) `reasoning` (AiStreamReasoning) pieces and one `reasoningDone` (AiStreamReasoningDone), then `delta` (AiStreamDelta) pieces, then exactly one of `done` (AiStreamDone), `stopped` (AiStreamStopped) or `error`
         (AiStreamError). A comment line `: keep-alive` every 15 s while nothing else was sent. (v0.9) The study routes
-        (`/api/ai/study/ask`, `/api/ai/summary/ask`) stream the same way.
+        (`/api/ai/study/ask`, `/api/ai/summary/ask`, `/api/ai/assess/ask`) stream the same way.
       content:
         text/event-stream:
           schema: { type: string }
     ProxyLimit:
-      description: "Nginx's own rate limit (not JSON): 30 requests/s per address (burst 120); send, retry, study/ask and summary/ask also 20/min per session (burst 10)"
+      description: "Nginx's own rate limit (not JSON): 30 requests/s per address (burst 120); send, retry, study/ask, summary/ask and assess/ask also 20/min per session (burst 10)"
       content:
         text/html:
           schema: { type: string }
@@ -3477,6 +3568,52 @@ components:
         percent: { type: integer, description: "Round half to even (Python round): 1/8 → 12" }
         seconds: { type: integer }
         kind: { type: string, enum: [exam, practice], description: "(v0.7) Always the last key" }
+    RankEntry:
+      type: object
+      description: "(v2.5) One line of the leaderboard"
+      required: [rank, name, answered, correct, self]
+      properties:
+        rank: { type: integer, minimum: 1 }
+        name: { type: string, description: "The full user name for the caller's own row and for plain user names; an e-mail user name is shown as a masked local part only (a***e), never with its domain" }
+        answered: { type: integer, minimum: 0 }
+        correct: { type: integer, minimum: 0 }
+        self: { type: boolean, description: "True for the caller's own row" }
+    RankMe:
+      type: object
+      description: "(v2.5) The caller's own position; always present"
+      required: [rank, answered, correct]
+      properties:
+        rank: { type: integer, nullable: true, minimum: 1, description: "Null when the caller has no answers" }
+        answered: { type: integer, minimum: 0 }
+        correct: { type: integer, minimum: 0 }
+    PopularItem:
+      type: object
+      description: "(v2.5) One of the most practised questions. Only ids and counts: the page reads the stem from /api/bank"
+      required: [questionId, bankId, times, correct]
+      properties:
+        questionId: { type: string }
+        bankId: { type: integer }
+        times: { type: integer, minimum: 1, description: "How often it was answered, by all users, in the window" }
+        correct: { type: integer, minimum: 0 }
+    Dashboard:
+      type: object
+      description: "(v2.5) GET /api/dashboard"
+      required: [ranking, popular]
+      properties:
+        ranking:
+          type: object
+          required: [users, top, me]
+          properties:
+            users: { type: integer, minimum: 0, description: "The number of ranked users (enabled, at least one answer)" }
+            top: { type: array, maxItems: 3, items: { $ref: "#/components/schemas/RankEntry" } }
+            me: { $ref: "#/components/schemas/RankMe" }
+        popular:
+          type: object
+          required: [days, since, items]
+          properties:
+            days: { type: integer, example: 30 }
+            since: { type: string, example: "2026-10-23 14:05", description: "The start of the window" }
+            items: { type: array, maxItems: 3, items: { $ref: "#/components/schemas/PopularItem" } }
     Progress:
       type: object
       required: [version, questions, history, masterStreak]

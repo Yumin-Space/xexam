@@ -2,7 +2,7 @@
 // api/ai.ts implement, and the builders that turn one popover / overlay request into a `RunSpec`. No DOM, no fetch.
 import type { RunSpec } from './ai-run.ts';
 import type { ReplyLang, StudyAskBody, StudyKind, StudySource } from './ai-plus.ts';
-import { atDigits, buildSummaryAsk, type UiLangCode } from './ai-plus.ts';
+import { atDigits, buildAssessAsk, buildSummaryAsk, type UiLangCode } from './ai-plus.ts';
 import type { SavedPayload, StreamEvent } from './ai-study.ts';
 
 /**
@@ -48,6 +48,10 @@ export interface StudyTransport {
   savedSummary(q: { record: number; at: string }): Promise<SavedPayload>;
   /** POST /api/ai/summary/ask {recordId, lang} as server-sent events */
   askSummary(body: { recordId: number; lang: ReplyLang }, signal: AbortSignal, on: (ev: StreamEvent) => void): Promise<void>;
+  /** GET /api/ai/assess/saved?at=YYYYMMDDHHMM -> parseSaved(json) */
+  savedAssess(at: string): Promise<SavedPayload>;
+  /** POST /api/ai/assess/ask {lang} as server-sent events */
+  askAssess(body: { lang: ReplyLang }, signal: AbortSignal, on: (ev: StreamEvent) => void): Promise<void>;
   /** POST /api/ai/stop {chatId}: always with a chat id, never `{}` */
   stopChat(chatId: number): Promise<void>;
 }
@@ -103,6 +107,19 @@ export function summarySpec(tr: StudyTransport, rec: { id: number; at: string },
   return {
     loadSaved: () => (at ? tr.savedSummary({ record: rec.id, at }) : Promise.resolve(null)),
     ask: (signal, on) => tr.askSummary(buildSummaryAsk(rec.id, ui()), signal, on),
+    stopChat: (id) => tr.stopChat(id),
+  };
+}
+
+/**
+ * v2.5: the spec of the AI study assessment. `latestAt` = the newest saved record's time (`YYYY-MM-DD HH:MM`); a saved answer
+ * is reused only when its basis has that time (the server decides). One that does not match has no lookup (the engine generates).
+ */
+export function assessSpec(tr: StudyTransport, latestAt: string, ui: () => UiLangCode): RunSpec {
+  const at = atDigits(latestAt);
+  return {
+    loadSaved: () => (at ? tr.savedAssess(at) : Promise.resolve(null)),
+    ask: (signal, on) => tr.askAssess(buildAssessAsk(ui()), signal, on),
     stopChat: (id) => tr.stopChat(id),
   };
 }

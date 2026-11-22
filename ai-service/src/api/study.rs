@@ -24,6 +24,7 @@ use crate::study::{
     result_explain_prompt, study_user_message, summary_prompt_with, summary_ref,
     summary_user_message,
 };
+use crate::study::{assess_line, assess_prompt, assess_ref};
 use crate::util::{is_lower_hex, local_minute, unix_now};
 use rusqlite::OptionalExtension;
 use serde_json::{json, Map, Value};
@@ -107,6 +108,7 @@ fn wire_error(ctx: &Ctx, path: &str, e: WireError) -> ApiError {
     match e {
         WireError::Refused(Refusal::Session | Refusal::NotAllowed) => ApiError::not_allowed(),
         WireError::Refused(Refusal::NotFound) => ApiError::not_found(),
+        WireError::Refused(Refusal::Few) => ApiError::assess_few(),
         WireError::Unreadable => {
             // Only this request fails; the link state is not touched. The line names no content.
             if ctx.app.0.unreadable_log.allow() {
@@ -949,6 +951,141 @@ pub async fn summary_saved(ctx: Ctx) -> Answer {
         .store
         .read(|c| data::summary_saved(c, who.id, &chat_ref))?;
     let mut v = found.to_json(true);
+    super::hide::for_viewer(who.is_admin(), &mut v);
+    ok(v)
+}
+
+// —— POST /api/ai/assess/ask —————————————————————————————————————————————————————————————————————————————————————————
+
+/// The study assessment: advice from the numbers of the user's records (never questions). It shares the summary
+/// feature end to end (switch, slot, caps, pacing, strength) and is stored as a `summary` chat `assess@<day>`.
+pub async fn assess_ask(ctx: Ctx) -> Answer {
+    only_keys(&ctx.body, &["lang"])?;
+    let lang_opt = body_lang(&ctx.body)?;
+    let route = require_ai_user(&ctx.app, &ctx.who, crate::route::Slot::Summary)?;
+    let target = ctx.app.0.target(&route)?;
+    let app = &ctx.app.0;
+    let who = &ctx.who;
+
+    const PATH: &str = "/internal/ai/assess";
+    let req = json!({"sid": who.sid, "id": who.id});
+    let bytes = backend(&ctx, PATH, req).await?;
+    let reply = wire::parse_assess(&bytes).map_err(|e| wire_error(&ctx, PATH, e))?;
+    let lang = lang_opt.unwrap_or(reply.ui_lang);
+    let (system, user) = assess_prompt(&reply.basis, lang);
+    let user_content = assess_line(&reply.latest_at, &reply.basis);
+    let chat_ref = assess_ref(&reply.today);
+
+    let chat_opt = app
+        .store
+        .read(|c| data::chat_by_ref(c, who.id, "summary", &chat_ref))?;
+    let (slot, permit) = places(&ctx, chat_opt, crate::features::Feature::Summary)?;
+    app.study_hold_point().await;
+    let limits = app.limits();
+    let model = route.model.clone();
+    let insert = StudyInsert {
+        chat_kind: "summary",
+        chat_ref: &chat_ref,
+        title: &reply.today,
+        record_id: None,
+        kind: "summary",
+        question_id: None,
+        question_no: None,
+        source: None,
+        lang: lang_code(lang),
+        sample: None,
+        user_content: &user_content,
+        model: &model,
+        now: unix_now(),
+        chats_per_user: limits.chats_per_user,
+        messages_per_chat: limits.messages_per_chat,
+    };
+    let ids = app
+        .store
+        .write(|tx| data::prepare_study(tx, who, &insert, &mut |c| app.registry.bind(&slot, c)))
+        .map_err(|e| study_error(&ctx, chat_opt, e))?;
+
+    let start = json!({
+        "chatId": ids.chat,
+        "chatTitle": ids.title,
+        "userMessageId": ids.user_msg,
+        "assistantMessageId": ids.answer,
+        "model": model,
+        "newChat": ids.new_chat,
+        "retry": false,
+        "free": false,
+        "chatKind": "assess",
+        "kind": "assess",
+        "questionId": Value::Null,
+        "questionNo": Value::Null,
+        "source": Value::Null,
+        "recordId": Value::Null,
+        "sample": Value::Null,
+        "basis": {
+            "days": reply.basis.days,
+            "records": reply.basis.records,
+            "answered": reply.basis.answered,
+            "latestAt": reply.latest_at,
+        },
+        "lang": lang_code(lang),
+    });
+    let l = Launch {
+        chat: ids.chat,
+        answer: ids.answer,
+        start,
+        system,
+        history: vec![Turn {
+            role: Role::User,
+            content: user,
+        }],
+        guard: None,
+        purpose: Some("summary"),
+        attempt: ids.attempt,
+    };
+    launch(&ctx, &route, target, slot, permit, l)
+}
+
+// —— GET /api/ai/assess/saved ————————————————————————————————————————————————————————————————————————————————————————
+
+/// The saved assessment when it was made for the record set whose newest record is `at` (`YYYYMMDDHHMM`); otherwise
+/// the empty answer, as `summary_saved` gives for a record without one.
+pub async fn assess_saved(ctx: Ctx) -> Answer {
+    let q = ctx.query.as_deref();
+    let at = query_text(q, "at")?
+        .and_then(at_digits_to_at)
+        .ok_or_else(ApiError::bad_request)?;
+    let who = &ctx.who;
+    let found = ctx
+        .app
+        .0
+        .store
+        .read(|c| data::assess_saved(c, who.id, &at))?;
+    let mut v = match found {
+        Some(f) => {
+            let mut v = f.saved.to_json(true);
+            if let Some(o) = v.as_object_mut() {
+                o.insert("date".into(), json!(f.date));
+                o.insert(
+                    "basis".into(),
+                    json!({
+                        "days": f.line.days,
+                        "records": f.line.records,
+                        "answered": f.line.answered,
+                        "latestAt": f.line.latest_at,
+                    }),
+                );
+            }
+            v
+        }
+        None => {
+            let mut v = empty_saved();
+            if let Some(o) = v.as_object_mut() {
+                o.insert("date".into(), Value::Null);
+                o.insert("basis".into(), Value::Null);
+            }
+            v
+        }
+    };
     super::hide::for_viewer(who.is_admin(), &mut v);
     ok(v)
 }

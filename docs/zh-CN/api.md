@@ -28,6 +28,7 @@
 | GET | `/api/bank` | 登录 | 用户能看到的所有题库的题目（只含上架的题） | 否 |
 | GET | `/api/banks` | 登录 | 用户能看到的题库，带工作表和数量 *(v0.5)* | 否 |
 | GET | `/api/progress` | 登录 | 用户的学习记录 | 否 |
+| GET | `/api/dashboard` | 登录 | 主页仪表盘：排行和最常练的题 *(v2.5)* | 否 |
 | GET | `/api/records` | 登录 | 用户保留的全部学习记录，最新的在前 *(v0.5)* | 否 |
 | GET | `/api/record?id=<int>` | 登录 | 一条学习记录和每道题的详情 *(v0.5)* | 否 |
 | GET | `/api/settings` | 登录 | 用户的界面设置 *(v0.5)* | 否 |
@@ -285,6 +286,18 @@ flowchart LR
 - `ownerId` / `owner` *(v0.7)*：把这个题库作为新题库导入的用户的 id 和用户名（v0.7 之前的题库属于第一个管理员）。只有管理员能得到这两项；其他用户只有在自己的题库上才得到 `ownerId`（否则是 `null`），`owner` 总是 `null`，所以题库列表从不透露别的账户。
 - `manageable` *(v0.7)*：这个用户能不能更新和删除这个题库（管理员：总是能；可管理题库的用户：自己的题库；其他人：从不）。
 
+### `GET /api/dashboard`
+*(v2.5)* 已登录；只读（不写任何东西，也没有请求体）。主页仪表盘的两个块，来自两条汇总查询：
+
+```json
+{"ranking": {"users": 12, "top": [{"rank": 1, "name": "a***e", "answered": 320, "correct": 290, "self": false}], "me": {"rank": 2, "answered": 300, "correct": 251}}, "popular": {"days": 30, "since": "2026-10-23 14:05", "items": [{"questionId": "1a2b3c4d5e6f", "bankId": 3, "times": 42, "correct": 30}]}}
+```
+
+- **`ranking`**：来自逐题统计的累计数字（旧学习记录被清理后它仍然保留），范围是至少答过一题的未停用用户，包括管理员，所有题库。顺序：`correct` 降序，再 `answered` 升序，再用户 id。`users` 是上榜的用户数，`top` 有 0 到 3 项。`me` 一定存在：没有答题的用户 `rank` 为 `null`，两个数都是 0。
+- **名字** 对每个查看者（管理员也一样）都由服务器决定：查看者自己那一行的 `name` 是完整用户名（带 `self: true`）；别人的名字完整显示，但如果是邮箱，只发出隐去中间的本地部分（第一个字符、`***`、最后一个字符；一两个字符是第一个字符加 `***`，空的是 `***`）。域名、用户 id 和邮箱地址从不发出。
+- **`popular`**：截至现在的最近 `days`（30）天，`since` 是起点。查看者能看到的题库里**有效**题目被所有用户答过的项目（`answer` 为 null 且答错的未作答项目不计），最多 3 项，按 `times` 降序，再 `correct`，再题库和位置。只发 `questionId`、`bankId` 和次数，题干由页面从 `GET /api/bank` 取。已停用和失去归属的题目不计入。
+- 需要先改密码的用户和其他路由一样得到 403；这个调用是一条普通的活动记录。
+
 ### `GET /api/progress`
 登录。`questions` 是用户每道题的累计统计（答过几次、答对几次、答错几次、当前连续答对几次），只限于他能看到的题库；`history` 是他最近 60 条学习记录（数据库保留 500 条，见 `GET /api/records`），每条最后是 `kind` *(v0.7)*；`masterStreak` 是连续答对几次后移出错题本（2）。
 
@@ -490,7 +503,8 @@ flowchart LR
 - *(v1.4)* **最后活动和所在地来源。** 用户应答多两个顶层键：`geoSource`（`"cloudflare"` 或 `"api"`）和 `aiServiceUp`（ai-service 已连接时为 `true`，与 AI+ 是否开启无关）；每个用户有 `lastActiveIp`（字符串或 `null`）和 `lastActiveLocation`（`{"country", "region", "city"}`，不知道的为 `null`；三者都不知道时整个值才是 `null`），两者在眼睛关闭时都是 `null`；还有 `lastActiveUa`（最后一次活动清理后的 User-Agent，最多 256 个字符；眼睛关闭时也有）。它们与 `lastActiveAt` 一起写入，最多每分钟一次，IP 和所在地只在眼睛打开时写（User-Agent 总是写），匿名请求从不写。`lastLoginLocation` 和 `lastActiveLocation` 的 `country` 是两位国家代码或国家名称，`country` 本身也可能是 `null`。所在地由来源决定：Cloudflare 模式存请求里的 `X-Geo-*`，`api` 模式存该 IP 已记住的查询结果（5.9 节）。**`POST /api/users/signin-info/clear`** 还会清除 `users.last_active_ip` / `_country` / `_region` / `_city`（不含 `last_active_ua`），以及查询的记忆和队列；关闭眼睛（`POST /api/users/signin-info`）会丢弃等待中的查询。
 - **`POST /api/users/geo-source`** *(v1.4，管理员)* 只接受 `{"source": "cloudflare"}`（`"api"` 或其他键是 400：切换到外部来源要经过 ai-service 的 `/api/ai/admin/geo/enable`，保证只有测试通过的配置才能启用）。写入 `system_settings` 的 `geo.source`，清空队列，返回用户应答。活动记录 `users.geoSource`，带 `{"source": "cloudflare"}`。
 - **`GET /api/activity`**（管理员）`?before=<id>&after=<id>&limit=<1..200>&user=<id|system|anon>&group=<auth|users|banks|study|settings|visit|ai|system>&action=<code>&result=<ok|fail>&facets=<0|1>` 返回 `{"entries": [...], "next", "newest", "facets", "settings"}`；最新的在前，按键集分页。`GET /api/activity/settings` 和 `POST /api/activity/settings`（`{"retentionDays": 7..3650, "userVisits": bool}`，两个键都可省略）。登录信息关闭时，`ip` 和 `location` 为 `null`。这些读取不会让会话续命，也不记录。
-- **`POST /api/activity/visit`** `{"page": "home"}`（已登录；`page` 是 `home`、`banks`、`users`、`logs`、`records`、`record`、`wrong`、`settings`、`about`、`quiz`、`result`、`ai`、`aiSettings` 之一，否则 400）：管理员会被记录，用户只在设置打开时记录；每个用户每分钟最多写 30 次。
+- **`POST /api/activity/visit`** `{"page": "home"}`（已登录；`page` 是 `home`、`study`、`banks`、`users`、`logs`、`records`、`record`、`wrong`、`settings`、`about`、`quiz`、`result`、`ai`、`aiSettings` 之一，否则 400）：管理员会被记录，用户只在设置打开时记录；每个用户每分钟最多写 30 次。
+  - *(v2.5)* `study` 是 **考试&练习** 页面；`home` 现在指仪表盘。以前用 `home` 写下的记录仍显示为 **主页**。
 - **`POST /api/attempt`**：同一次保存的重复（相同的 `key`、`startedAt` 和种类）什么都不写，回答第一次的结果再加 `"duplicate": true`。
 - **`GET /api/bank`**、**`GET /api/banks`**：响应带 `ETag` 和 `Cache-Control: private, no-cache`；`If-None-Match` 匹配时回答不带正文的 `304`。
 
@@ -521,7 +535,7 @@ flowchart LR
   | 503 | `ai.backendDown` | 后端无法回答，或者 AI 连接已关闭（没有内部令牌） |
   | 502 | `ai.unavailable` | ai-service不存在、已停止或没有回应 |
   | 413 | `ai.badRequest` | 请求体超过 256 KiB |
-  | 429 | （不是 JSON） | Nginx 的限流：每个地址每秒 30 个请求（突发 120）；`send`、`retry`、`study/ask` 和 `summary/ask` 还按会话每分钟 20 个（突发 10） |
+  | 429 | （不是 JSON） | Nginx 的限流：每个地址每秒 30 个请求（突发 120）；`send`、`retry`、`study/ask`、`summary/ask` 和 `assess/ask` 还按会话每分钟 20 个（突发 10） |
 
   前端把 `/api/ai/*` 上任何不带 JSON 的 5xx 都当作 `ai.unavailable`。
 - **POST** 需要 `Content-Type: application/json`（可以带 `; charset=utf-8`；否则是 415 `ai.badRequest`）；请求体必须是 JSON 对象（空的请求体算作 `{}`），最多 128 KiB（413 `ai.badRequest`）。**路由没有列出的键会被拒绝**（400 `ai.badRequest`），类型不对的值也一样。请求体和查询字符串里的 id 都是正整数。
@@ -556,6 +570,8 @@ flowchart LR
 | GET | `/api/ai/study/saved` | 已签名 | `?mode=&key=`，或 `&record=&source=&question=&kind=`（5.5） | `StudyAnswer` 的 `Saved` *(v0.9)* |
 | POST | `/api/ai/summary/ask` | AI 用户 | `{"recordId": <id>, "lang"?: "en" \| "zh" \| "ja"}` | **事件流**（5.3、5.5）*(v0.9)* |
 | GET | `/api/ai/summary/saved` | 已签名 | `?record=<id>&at=<12 位数字>`（5.5） | `SummaryAnswer` 的 `Saved` *(v0.9)* |
+| POST | `/api/ai/assess/ask` | AI 用户 | `{"lang"?: "en" \| "zh" \| "ja"}` | **事件流**（5.3、5.5）*(v2.5)* |
+| GET | `/api/ai/assess/saved` | 已签名 | `?at=<12 位数字>`（5.5） | `SummaryAnswer` 的 `Saved`，另有 `date` 和 `basis` *(v2.5)* |
 | GET | `/api/ai/memories` | 已签名 | | `{"memories": [Memory], "limit": 30, "maxTokens": 200}`（当前的上限；`maxTokens` 是 `memoryTokens`，v1.3 起默认 200（估算的 Token 数）） |
 | POST | `/api/ai/memories/add` | AI 用户 | `{"content": "…", "source"?: "manual" \| "chat"}` | `{"memory": Memory}` |
 | POST | `/api/ai/memories/update` | AI 用户 | `{"id": <id>, "content": "…"}` | `{"memory": Memory}` |
@@ -745,6 +761,7 @@ data: {"status":"done","tokensIn":38,"tokensOut":112,"truncated":false}
 | `ai.notRetryable` | 409 | 这个回答不能重试。*(v0.9)* 每个提示、解析和总结也一样；文字不变。 |
 | `ai.hintLeak` | （流里） | *(v0.9)* 这个提示会透露答案，已被拦下（文字 `这个提示透露了答案，已被隐藏。请重新生成。`；带 `withdraw: true`）。 |
 | `ai.noWrong` | 409 | *(v0.9)* 这条记录没有可总结的答错的题（文字 `这次没有答错的题（未作答的题不计入 AI 总结）。`）。 |
+| `ai.assessFew` | 409 | *(v2.5)* 已保存的学习记录不足 3 条，没有可评估的内容（文字 `学习记录太少，至少需要 3 条。`）。 |
 | `ai.noUsable` | 409 | *(v0.9)* 这条记录里每道答错的题，要么已被删除，要么用户已经看不到它（文字 `这些答错的题已经不可用（题库已删除或没有访问权限），无法总结。`）。 |
 | `ai.noDetail` | 409 | *(v0.9)* 这条记录没有逐题详情（在 v0.5 之前保存；文字 `这条记录没有逐题记录，无法总结。`）。 |
 | `ai.badRequest` | 400 / 405 / 413 / 415 | 请求无效。 |
@@ -850,6 +867,14 @@ data: {"chatId":12,"chatTitle":"2026-11-12 09:30","userMessageId":41,"assistantM
 #### `GET /api/ai/summary/saved`
 
 查询参数 `record=<正的 id>&at=<12 位数字>`：`at` 是记录的 `at` 去掉标点（`2026-11-10 15:10` 是 `202611101510`）；其他一律是 400 `ai.badRequest`。回答：`SummaryAnswer` 的 `Saved`，`latest` / `lastGood` 的规则相同。它不调用后端，也不需要 AI+ 功能。对话是按记录 id **和**它的时间找到的，所以一条记录被删除后，被一条 id 相同的新记录取代时，不会被误认成它。
+
+#### `POST /api/ai/assess/ask` *(v2.5)*
+
+主页仪表盘上的学习状态评估。请求体只有 `{"lang"?: "en" | "zh" | "ja"}`（别的都是 400 `ai.badRequest`）。ai-service 向后端要调用者自己的数字（`/internal/ai/assess`，第 6 章），再据此写建议；模型只拿到这些数字，拿不到题目、题库、工作表、用户名或记忆。它整个沿用总结功能：同样的 AI+ 检查（`Summary`）、同样的每日上限和匀速发送、同样的思考强度、Nginx 里同样的开始次数限制。拒绝的情况：和 `send` 相同，另加 409 `ai.assessFew`（已保存的记录不足 3 条）。对话以引用 `assess@<本地日期>`、以该日期为标题存成 `summary` 对话，每天一个（同一天再问一次，会在里面追加一对）；所有列表里它的类型都是 `assess`，保存的用户消息是机器行 `[AI assessment] latest=<YYYY-MM-DD HH:MM> 30d <records>r <answered>q`，界面上用标签代替它。`start` 事件里 `chatKind` 和 `kind` 是 `assess`，`questionId`、`questionNo`、`source`、`recordId`、`sample` 是 `null`，另有 `lang` 和 `basis`（`{"days", "records", "answered", "latestAt"}`）。
+
+#### `GET /api/ai/assess/saved` *(v2.5)*
+
+查询 `at=<12 位数字>`：最新一条学习记录的时间（`2026-11-22 09:10` 是 `202611220910`），别的都是 400 `ai.badRequest`。不需要 AI+ 功能。它返回用户最新的 `assess@` 对话的 `SummaryAnswer` 的 `Saved`，但只在这份评估是针对「最新记录就是这个时间」的那组记录写的时才返回；否则 `latest` 和 `lastGood` 是 `null`。两种情况都多带两个键：`date`（评估的日期，或 `null`）和 `basis`（同 `start` 事件，或 `null`）。非管理员永远收不到模型相关的键（第 7 章）。
 
 #### 忙碌的回答
 
@@ -1020,6 +1045,7 @@ data: {"chatId":12,"chatTitle":"2026-11-12 09:30","userMessageId":41,"assistantM
 | POST | `/internal/ai/question` | ai-service *(v0.9)* | `X-Xexam-Internal-Token` |
 | POST | `/internal/ai/record` | ai-service *(v0.9)* | `X-Xexam-Internal-Token` |
 | POST | `/internal/ai/record-info` | ai-service *(v0.9)* | `X-Xexam-Internal-Token` |
+| POST | `/internal/ai/assess` | ai-service *(v2.5)* | `X-Xexam-Internal-Token` |
 
 `/internal/` 下的其他任何路径、错误的方法，或者令牌缺失或错误（或者还没有加载令牌）时带令牌的路由，都回答 404 `text/plain` `not found`，和未知路径完全一样，所以不会暴露这些路由；被拒绝的令牌最多大约每分钟记一次日志。带令牌的路由需要 `Content-Type: application/json` 和一个 JSON 对象；它们的回答是后端通常的 JSON。
 
@@ -1036,6 +1062,7 @@ data: {"chatId":12,"chatTitle":"2026-11-12 09:30","userMessageId":41,"assistantM
   - **`POST /internal/ai/question`** `{"sid", "id", "questionId": "<^[0-9A-Za-z_-]{1,64}$>", "qlang": "en"|"zh"|"ja", "elang": "en"|"zh"|"ja", "record"?: {"id": <n>, "kind": "practice"|"exam"} | null}` → `{"ok": true, "uiLang": "en"|"zh"|"ja", "question": StudyQuestion, "solution": Solution, "item": {"seq": n, "answer": [str|n|null] | null, "correct": bool} | null, "record": {"id", "at", "kind", "key": str|null, "startedAt": n|null} | null}`。只有发送了 `record` 时才会填 `item` 和 `record`（这道题在记录里出现两次时取最小的 `seq`；没有作答时 `answer` 是 `null`；和这道题现在的样子对不上的条目是 `null`）。`uiLang` 是用户的设置语言。已下架的题也找得到（`active: false`）。
   - **`POST /internal/ai/record`** `{"sid", "id", "recordId", "max": 1..70, "elang"}` → `{"ok": true, "uiLang", "record": {"id", "at", "kind", "mode", "total", "correct", "answered": n|null, "detail": bool, "key": str|null, "startedAt": n|null}, "wrong": n, "usable": n, "items": [{"seq": n, "answer": [str|n|null], "question": StudyQuestion, "solution": Solution}], "budgetCut": bool}`。`wrong` 是答错的条目数；`usable` 是其中题目仍然存在并且看得到的条目数；`items` 最多放 `max` 道可用的，随机选取、不重复，按 `seq` 顺序返回，每段文字的上限比单题路由更短，文字合计最多 120 000 个字符（`budgetCut` 说明这是否截掉了什么）。没有详情的记录给出 `detail: false`、`wrong: 0`、`usable: 0`，没有条目。
   - **`POST /internal/ai/record-info`** `{"sid", "id", "recordId"}` → `{"ok": true, "uiLang", "record": {"id", "at", "kind", "key": str|null, "startedAt": n|null}}`，或者 `reason` 为 `session` / `notFound`。
+  - **`POST /internal/ai/assess`** *(v2.5)* 只有 `{"sid", "id"}` → {"ok": true, "uiLang", "today": "YYYY-MM-DD", "latestAt": "YYYY-MM-DD HH:MM", "basis": {"days": 30, "records", "practice", "exams", "answered", "correct", "unanswered", "activeDays", "daysSinceLast", "longestGapDays", "avgSecPerItem", "medianMinutes", "examAvgPercent": n|null, "timedExams", "timeUps", "weekdays": [7 counts, Mon..Sun], "dayparts": [4 counts: 0-5, 6-11, 12-17, 18-23 h], "weeks": [4 x {"answered", "correct"}, oldest first], "modes": {"<mode>": n}, "allTime": {"records", "seen", "answers", "correct", "notebookOpen", "mastered"}}}。这是调用者自己最近 30 天（`attempts.at` 从 29 天前零点起）学习记录的投影；`unanswered` 按未作答规则（`answer` 为 null 且答错）；`allTime` 统计已保存的记录（最多 500 条），以及从逐题统计得出的见过的题数、答题数、答对数、错题本里的题（`wrong > 0` 且连对少于 2）和已掌握的题（连对 2 以上）。已保存的记录不足 3 条时返回 `{"ok": false, "reason": "few"}`；会话方面的拒绝同上。**发出的**：只有计数和平均数。**从不读取也不发出的**：每条记录的工作表列表、题库、题目编号和文字、用户名。
   - `StudyQuestion` 是 `{"id": str, "kind": "single"|"multi"|"hotspot", "lang": "en"|"zh"|"ja", "stem": str, "options": [{"key": "A".."H", "text": str}], "items": [{"text": str, "choices": [str]}], "active": bool, "cut": bool}`（`options` 用于单选和多选，`items` 用于热点题；`lang` 是文字真正所用的语言，题目没有 `qlang` 的翻译时就是基础语言；`cut` 表示某段文字或某个数量被截到了上限）。它从不包含答案或解析。`Solution` 是 `{"answer": [str] | [n], "explanation": str, "mnemonic": str, "note": str, "explainLang": "en"|"zh"|"ja"|"", "keyTexts": [str]}`：答案（字母，或热点题每个条目选中的一个序号）、首选语言里有文字时用首选语言的解析、否则用它有的另一种语言的解析（`explainLang` 写出是哪种，没有按语言分开的解析的题是 `""`），以及 `keyTexts`，即正确选项在这道题有的每种语言里的文字。在记录路由里，`mnemonic` 和 `note` 是 `""`，`keyTexts` 是 `[]`。每段文字都截到一个包含最后那个 `…` 的上限。
 
 ### v1.3 的内部路由 *(v1.3)*

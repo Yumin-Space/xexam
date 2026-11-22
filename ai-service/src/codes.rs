@@ -233,6 +233,10 @@ impl ApiError {
     pub fn no_detail() -> ApiError {
         ApiError::new(409, "ai.noDetail", text_of("ai.noDetail"))
     }
+    /// A study assessment with fewer than 3 saved records
+    pub fn assess_few() -> ApiError {
+        ApiError::new(409, "ai.assessFew", text_of("ai.assessFew"))
+    }
     pub fn too_long(n: i64) -> ApiError {
         ApiError::new(
             400,
@@ -562,6 +566,7 @@ pub fn text_of(code: &str) -> &'static str {
         "ai.noWrong" => "这次没有答错的题（未作答的题不计入 AI 总结）。",
         "ai.noUsable" => "这些答错的题已经不可用（题库已删除或没有访问权限），无法总结。",
         "ai.noDetail" => "这条记录没有逐题记录，无法总结。",
+        "ai.assessFew" => "学习记录太少，至少需要 3 条。",
         "ai.featureOff" => "你没有权限使用这个功能。",
         "ai.genCount" => "每次生成的题数（单选 + 多选）必须在 1 到 100 之间。",
         "ai.gen.badName" => "名称不能为空，不能太长，也不能含有控制字符。",
@@ -736,6 +741,7 @@ mod tests {
             ApiError::no_wrong(),
             ApiError::no_usable(),
             ApiError::no_detail(),
+            ApiError::assess_few(),
         ] {
             assert_eq!(text_of(e.code), e.text, "{}", e.code);
             assert_eq!(e.status.as_u16(), 409);

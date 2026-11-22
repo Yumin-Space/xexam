@@ -40,21 +40,21 @@ test('applyItems: the cursor stays valid when the newest item was removed (numbe
 
 test('wantsItems: only a running generation on Home / Bank management with a visible page; never on the quiz', () => {
   const j = job();
-  assert.equal(wantsItems('home', true, j), true);
+  assert.equal(wantsItems('study', true, j), true);
   assert.equal(wantsItems('banks', true, j), true);
   assert.equal(wantsItems('quiz', true, j), false);
-  assert.equal(wantsItems('home', false, j), false);
+  assert.equal(wantsItems('study', false, j), false);
   assert.equal(wantsItems('settings', true, j), false);
-  assert.equal(wantsItems('home', true, job({ source: 'file' })), false);
-  assert.equal(wantsItems('home', true, job({ state: 'done' })), false);
-  assert.equal(wantsItems('home', true, null), false);
+  assert.equal(wantsItems('study', true, job({ source: 'file' })), false);
+  assert.equal(wantsItems('study', true, job({ state: 'done' })), false);
+  assert.equal(wantsItems('study', true, null), false);
 });
 
 test('placeholderOf: the running generation only; none for an import, a finished job or the quiz route', () => {
   const g = gen({ job: job({ name: 'AI bank', made: 8, goal: 20 }) });
-  assert.deepEqual(placeholderOf(g, 'home'), { id: 1, name: 'AI bank', made: 8, goal: 20 });
+  assert.deepEqual(placeholderOf(g, 'study'), { id: 1, name: 'AI bank', made: 8, goal: 20 });
   assert.equal(placeholderOf(g, 'quiz'), null);
-  assert.equal(placeholderOf(gen({ job: job({ source: 'file' }) }), 'home'), null);
-  assert.equal(placeholderOf(gen({ job: job({ state: 'done' }) }), 'home'), null);
-  assert.equal(placeholderOf(null, 'home'), null);
+  assert.equal(placeholderOf(gen({ job: job({ source: 'file' }) }), 'study'), null);
+  assert.equal(placeholderOf(gen({ job: job({ state: 'done' }) }), 'study'), null);
+  assert.equal(placeholderOf(null, 'study'), null);
 });

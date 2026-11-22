@@ -30,6 +30,7 @@ Every route has one access level (the route table `ROUTES` in `backend/src/api/a
 | GET | `/api/banks` | Signed in | The question banks the user may see, with their sheets and counts *(v0.5)* | No |
 | GET | `/api/banks/download?id=<int>&format=xlsx\|docx` | Bank downloader | One question bank as an Excel or Word file *(v1.6)* | No (one activity row) |
 | GET | `/api/progress` | Signed in | The user's study records | No |
+| GET | `/api/dashboard` | Signed in | The Home dashboard: leaderboard and most practised questions *(v2.5)* | No |
 | GET | `/api/records` | Signed in | Every kept study record of the user, newest first *(v0.5)* | No |
 | GET | `/api/record?id=<int>` | Signed in | One study record with its per-question detail *(v0.5)* | No |
 | GET | `/api/settings` | Signed in | The user's interface settings *(v0.5)* | No |
@@ -286,6 +287,18 @@ Signed in. A question bank is one imported workbook. The banks the user may see,
 - `ownerId` / `owner` *(v0.7)*: the id and username of the user who imported the bank as a new bank (banks from before v0.7 belong to the first administrator). Only administrators get both; any other user gets `ownerId` only for their own banks (`null` otherwise) and `owner` always `null`, so the bank list never names other accounts.
 - `manageable` *(v0.7)*: whether this user may update and delete the bank (administrators: always; bank managers: their own banks; others: never).
 
+### `GET /api/dashboard`
+*(v2.5)* Signed in; read only (it writes nothing and takes no body). The two blocks of the Home dashboard, from two aggregate queries:
+
+```json
+{"ranking": {"users": 12, "top": [{"rank": 1, "name": "a***e", "answered": 320, "correct": 290, "self": false}], "me": {"rank": 2, "answered": 300, "correct": 251}}, "popular": {"days": 30, "since": "2026-10-23 14:05", "items": [{"questionId": "1a2b3c4d5e6f", "bankId": 3, "times": 42, "correct": 30}]}}
+```
+
+- **`ranking`**: all-time figures from the per-question statistics (they survive the pruning of old study records), over enabled users with at least one answer, administrators included, every bank. Order: `correct` descending, then `answered` ascending, then the user id. `users` is the number of ranked users, `top` holds 0 to 3 entries. `me` is always present: `rank` is `null` and both counts are 0 for a user without answers.
+- **Names** are decided on the server for every viewer, administrators too: the `name` of the viewer's own row is the full user name (with `self: true`); another user's name is shown in full unless it is an e-mail address, and then only its masked local part is sent (first character, `***`, last character; one or two characters give the first plus `***`, none gives `***`). The domain, the user id and the e-mail address are never sent.
+- **`popular`**: the last `days` (30) days up to now, `since` being the start. The answered items of all users (an unanswered item, `answer` null and wrong, never counts) of **active** questions in the banks the viewer may see, at most 3, ordered by `times` descending, then `correct`, then bank and position. Only `questionId`, `bankId` and the counts are sent: the page reads the stem from `GET /api/bank`. Retired and orphaned questions are left out.
+- A user who has to change their password first gets 403 like on every other route; the call is an ordinary activity row.
+
 ### `GET /api/progress`
 Signed in. `questions` holds the user's cumulative statistics for each question (how many times it was answered, how many correct, how many wrong, and the current streak of correct answers), limited to the banks they may see; `history` holds their last 60 study records (the database keeps 500, see `GET /api/records`), each ending with `kind` *(v0.7)*; `masterStreak` is how many consecutive correct answers move a question out of the wrong-answer notebook (2).
 
@@ -494,7 +507,8 @@ Like every backend message they are Chinese and stable (the frontend translates 
 - **`POST /api/users/geo-source`** *(v1.4, administrator)* `{"source": "cloudflare"}` and nothing else (400 for `"api"` or any other key: switching to the external source goes through ai-service, `/api/ai/admin/geo/enable`, so that only a tested configuration can be enabled). Sets `system_settings` `geo.source`, clears the queue and returns the users answer. Activity entry `users.geoSource` with `{"source": "cloudflare"}`.
 - *(v1.6)* **Places for old records.** When the source becomes `api` (`POST /internal/ai/geo/source`, which ai-service also posts again after `admin/geo/save` while the source already is `api`), the backend collects every stored public address that has a record without a place (the activity log rows, `users.last_login_*` and `users.last_active_*`), most recently seen first, and looks each one up once (the backfill lane of the lookup queue: after the live jobs, inside the same cap of 30 a minute; a `rateLimited` answer pauses it for 15 minutes; at most 3 hand-outs per address). The answer fills every record of that address that has no place and never overwrites one. The lane lives in memory and is emptied when the eye closes, when the source goes back to `cloudflare` and on `signin-info/clear`.
 - **`GET /api/activity`** (administrator) `?before=<id>&after=<id>&limit=<1..200>&user=<id|system|anon>&group=<auth|users|banks|study|settings|visit|ai|system>&action=<code>&result=<ok|fail>&facets=<0|1>` returns `{"entries": [...], "next", "newest", "facets", "settings"}`; newest first, keyset paging. `GET /api/activity/settings` and `POST /api/activity/settings` (`{"retentionDays": 7..3650, "userVisits": bool}`, either key optional). `ip` and `location` are `null` while sign-in info is off. These reads do not keep a session alive and are not logged.
-- **`POST /api/activity/visit`** `{"page": "home"}` (signed in; `page` is one of `home`, `banks`, `users`, `logs`, `records`, `record`, `wrong`, `settings`, `about`, `quiz`, `result`, `ai`, `aiSettings`, else 400): administrators are logged, users only when the setting is on; at most 30 writes per user per minute.
+- **`POST /api/activity/visit`** `{"page": "home"}` (signed in; `page` is one of `home`, `study`, `banks`, `users`, `logs`, `records`, `record`, `wrong`, `settings`, `about`, `quiz`, `result`, `ai`, `aiSettings`, else 400): administrators are logged, users only when the setting is on; at most 30 writes per user per minute.
+  - *(v2.5)* `study` is the **Exam & practice** page; `home` now means the dashboard. Log rows written earlier with `home` keep their name **Home**.
 - **`POST /api/attempt`**: a repeat of the same save (same `key`, `startedAt` and kind) writes nothing and answers the first answer plus `"duplicate": true`.
 - **`GET /api/bank`**, **`GET /api/banks`**: the answers carry `ETag` and `Cache-Control: private, no-cache`; a matching `If-None-Match` gets `304` without a body.
 
@@ -525,7 +539,7 @@ The routes under `/api/ai/` are answered by ai-service (the `xexam-ai-service` c
   | 503 | `ai.backendDown` | The backend could not answer, or the AI link is off (no internal token) |
   | 502 | `ai.unavailable` | ai-service is absent, stopped or does not answer |
   | 413 | `ai.badRequest` | The body is over 256 KiB |
-  | 429 | (not JSON) | Nginx's rate limit: 30 requests a second per address (burst 120); `send`, `retry`, `study/ask` and `summary/ask` also 20 starts a minute per session (burst 10) |
+  | 429 | (not JSON) | Nginx's rate limit: 30 requests a second per address (burst 120); `send`, `retry`, `study/ask`, `summary/ask` and `assess/ask` also 20 starts a minute per session (burst 10) |
 
   The frontend treats any 5xx without JSON on `/api/ai/*` as `ai.unavailable`.
 - **POST** needs `Content-Type: application/json` (optionally `; charset=utf-8`; otherwise 415 `ai.badRequest`); the body must be a JSON object (an empty body counts as `{}`), at most 128 KiB (413 `ai.badRequest`). **Keys that a route does not list are refused** (400 `ai.badRequest`), and so is a value of the wrong type. Ids, in bodies and query strings, are positive integers.
@@ -560,6 +574,8 @@ The routes under `/api/ai/` are answered by ai-service (the `xexam-ai-service` c
 | GET | `/api/ai/study/saved` | Signed | `?mode=&key=` or `&record=&source=&question=&kind=` (5.5) | `Saved` of `StudyAnswer` *(v0.9)* |
 | POST | `/api/ai/summary/ask` | AI user | `{"recordId": <id>, "lang"?: "en" \| "zh" \| "ja"}` | **event stream** (5.3, 5.5) *(v0.9)* |
 | GET | `/api/ai/summary/saved` | Signed | `?record=<id>&at=<12 digits>` (5.5) | `Saved` of `SummaryAnswer` *(v0.9)* |
+| POST | `/api/ai/assess/ask` | AI user | `{"lang"?: "en" \| "zh" \| "ja"}` | **event stream** (5.3, 5.5) *(v2.5)* |
+| GET | `/api/ai/assess/saved` | Signed | `?at=<12 digits>` (5.5) | `Saved` of `SummaryAnswer`, plus `date` and `basis` *(v2.5)* |
 | GET | `/api/ai/memories` | Signed | | `{"memories": [Memory], "limit": 30, "maxTokens": 200}` (the current limits; `maxTokens` is `memoryTokens`, 200 by default since v1.3, in tokens) |
 | POST | `/api/ai/memories/add` | AI user | `{"content": "…", "source"?: "manual" \| "chat"}` | `{"memory": Memory}` |
 | POST | `/api/ai/memories/update` | AI user | `{"id": <id>, "content": "…"}` | `{"memory": Memory}` |
@@ -750,6 +766,7 @@ The `error` texts are ai-service's (Chinese; `ai.serviceOff` is the backend's); 
 | `ai.notRetryable` | 409 | This answer cannot be retried. *(v0.9)* Also every hint, analysis and summary; the text is unchanged. |
 | `ai.hintLeak` | (stream) | *(v0.9)* The hint would have given the answer away and was withheld (text `这个提示透露了答案，已被隐藏。请重新生成。`; with `withdraw: true`). |
 | `ai.noWrong` | 409 | *(v0.9)* The record has no wrong answer to summarise (text `这次没有答错的题（未作答的题不计入 AI 总结）。`). |
+| `ai.assessFew` | 409 | *(v2.5)* The user has fewer than 3 saved study records, so there is nothing to assess (text `学习记录太少，至少需要 3 条。`). |
 | `ai.noUsable` | 409 | *(v0.9)* Every wrong answer of the record belongs to a question that is deleted or no longer visible to the user (text `这些答错的题已经不可用（题库已删除或没有访问权限），无法总结。`). |
 | `ai.noDetail` | 409 | *(v0.9)* The record has no per-question detail (saved before v0.5; text `这条记录没有逐题记录，无法总结。`). |
 | `ai.badRequest` | 400 / 405 / 413 / 415 | The request was not valid. |
@@ -855,6 +872,14 @@ Body `{"recordId": <positive id>, "lang"?: "en" | "zh" | "ja"}` and nothing else
 #### `GET /api/ai/summary/saved`
 
 Query `record=<positive id>&at=<12 digits>`: `at` is the record's `at` without punctuation (`2026-11-10 15:10` is `202611101510`); anything else is 400 `ai.badRequest`. Answer: `Saved` of `SummaryAnswer`, with the same `latest` / `lastGood` rule. It does not call the backend and needs no AI+ feature. The chat is found by the record id **and** its time, so a record deleted and replaced by one with the same id is not mistaken for it.
+
+#### `POST /api/ai/assess/ask` *(v2.5)*
+
+The study assessment of the Home dashboard. Body `{"lang"?: "en" | "zh" | "ja"}` and nothing else (anything else is 400 `ai.badRequest`). ai-service asks the backend for the caller's own numbers (`/internal/ai/assess`, section 6) and writes advice from them; the model gets only those numbers, never a question, bank, sheet, user name or memory. It is the summary feature end to end: the same AI+ gate (`Summary`), the same daily caps and pacing, the same thinking strength, and the same start limit of Nginx. Refusals: those of `send`, plus 409 `ai.assessFew` (fewer than 3 saved records). The chat is stored as a `summary` chat with the reference `assess@<local date>` and titled with that date, one per day (asking again the same day adds a pair to it); every listing shows its kind as `assess`, and the stored user message is the machine line `[AI assessment] latest=<YYYY-MM-DD HH:MM> 30d <records>r <answered>q`, which the screens replace by a label. The `start` event has `chatKind` and `kind` `assess`, `questionId`, `questionNo`, `source`, `recordId` and `sample` `null`, `lang`, and `basis` (`{"days", "records", "answered", "latestAt"}`).
+
+#### `GET /api/ai/assess/saved` *(v2.5)*
+
+Query `at=<12 digits>`: the time of the newest study record (`2026-11-22 09:10` is `202611220910`); anything else is 400 `ai.badRequest`. It needs no AI+ feature. It answers `Saved` of `SummaryAnswer` for the user's newest `assess@` chat, but only when the assessment was written for a record set whose newest record has this time; otherwise `latest` and `lastGood` are `null`. Both cases carry two more keys: `date` (the day of the assessment, or `null`) and `basis` (as in the `start` event, or `null`). A non-administrator never receives the model keys (section 7).
 
 #### Busy answers
 
@@ -1040,6 +1065,7 @@ These routes are the link between the backend and ai-service. They are **not rea
 | POST | `/internal/ai/question` | ai-service *(v0.9)* | `X-Xexam-Internal-Token` |
 | POST | `/internal/ai/record` | ai-service *(v0.9)* | `X-Xexam-Internal-Token` |
 | POST | `/internal/ai/record-info` | ai-service *(v0.9)* | `X-Xexam-Internal-Token` |
+| POST | `/internal/ai/assess` | ai-service *(v2.5)* | `X-Xexam-Internal-Token` |
 
 Anything else under `/internal/`, a wrong method, or a token route with a missing or wrong token (or while no token is loaded) answers 404 `text/plain` `not found`, exactly like an unknown path, so the routes are not revealed; refused tokens are logged at most about once a minute. The token routes need `Content-Type: application/json` and a JSON object; their answers are the backend's usual JSON.
 
@@ -1056,6 +1082,7 @@ Anything else under `/internal/`, a wrong method, or a token route with a missin
   - **`POST /internal/ai/question`** `{"sid", "id", "questionId": "<^[0-9A-Za-z_-]{1,64}$>", "qlang": "en"|"zh"|"ja", "elang": "en"|"zh"|"ja", "record"?: {"id": <n>, "kind": "practice"|"exam"} | null}` → `{"ok": true, "uiLang": "en"|"zh"|"ja", "question": StudyQuestion, "solution": Solution, "item": {"seq": n, "answer": [str|n|null] | null, "correct": bool} | null, "record": {"id", "at", "kind", "key": str|null, "startedAt": n|null} | null}`. `item` and `record` are filled only when `record` was sent (the lowest `seq` when the question is in the record twice; `answer` is `null` when it was left unanswered; an entry that does not fit the question as it is now is `null`). `uiLang` is the user's Settings language. A deactivated question is found too (`active: false`).
   - **`POST /internal/ai/record`** `{"sid", "id", "recordId", "max": 1..70, "elang"}` → `{"ok": true, "uiLang", "record": {"id", "at", "kind", "mode", "total", "correct", "answered": n|null, "detail": bool, "key": str|null, "startedAt": n|null}, "wrong": n, "usable": n, "items": [{"seq": n, "answer": [str|n|null], "question": StudyQuestion, "solution": Solution}], "budgetCut": bool}`. `wrong` counts the items answered wrong; `usable` those of them whose question still exists and is visible; `items` holds at most `max` of the usable ones, chosen at random without repeats and returned in `seq` order, with shorter caps than the single-question route and together at most 120 000 characters of text (`budgetCut` says whether that cut anything). A record without detail gives `detail: false`, `wrong: 0`, `usable: 0` and no items.
   - **`POST /internal/ai/record-info`** `{"sid", "id", "recordId"}` → `{"ok": true, "uiLang", "record": {"id", "at", "kind", "key": str|null, "startedAt": n|null}}`, or `reason` `session` / `notFound`.
+  - **`POST /internal/ai/assess`** *(v2.5)* `{"sid", "id"}` and nothing else → {"ok": true, "uiLang", "today": "YYYY-MM-DD", "latestAt": "YYYY-MM-DD HH:MM", "basis": {"days": 30, "records", "practice", "exams", "answered", "correct", "unanswered", "activeDays", "daysSinceLast", "longestGapDays", "avgSecPerItem", "medianMinutes", "examAvgPercent": n|null, "timedExams", "timeUps", "weekdays": [7 counts, Mon..Sun], "dayparts": [4 counts: 0-5, 6-11, 12-17, 18-23 h], "weeks": [4 x {"answered", "correct"}, oldest first], "modes": {"<mode>": n}, "allTime": {"records", "seen", "answers", "correct", "notebookOpen", "mastered"}}}. A projection of the caller's own study records of the last 30 days (`attempts.at` from midnight 29 days ago); `unanswered` follows the not-answered rule (`answer` null and wrong); `allTime` counts saved records (at most 500) and, from the per-question statistics, the questions seen, answers, correct answers, notebook questions (`wrong > 0` with a streak below 2) and mastered ones (streak 2 or more). With fewer than 3 saved records the answer is `{"ok": false, "reason": "few"}`; the session refusals are as above. **Sent**: counts and averages only. **Never read or sent**: the per-record sheet lists, banks, question ids or texts, user names.
   - `StudyQuestion` is `{"id": str, "kind": "single"|"multi"|"hotspot", "lang": "en"|"zh"|"ja", "stem": str, "options": [{"key": "A".."H", "text": str}], "items": [{"text": str, "choices": [str]}], "active": bool, "cut": bool}` (`options` for single and multiple choice, `items` for hotspot questions; `lang` is the language the text is really in, which is the base language when the question has no translation into `qlang`; `cut` says a text or a count was cut to the caps). It never holds the answer key or the explanation. `Solution` is `{"answer": [str] | [n], "explanation": str, "mnemonic": str, "note": str, "explainLang": "en"|"zh"|"ja"|"", "keyTexts": [str]}`: the answer key (letters, or one chosen index per hotspot item), the explanation in the preferred language when it has text, else in another language it has (`explainLang` names it, `""` for a question without per-language explanations), and `keyTexts` the text of the correct option(s) in every language the question has. On the record route `mnemonic` and `note` are `""` and `keyTexts` is `[]`. Every text is cut to a cap that includes the final `…`.
 
 ### v1.3 internal routes *(v1.3)*

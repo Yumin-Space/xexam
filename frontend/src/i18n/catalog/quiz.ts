@@ -10,8 +10,8 @@ export default defineCatalog({
     'quiz.pos.short': '{i} / {n}',
     'quiz.time': 'Time used',
     'quiz.saveExit': 'Save and exit',
-    'quiz.saveExit.hint': 'Keeps your answers and the time used. You can continue this exam later from the home page.',
-    'quiz.saveExit.hintPractice': 'Keeps your answers, the questions you have checked and the time used. You can continue this practice later from the home page.',
+    'quiz.saveExit.hint': 'Keeps your answers and the time used. You can continue this exam later from the Exam & practice page.',
+    'quiz.saveExit.hintPractice': 'Keeps your answers, the questions you have checked and the time used. You can continue this practice later from the Exam & practice page.',
     'quiz.auto.on': 'Auto-advance on',
     'quiz.auto.hint': 'After you answer a single-choice question, or every item of a hotspot question, the next question opens by itself. Multiple-choice questions never advance on their own. You can turn this off in Settings.',
 
@@ -104,8 +104,8 @@ export default defineCatalog({
     'quiz.pos.short': '{i} / {n}',
     'quiz.time': '已用时间',
     'quiz.saveExit': '暂存退出',
-    'quiz.saveExit.hint': '保留已选的答案和用时，之后可以在主页继续这场考试。',
-    'quiz.saveExit.hintPractice': '保留已选的答案、已核对的题和用时，之后可以在主页继续这次练习。',
+    'quiz.saveExit.hint': '保留已选的答案和用时，之后可以在考试&练习页继续这场考试。',
+    'quiz.saveExit.hintPractice': '保留已选的答案、已核对的题和用时，之后可以在考试&练习页继续这次练习。',
     'quiz.auto.on': '自动下一题：开',
     'quiz.auto.hint': '单选题选好答案后，或者热点题的每个小项都选好后，会自动跳到下一题；多选题不会自动跳转。可以在「设置」里关闭。',
 
@@ -197,8 +197,8 @@ export default defineCatalog({
     'quiz.pos.short': '{i} / {n}',
     'quiz.time': '経過時間',
     'quiz.saveExit': '保存して中断',
-    'quiz.saveExit.hint': '選んだ答えと経過時間を保存します。この試験は、あとでホームから続けられます。',
-    'quiz.saveExit.hintPractice': '選んだ答え、答え合わせ済みの問題と経過時間を保存します。この練習は、あとでホームから続けられます。',
+    'quiz.saveExit.hint': '選んだ答えと経過時間を保存します。この試験は、あとで試験・練習ページから続けられます。',
+    'quiz.saveExit.hintPractice': '選んだ答え、答え合わせ済みの問題と経過時間を保存します。この練習は、あとで試験・練習ページから続けられます。',
     'quiz.auto.on': '自動で次へ：オン',
     'quiz.auto.hint': '単一選択問題で答えを選ぶか、ホットスポット問題のすべての小問に答えると、自動で次の問題へ進みます。複数選択問題では自動で進みません。「設定」でオフにできます。',
 

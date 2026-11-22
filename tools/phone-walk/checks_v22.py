@@ -22,7 +22,7 @@ Made-up accounts and data only; the screenshots stay in the output folder. Regis
 import re
 import time
 
-from checks import LANGS, goto, phone, start_quiz, until
+from checks import LANGS, SETUP, goto, phone, start_quiz, until
 from checks_v13 import common
 
 PHONES = [(393, 852), (360, 740), (320, 640)]
@@ -463,7 +463,7 @@ FOOT_JS = """const f = document.querySelector('.foot'); const n = document.query
 
 
 def ft_case(rc, lang, theme, size):
-    for route, page in (('#/', 'home'), ('#/settings', 'settings')):
+    for route, page in ((SETUP, 'home'), ('#/settings', 'settings')):
         if not rc.walk.wants_page(page):
             continue
         d = rc.dev('sam', lang, theme, size)
