@@ -4,6 +4,7 @@
 
 > This document covers every upgrade path, newest first:
 >
+> - **v2.6 → v2.7** (section 00000000000000): nothing to do besides `docker compose pull` and `docker compose up -d`. No database change (main schema 12, AI schema 11), no new variable, no `docker-compose.yml` or Nginx change. Rolling back to v2.6 needs no restore.
 > - **v2.5 → v2.6** (section 0000000000000): nothing to do besides `docker compose pull` and `docker compose up -d`. The main database moves to schema 12 on start after the copy `backups/xexam-schema11-<date-time>.db` (one new column, `users.display_name`); the AI database stays at schema 11 and only gains a table, columns and a model slot. Every existing user sets a username at the next sign-in, and users who never chose a question language now start in English. No new variable and no `docker-compose.yml` edit. Rolling back to v2.5 needs no restore.
 > - **v2.4 → v2.5** (section 000000000000): nothing to do besides `docker compose pull` and `docker compose up -d`. No database change (main schema 11, AI schema 11), no new variable and no `docker-compose.yml` edit; Home becomes a dashboard and the old Home is the page Exam & practice. Rolling back to v2.4 needs no restore.
 > - **v2.3 → v2.3.1** (section 00000000000): nothing to do besides `docker compose pull` and `docker compose up -d`. The AI service's container is renamed from `ai-service` to `xexam-ai-service` (the Compose service keeps its name); no variable, no `docker-compose.yml` edit and no database change. Rolling back to v2.3 needs no restore.
@@ -30,6 +31,31 @@
 > **Going straight to v1.0 from an older version** applies every step of the sections below in one go with the current images: one backup named after the schema the database had, then the migration to the current schema (6 for the main database, 4 for the AI database). The sections below are written for the version they lead to, so where one says schema 5, v1.0 ends at schema 6, the log says `Upgraded the database to schema 6`, `/api/info` shows `1.0` and ai-service creates its database at schema 4.
 >
 > **Every upgrade from v0.6 or older retires all your questions.** Since v0.7 only the six-column Excel layout can be imported, and every start retires the questions that were imported from the three- and four-column layouts of earlier versions; every question of v0.6 and older is in one of those. The banks, the study records and the statistics stay. Prepare a six-column version of each workbook before you upgrade (section 12 of [usage.md](usage.md)), and update each bank with it afterwards (section 2.4).
+
+## 00000000000000. Upgrading from v2.6 to v2.7
+
+This section is numbered 00000000000000 because it is the newest one. The older sections keep their numbers.
+
+### 00000000000000.1 What changes
+
+- **Nothing in the data or the servers.** Neither database changes (the main database stays at schema 12, the AI database at schema 11), there is no new variable, and neither `docker-compose.yml` nor the Nginx configuration needs an edit.
+- **Two new read-only routes for administrators**: `GET /api/users/records?user=` and `GET /api/users/record?user=&id=` (Study records of any user, from User management). Each look is written to the activity log as `users.viewRecords`. Scripts are not affected.
+- **The AI study assessment is checked and retried**: ai-service asks for the whole answer, cleans it and checks it, and asks again up to 3 calls in all; the retries do not count against the per-user AI caps but show in AI usage. A new error code `ai.assess.unusable` ends a request whose 3 calls gave no usable text.
+- **Older garbled capsules are hidden**: a stored assessment text that fails today's check is not shown on Home and does not use up the day, so the user can write a new one.
+- **Thinking room**: a call that sends a thinking strength asks the provider for **Tokens per answer** plus room for thinking (at most 32 768); nothing to set.
+- **Screens**: the answer sheet is a left drawer on phones, Study records and User management have numbered pages, and the dark theme is all black.
+
+### 00000000000000.2 Upgrade
+
+`docker compose pull`, then `docker compose up -d`. The data volumes stay as they are.
+
+### 00000000000000.3 Check
+
+The app menu shows **Xexam v2.7**. In User management every row has a book icon left of the pencil; on a phone an exam or a practice has the answer sheet button at the top left.
+
+### 00000000000000.4 Going back to v2.6
+
+Change `:latest` to `:v2.6` for the three images and run `docker compose up -d`. No restore is needed: nothing in the data changed.
 
 ## 0000000000000. Upgrading from v2.5 to v2.6
 

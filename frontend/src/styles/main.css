@@ -164,7 +164,7 @@
     color-scheme: dark;
     --page: #000000;
     --sheet: #000000;
-    --card: #0E1117;
+    --card: #000000;
     --tint: #1A2029;
     --line: rgba(255, 255, 255, .15);
     --ink: #FFFFFF;
@@ -237,7 +237,7 @@
   color-scheme: dark;
   --page: #000000;
   --sheet: #000000;
-  --card: #0E1117;
+  --card: #000000;
   --tint: #1A2029;
   --line: rgba(255, 255, 255, .15);
   --ink: #FFFFFF;
@@ -303,6 +303,13 @@
   --ai-off-ink: #E6E6E6;
   --ai-off-ring: var(--line);
   --switch-knob: var(--ink);
+}
+/* All-black dark theme (v2.7): on wide screens the hairlines are stronger so card edges stay visible on black. */
+@media (min-width: 601px) and (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --line: rgba(255, 255, 255, .24); --line-soft: rgba(255, 255, 255, .24); }
+}
+@media (min-width: 601px) {
+  :root[data-theme="dark"] { --line: rgba(255, 255, 255, .24); --line-soft: rgba(255, 255, 255, .24); }
 }
 
 * { box-sizing: border-box; }

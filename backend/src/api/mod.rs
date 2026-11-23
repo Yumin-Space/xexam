@@ -568,6 +568,78 @@ async fn download_bank(
     Ok(resp)
 }
 
+/// `GET /api/users/records?user=<id>` and `GET /api/users/record?user=<id>&id=<rid>` (v2.7, administrators only, read only): another
+/// user's study records, answered like `/api/records` and `/api/record` plus a `user` header. Bank scope is ALL (administrators
+/// see every bank). The detail leaves out `sessionKey` / `startedAt` (AI keys). 400 for a missing or malformed `user` / `id`,
+/// 404 `MSG_USER_NOT_FOUND` for an unknown user, 404 `MSG_RECORD_NOT_FOUND` for a record of another user or a missing one.
+/// A detail read (not HEAD) is recorded in the activity log as `users.viewRecords` (the first page of the list too, without a record id).
+async fn user_records(
+    st: &AppState,
+    path: &str,
+    query: Option<&str>,
+    head_only: bool,
+    authed: Option<&Authed>,
+) -> Result<Response, AppError> {
+    let detail = path == "/api/users/record";
+    let uid = query_once(query, "user")?
+        .as_deref()
+        .and_then(id_from_text)
+        .ok_or_else(bad_request)?;
+    let rid = if detail {
+        Some(query_id(query).ok_or_else(bad_request)?)
+    } else {
+        None
+    };
+    let store = st.0.store.clone();
+    let target = blocking(move || store.user_by_id(uid))
+        .await?
+        .ok_or(AppError::NotFoundMsg(response::MSG_USER_NOT_FOUND))?;
+    let eng = st.0.engine.clone();
+    let mut value = match rid {
+        None => blocking(move || eng.records(uid)).await?,
+        Some(id) => blocking(move || eng.record(uid, id))
+            .await?
+            .ok_or(AppError::NotFoundMsg(MSG_RECORD_NOT_FOUND))?,
+    };
+    if let Some(obj) = value.as_object_mut() {
+        if detail {
+            // The AI keys sit inside the summary under "record" (`Store::record_as`)
+            if let Some(rec) = obj.get_mut("record").and_then(Value::as_object_mut) {
+                rec.remove("sessionKey");
+                rec.remove("startedAt");
+            }
+        }
+        obj.insert(
+            "user".into(),
+            json!({
+                "id": target.id,
+                "username": target.username,
+                "displayName": target.display_name,
+            }),
+        );
+    }
+    // The list is logged for its first page only: a later page (`offset` > 0 or `page` > 1) is the same visit
+    let later_page = !detail
+        && (query_once(query, "offset")?
+            .and_then(|s| s.parse::<u64>().ok())
+            .is_some_and(|n| n > 0)
+            || query_once(query, "page")?
+                .and_then(|s| s.parse::<u64>().ok())
+                .is_some_and(|n| n > 1));
+    if !head_only && !later_page {
+        if let Some(a) = authed {
+            let mut e = Entry::new(Actor::of(&a.user), "users.viewRecords")
+                .client(&a.client)
+                .object(target.username.clone());
+            if let Some(id) = rid {
+                e = e.detail(json!({ "record": id }));
+            }
+            st.0.activity.record(e);
+        }
+    }
+    Ok(json_resp(StatusCode::OK, &value, head_only))
+}
+
 async fn get_route(
     st: &AppState,
     path: &str,
@@ -590,6 +662,9 @@ async fn get_route(
     if path == "/api/users" {
         let users = auth::list(st).await?;
         return Ok(json_resp(StatusCode::OK, &users, head_only));
+    }
+    if path == "/api/users/records" || path == "/api/users/record" {
+        return user_records(st, path, query, head_only, authed).await;
     }
     if path == "/api/logs" {
         // Administrators only (`auth::ROUTES`); the buffer is in memory, so no blocking task is needed

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { UserRow } from '../types/api.ts';
-import { USERS_PAGE_SIZE, USERS_PAGE_SIZE_PHONE, pageOfUser, pageUsers, viewQuery, viewSort, type UsersView } from './users-sort.ts';
+import { USERS_PAGE_SIZE, USERS_PAGE_SIZE_PHONE, pageOfUser, inUsersArea, pageUsers, viewQuery, viewSort, type UsersView } from './users-sort.ts';
 
 const many = (n: number): UserRow[] =>
   Array.from({ length: n }, (_, i) => ({ id: i + 1, username: `user${String(i + 1).padStart(3, '0')}@example.com`, displayName: i % 2 ? 'Odd' : null } as UserRow));
@@ -51,4 +51,12 @@ test('the page of one user follows the search and the order', () => {
   assert.equal(pageOfUser(list, view(1), 45, USERS_PAGE_SIZE_PHONE), 9);
   assert.equal(pageOfUser(list, view(1, 'user045'), 45), 1);
   assert.equal(pageOfUser(list, view(1), 999), 1);
+});
+
+test('the list state is kept inside the user-records routes only', () => {
+  assert.equal(inUsersArea('users'), true);
+  assert.equal(inUsersArea('userRecords'), true);
+  assert.equal(inUsersArea('userRecord'), true);
+  assert.equal(inUsersArea('records'), false);
+  assert.equal(inUsersArea('home'), false);
 });

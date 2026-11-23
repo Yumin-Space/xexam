@@ -1,4 +1,4 @@
-// Hash routing: #/ (dashboard), #/study (exam & practice setup), #/banks, #/users, #/logs, #/records, #/records/<id>, #/records/wrong, #/settings, #/profile (v2.6), #/about, #/quiz, #/result,
+// Hash routing: #/ (dashboard), #/study (exam & practice setup), #/banks, #/users (+ #/users/<uid>/records[/<id>], v2.7), #/logs, #/records, #/records/<id>, #/records/wrong, #/settings, #/profile (v2.6), #/about, #/quiz, #/result,
 // and (v0.8) #/ai (AI Chat; #/ai/<id> = that chat open, #/ai/new = a new chat not sent yet, so a reload keeps either) and
 // #/ai-settings (AI settings, administrators).
 // Hash routes need no server-side fallback and survive a page reload.
@@ -8,6 +8,8 @@ export type Route =
   | { name: 'study' }
   | { name: 'banks' }
   | { name: 'users' }
+  | { name: 'userRecords'; user: number }
+  | { name: 'userRecord'; user: number; id: number }
   | { name: 'logs' }
   | { name: 'records' }
   | { name: 'record'; id: number }
@@ -35,8 +37,16 @@ export function parseHash(hash: string): Route {
       return { name: 'study' };
     case 'banks':
       return { name: 'banks' };
-    case 'users':
+    case 'users': {
+      // v2.7: #/users/<uid>/records and #/users/<uid>/records/<rid> (an administrator reads a user's study records)
+      const [, uid, sub, rid] = parts;
+      if (parts.length > 4) return { name: 'users' };
+      if (uid && sub === 'records' && /^[0-9]{1,15}$/.test(uid)) {
+        if (rid && /^[0-9]{1,15}$/.test(rid)) return { name: 'userRecord', user: Number(uid), id: Number(rid) };
+        if (!rid) return { name: 'userRecords', user: Number(uid) };
+      }
       return { name: 'users' };
+    }
     case 'logs':
       return { name: 'logs' };
     case 'records':
@@ -70,6 +80,10 @@ export function routeHash(r: Route): string {
       return '#/';
     case 'record':
       return `#/records/${r.id}`;
+    case 'userRecords':
+      return `#/users/${r.user}/records`;
+    case 'userRecord':
+      return `#/users/${r.user}/records/${r.id}`;
     case 'wrong':
       return '#/records/wrong';
     case 'aiSettings':
@@ -90,6 +104,8 @@ export function sectionOf(r: Route): NavSection | null {
     case 'banks':
       return 'banks';
     case 'users':
+    case 'userRecords':
+    case 'userRecord':
       return 'users';
     case 'logs':
       return 'logs';

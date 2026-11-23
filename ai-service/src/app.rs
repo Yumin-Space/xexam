@@ -227,6 +227,51 @@ pub struct StudyHold {
     pub release: Arc<tokio::sync::Semaphore>,
 }
 
+/// Extra output tokens a call gets for thinking, by the strength it sends: 2048 for the lowest two levels of a family
+/// (MINIMAL / LOW, low, none / minimal), 4096 for medium, 8192 for high and above.
+pub(crate) fn thinking_headroom(effort: crate::effort::Effort) -> i64 {
+    let levels = effort.family().levels();
+    let idx = levels
+        .iter()
+        .position(|l| *l == effort.level())
+        .unwrap_or(levels.len());
+    let level = effort.level().to_ascii_lowercase();
+    if level == "medium" {
+        4096
+    } else if idx < 2 || level == "low" || level == "minimal" || level == "none" {
+        2048
+    } else {
+        8192
+    }
+}
+
+/// The highest limit thinking room may raise a call to when the model's real maximum is unknown.
+const THINKING_CEILING: i64 = 32_768;
+
+/// The token limit of a call that sends a thinking strength. Many models count their thinking inside `max_tokens`,
+/// so the admin's "reply max tokens" (`reply`) stays the budget of the VISIBLE answer and thinking gets
+/// [`thinking_headroom`] on top. `anthropic_cap` is the route's stored token ceiling (4096 / 8192) and applies to
+/// Anthropic-format routes only (0 = no such cap): for every other format that field is only the Anthropic ladder
+/// ceiling, not a model maximum, so those routes get reply + headroom up to [`THINKING_CEILING`]. A provider that
+/// refuses the larger value is stepped down by the token ladder. With no strength the limit is `reply` unchanged, and
+/// the result is never below `reply`.
+pub(crate) fn with_thinking_room(
+    reply: i64,
+    effort: Option<crate::effort::Effort>,
+    anthropic_cap: i64,
+) -> i64 {
+    let Some(e) = effort else { return reply };
+    let raised = reply
+        .saturating_add(thinking_headroom(e))
+        .min(THINKING_CEILING);
+    let capped = if anthropic_cap > 0 {
+        raised.min(anthropic_cap)
+    } else {
+        raised
+    };
+    capped.max(reply)
+}
+
 /// Cheap handle to the service.
 #[derive(Clone)]
 pub struct AppState(pub Arc<App>);
@@ -241,7 +286,16 @@ impl AppState {
         target: &Target,
         spec: &crate::provider::ChatSpec<'_>,
     ) -> Result<crate::provider::Plan, crate::provider::UpError> {
-        let want = self.0.limits().reply_max_tokens;
+        // a strength the provider already refused is not sent, so it gets no extra room either
+        let effort = spec
+            .effort
+            .filter(|e| !self.0.no_effort_of(&format!("{}|{}", route.key, e.tag())));
+        let anthropic_cap = if route.format == crate::settings::Format::Anthropic {
+            route.max_tokens
+        } else {
+            0
+        };
+        let want = with_thinking_room(self.0.limits().reply_max_tokens, effort, anthropic_cap);
         self.token_plan(route, target, spec, want)
             .map(|(plan, _)| plan)
     }
@@ -1472,4 +1526,71 @@ fn all_secrets(c: &rusqlite::Connection) -> rusqlite::Result<Vec<(i64, SecretRow
         }
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod thinking_room_tests {
+    use super::*;
+    use crate::effort::{Effort, EffortFamily};
+
+    fn e(f: EffortFamily, l: &str) -> Option<Effort> {
+        Effort::new(f, l)
+    }
+
+    #[test]
+    fn headroom_table() {
+        let cases = [
+            (EffortFamily::Anthropic, "low", 2048),
+            (EffortFamily::Anthropic, "medium", 4096),
+            (EffortFamily::Anthropic, "high", 8192),
+            (EffortFamily::Anthropic, "max", 8192),
+            (EffortFamily::OpenAi, "low", 2048),
+            (EffortFamily::OpenAi, "medium", 4096),
+            (EffortFamily::OpenAi, "xhigh", 8192),
+            (EffortFamily::Google, "MINIMAL", 2048),
+            (EffortFamily::Google, "LOW", 2048),
+            (EffortFamily::Google, "MEDIUM", 4096),
+            (EffortFamily::Google, "HIGH", 8192),
+            (EffortFamily::Google, "XHIGH", 8192),
+            (EffortFamily::Responses, "none", 2048),
+            (EffortFamily::Responses, "minimal", 2048),
+            (EffortFamily::Responses, "low", 2048),
+            (EffortFamily::Responses, "medium", 4096),
+            (EffortFamily::Responses, "high", 8192),
+            (EffortFamily::Responses, "max", 8192),
+        ];
+        for (f, l, want) in cases {
+            let eff = e(f, l).expect("level");
+            assert_eq!(thinking_headroom(eff), want, "{f:?} {l}");
+        }
+    }
+
+    #[test]
+    fn no_strength_keeps_the_reply_limit() {
+        assert_eq!(with_thinking_room(3000, None, 0), 3000);
+        assert_eq!(with_thinking_room(3000, None, 100_000), 3000);
+    }
+
+    #[test]
+    fn strength_adds_room_on_top_of_the_reply_limit() {
+        let g = e(EffortFamily::Google, "HIGH");
+        assert_eq!(with_thinking_room(3000, g, 0), 11_192);
+        let m = e(EffortFamily::OpenAi, "medium");
+        assert_eq!(with_thinking_room(3000, m, 0), 7096);
+    }
+
+    #[test]
+    fn the_anthropic_ladder_ceiling_caps_only_anthropic_routes() {
+        let g = e(EffortFamily::Google, "HIGH");
+        // Anthropic format: the stored ceiling applies
+        assert_eq!(with_thinking_room(3000, g, 8192), 8192);
+        assert_eq!(with_thinking_room(3000, g, 64_000), 11_192);
+        // a cap below the reply limit never lowers the reply limit itself
+        assert_eq!(with_thinking_room(3000, g, 2000), 3000);
+        // other formats pass 0: reply + headroom, even when reply is already 8192 (the old cap gave 8192 again)
+        assert_eq!(with_thinking_room(8192, g, 0), 16_384);
+        // and the absolute ceiling holds
+        assert_eq!(with_thinking_room(30_000, g, 0), 32_768);
+        assert_eq!(with_thinking_room(40_000, g, 0), 40_000);
+    }
 }

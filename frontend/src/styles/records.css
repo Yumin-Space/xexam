@@ -82,8 +82,10 @@
 /* Retention note and the rarely used "Delete all" at the end of the list page */
 .rec-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin-top: 16px; }
 .rec-foot .rec-retention { flex: 1 1 20em; margin-top: 0; }
-/* "Show more (N left)" under a long list (RC-6) */
-.rec-more { display: flex; margin: 12px auto 0; }
+/* The numbered pager under the table (v2.7, the shared .ptb-pager) */
+.rec-list > .ptb-pager { margin-top: 14px; }
+/* "View only" under the head of an administrator's view of another user's records */
+.rec-target-note { margin: -6px 0 12px; font-size: 13.5px; }
 
 /* The AI 总结 control: the sparkle icon with its text where there is room (the table; the detail row); the labelled icon
    buttons of the detail row use the same shape. Icon only: the text is hidden and the button is the usual square. */
@@ -322,3 +324,4 @@ html[data-hand] .page-records :is(.rec-bnames, .rv-src, .rec-bank-sel) { font-fa
 html[data-hand]:lang(zh-CN) .page-records :is(.rec-bnames, .rv-src, .rec-bank-sel) { font-family: var(--zh); }
 html[data-hand]:lang(ja) .page-records :is(.rec-bnames, .rv-src, .rec-bank-sel) { font-family: var(--jp); }
 html[data-hand] .page-records .ico { filter: url(#xexam-hand) drop-shadow(.6px -.5px 0 currentColor); }
+.page-record .opt.review .tag { white-space: normal; overflow-wrap: anywhere; max-width: 100%; }

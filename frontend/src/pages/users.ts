@@ -35,6 +35,7 @@ import { deleteGeo, enableGeo, fetchGeo, saveGeo, testGeo } from '../api/geo.ts'
 import { clearSigninInfo, createUser, deleteUser, fetchUsers, resetUserPassword, setGeoSource, setSigninInfo, unlockUser, updateUser, type UsersList } from '../api/users.ts';
 import { aiBadge, aiSetBadge } from '../components/ai-badge.ts';
 import { pageHead } from '../components/common.ts';
+import { pager } from '../components/pager.ts';
 import { field, passwordLengthOk, usernameOk } from '../components/fields.ts';
 import { looksLikeEmail } from '../domain/user-name.ts';
 import { iconButton, shortLabel, withReason } from '../components/icon-button.ts';
@@ -50,14 +51,13 @@ import {
   placeLocation, presetDraft, type GeoForm, type GeoProblem,
 } from '../domain/geo-source.ts';
 import { USER_TABS, hashOfUserTab, userTabOfHash, type UserTab } from '../domain/users-tabs.ts';
-import { USERS_PAGE_SIZE, USERS_PAGE_SIZE_PHONE, USER_SORTS, isOnline, pageOfUser, pageUsers, viewQuery, viewSort, type UserSort } from '../domain/users-sort.ts';
-import { pageList } from '../domain/paged-table.ts';
+import { USERS_PAGE_SIZE, USERS_PAGE_SIZE_PHONE, USER_SORTS, inUsersArea, isOnline, pageOfUser, pageUsers, viewQuery, viewSort, type UserSort } from '../domain/users-sort.ts';
 import { lockNote, lockView } from '../domain/lock.ts';
 import { SEARCH_FROM, aiLineKind, createAi, factPlan, isServiceOff, lockUntilLabel, fullAt } from '../domain/user-admin.ts';
 import { secondsLeft } from '../domain/wait.ts';
 import { errorText } from '../i18n/errors.ts';
-import { localeTag, t, tn, uiLang, type MsgKey } from '../i18n/index.ts';
-import { onRouteChange, onSignedIn, refreshAi, refreshLibrary, render } from '../state/actions.ts';
+import { t, tn, uiLang, type MsgKey } from '../i18n/index.ts';
+import { navigate, onRouteChange, onSignedIn, refreshAi, refreshLibrary, render } from '../state/actions.ts';
 import {
   accessChange, accessOf, accessView, deselectAllBanks, draftOf, editChange, isTicked, ownedBankNames, ownerView, toggleAll,
   toggleBank, toolState, type AccessDraft,
@@ -139,11 +139,14 @@ function resetAdd(): void {
 
 onRouteChange((from, to) => {
   if (to.name === 'users') wanted = true;
+  // v2.7: the list page, search and sort stay while an administrator looks into a user's study records and comes back
+  if (!inUsersArea(to.name)) {
+    searchText = '';
+    listPage = 1;
+  }
   if (from.name === 'users' && to.name !== 'users') {
     resetAdd();
     actionError = null;
-    searchText = '';
-    listPage = 1;
     geoReset();
     stopTicker();
     stopPoller();
@@ -1613,6 +1616,8 @@ function userRow(u: UserRow, list: readonly UserRow[]): HTMLElement {
     aiSwitch(u, blocked),
     h('div', { class: 'us-icons' },
       busy ? h('span', { class: 'us-busy', role: 'status' }, t('users.act.busy')) : null,
+      act(`us-records-${u.id}`, 'book', t('users.act.recordsAria', { name: u.username }), blocked, u.records === 0 ? t('users.act.recordsNone') : null,
+        () => navigate({ name: 'userRecords', user: u.id })),
       act(`us-edit-${u.id}`, 'pencil', t('users.act.editAria', { name: u.username }), blocked, null, () => void editUser(u, lim)),
       act(`us-reset-${u.id}`, 'keyRound', t('users.act.resetAria', { name: u.username }), blocked, lim.self ? lim.why : null, () => void resetPassword(u)),
       u.disabled
@@ -1635,31 +1640,6 @@ function addButton(list: UsersList['users'] | null): HTMLElement {
   return b;
 }
 
-/** The pager (the look and texts of the AI settings tables): arrows + page numbers + "Page x / y"; the arrows stay in place */
-function usersPager(pages: number, cur: number, goTo: (p: number, key: string, keyboard: boolean) => void): HTMLElement {
-  const num = (n: number): string => n.toLocaleString(localeTag());
-  const step = (dir: -1 | 1): HTMLElement => {
-    const target = cur + dir;
-    const off = target < 1 || target > pages;
-    return h('button', {
-      type: 'button', id: `us-${dir < 0 ? 'prev' : 'next'}`, class: 'ptb-pg ptb-step', 'aria-disabled': off ? 'true' : null,
-      'aria-label': t(dir < 0 ? 'ai.set.tbl.prev' : 'ai.set.tbl.next'),
-      onclick: (ev: MouseEvent) => !off && goTo(target, dir < 0 ? 'prev' : 'next', ev.detail === 0),
-    }, dir < 0 ? '‹' : '›');
-  };
-  // Phones: only the current page between the arrows (3 x 44 px + gaps fits at 320 px)
-  const list: Array<number | 'gap'> = matches(PHONE_MQ) ? [cur] : pageList(cur, pages, 1);
-  const nums = list.map((p) => (p === 'gap'
-    ? h('span', { class: 'ptb-gap', 'aria-hidden': 'true' }, '…')
-    : h('button', {
-      type: 'button', id: `us-p${p}`, class: 'ptb-pg' + (p === cur ? ' on' : ''), 'aria-current': p === cur ? 'page' : null,
-      'aria-label': t('ai.set.tbl.goPage', { n: num(p) }), onclick: (ev: MouseEvent) => p !== cur && goTo(p, `p${p}`, ev.detail === 0),
-    }, num(p))));
-  return h('nav', { class: 'ptb-pager us-pager', 'aria-label': t('ai.set.tbl.pager') },
-    h('div', { class: 'ptb-btns' }, step(-1), ...nums, step(1)),
-    h('span', { class: 'ptb-of' }, t('ai.set.tbl.pageOf', { p: num(cur), n: num(pages) })));
-}
-
 function listPanel(): HTMLElement {
   const list = users;
   const lead = infoTip('us-lead-tip', t('users.lead.aria'), t('users.lead'), 'us-tip');
@@ -1680,23 +1660,20 @@ function listPanel(): HTMLElement {
     const none = h('p', { class: 'empty us-nomatch', role: 'status', hidden: true }, t('users.search.none'));
     const pagerHost = h('div', { class: 'us-pagerhost' });
     // v2.6: search and order work across ALL users, then 10 per page (5 on phones). Typing redraws only the rows and the pager, so the
-    // search field keeps its focus; a pager press keeps the focus on the pressed control (keyboard only, no ring after a tap)
+    // search field keeps its focus; the shared pager (always drawn) keeps the focus on the pressed control
     const paint = (): void => {
       // the search only applies while its box is there (a list that shrank to SEARCH_FROM or fewer has no box to clear it)
       const r = pageUsers(list, { query: list.length > SEARCH_FROM ? searchText : '', sort: sortBy, page: listPage }, pageSize());
       listPage = r.page;
       rows.replaceChildren(...r.items.map((u) => userRow(u, list)));
       none.hidden = r.total > 0;
-      pagerHost.replaceChildren(...(r.pages > 1 ? [usersPager(r.pages, r.page, (p, key, keyboard) => {
-        listPage = p;
-        paint();
-        if (rows.getBoundingClientRect().top < 0) rows.scrollIntoView({ block: 'start' });
-        if (keyboard) {
-          let el = document.getElementById(`us-${key}`);
-          if (!el || el.getAttribute('aria-disabled') === 'true') el = document.getElementById(`us-p${p}`);
-          el?.focus({ preventScroll: true });
-        }
-      })] : []));
+      pagerHost.replaceChildren(pager({
+        id: 'us', page: r.page, pages: r.pages, scrollTarget: rows, preventScroll: true,
+        onGo: (p) => {
+          listPage = p;
+          paint();
+        },
+      }));
     };
     paint();
     const search = list.length > SEARCH_FROM

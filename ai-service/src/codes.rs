@@ -572,6 +572,7 @@ pub fn text_of(code: &str) -> &'static str {
         "ai.noDetail" => "这条记录没有逐题记录，无法总结。",
         "ai.assessFew" => "学习记录太少，至少需要 3 条。",
         "ai.assessDaily" => "今天的 AI 学习评估次数已用完，明天再来吧。",
+        "ai.assess.unusable" => "AI 这次没有给出合适的评估，请稍后再试。",
         "ai.featureOff" => "你没有权限使用这个功能。",
         "ai.genCount" => "每次生成的题数（单选 + 多选）必须在 1 到 100 之间。",
         "ai.gen.badName" => "名称不能为空，不能太长，也不能含有控制字符。",

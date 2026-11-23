@@ -13,8 +13,11 @@ import { kindTag } from '../components/kind-tag.ts';
 import { controlState, recordSummaryExtra, unavailableParts, type AiPlusView, type ControlState } from '../domain/ai-plus.ts';
 import { kindOf } from '../domain/attempt.ts';
 import {
-  NO_FILTERS, RECORDS_PAGE, filterCount, focusAfterDelete, isFiltered, isKindFilter, matchesRecord, nextLimit, pageRows, type RecordFilters,
+  NO_FILTERS, filterCount, focusAfterDelete, isFiltered, isKindFilter, matchesRecord, pageRecords, recordsPageSize, type RecordFilters,
 } from '../domain/records-filter.ts';
+import { pager } from '../components/pager.ts';
+import { matches, PHONE_MQ } from '../utils/media.ts';
+import { UR, cachedUserRecord, clearUserRecords, enterUserRecords, loadUserRecord, loadUserRecords, newListUi, type ListUi } from '../state/user-records.ts';
 import { reviewItem, reviewParts, stripKey, type ReviewFilter, type ReviewParts, type ReviewRow } from '../components/review.ts';
 import { defaultFilter, resultCounts } from '../domain/exam-timer.ts';
 import { inNotebook, masterStreakOf, percentOf, shuffle } from '../domain/grading.ts';
@@ -23,7 +26,7 @@ import { t, tn, type MsgKey } from '../i18n/index.ts';
 import { routeHash, type Route } from '../router.ts';
 import { applyRecordsDeleted, loadRecord, navigate, onRouteChange, onSignedIn, refreshRecords, render, startExam } from '../state/actions.ts';
 import { S, bankIdsOf } from '../state/store.ts';
-import type { Mode, Question, RecordBank, RecordDetail, RecordItem, RecordSummary } from '../types/api.ts';
+import type { Mode, Question, RecordBank, RecordDetail, RecordItem, RecordSummary, UserRecordDetail, UserRef } from '../types/api.ts';
 import { ask, askCheck, dialogTitleId } from '../utils/dialog.ts';
 import { h, scrollToY } from '../utils/dom.ts';
 import { fmtTime } from '../utils/format.ts';
@@ -31,52 +34,62 @@ import { liftToastAbove, toast } from '../utils/toast.ts';
 
 // ---------------------------------------------------------------- page-local state
 
-/** List filters (kept while the app is open) */
-const filters: RecordFilters = { ...NO_FILTERS };
+/** The own list's UI state: filters, page, scroll, folded filter bar, detail filter (kept while the app is open). The admin's
+ *  view of another user keeps its own in state/user-records.ts and never touches this. */
+const own: ListUi = newListUi();
+/** The list UI state of the page being drawn: `tg` = the user an administrator is reading (null = the own records) */
+const uiOf = (tg: number | null): ListUi => (tg == null ? own : UR.ui);
+/** The user an administrator is reading, from a route (null on the own pages) */
+const targetOf = (r: Route): number | null => (r.name === 'userRecords' || r.name === 'userRecord' ? r.user : null);
 /** A delete request is running */
 let busy = false;
 /** Loading the record list when it is not in the store yet */
-let listLoading = false;
-let listError: { e: unknown } | null = null;
+const listLoading = new Set<number | 'own'>();
+const listError = new Map<number | 'own', unknown>();
 /** Exam detail being fetched / failed to fetch, by record id (a failure is forgotten when the route changes, so coming back retries) */
 const pending = new Set<number>();
 const failures = new Map<number, unknown>();
-/** "Wrong only / not completed / all" on the detail page; null = the default of the record (TL-7), again whenever another record is opened */
-let detailFilter: ReviewFilter | null = null;
 /** Bank filter of the wrong-answer review */
 let wrongBank: number | 'all' = 'all';
-/** Scroll position of the list when an exam was opened from it (0 = nothing to restore) */
-let listY = 0;
-/** The phone filter bar is unfolded (RC-1; kept while the app is open, like the filters) */
-let filtersOpen = false;
-/** How many records the list shows (RC-6); back to one page whenever a filter changes. Kept when a record is opened. */
-let shownLimit = RECORDS_PAGE;
 /** After a delete (RC-11): the record whose date link takes the focus, null = the list heading; undefined = nothing to do */
 let pendingFocus: number | null | undefined;
 /** The observer of the record detail's floating question-number button (RC-9) */
 let jumpWatch: IntersectionObserver | null = null;
 
+const isListRoute = (r: Route): boolean => r.name === 'records' || r.name === 'userRecords';
+const isDetailRoute = (r: Route): boolean => r.name === 'record' || r.name === 'userRecord';
+const sameDetail = (a: Route, b: Route): boolean =>
+  (a.name === 'record' && b.name === 'record' && a.id === b.id)
+  || (a.name === 'userRecord' && b.name === 'userRecord' && a.id === b.id && a.user === b.user);
+
 onRouteChange((from, to) => {
   jumpWatch?.disconnect();
   jumpWatch = null;
   failures.clear();
-  listError = null;
-  if (to.name === 'record' && !(from.name === 'record' && from.id === to.id)) detailFilter = null;
-  // Back from an exam to the list: return to where the list was. The hooks run before render() and the scroll to the
-  // top, so scrollY is still the list's position here, and the animation frame comes after both.
-  if (from.name === 'records' && to.name === 'record') {
-    listY = window.scrollY;
-  } else if (from.name === 'record' && to.name !== 'record') {
-    const y = listY;
-    listY = 0;
-    if (to.name === 'records' && y > 0) requestAnimationFrame(() => window.scrollTo(0, y));
+  listError.clear();
+  // The administrator's view of a user: another user starts fresh, leaving the view forgets everything
+  const toUser = targetOf(to);
+  if (toUser != null) enterUserRecords(toUser);
+  else if (targetOf(from) != null) clearUserRecords();
+  if (isDetailRoute(to) && !sameDetail(from, to)) uiOf(targetOf(to)).detailFilter = null;
+  // Back from an exam to the list: return to where the list was (same page: the page number is kept too). The hooks run
+  // before render() and the scroll to the top, so scrollY is still the list's position here, and the animation frame
+  // comes after both.
+  if (isListRoute(from) && isDetailRoute(to)) {
+    uiOf(targetOf(from)).listY = window.scrollY;
+  } else if (isDetailRoute(from) && !isDetailRoute(to)) {
+    // (the target state may just have been cleared: a fresh one is harmless here)
+    const ui = uiOf(targetOf(from));
+    const y = ui.listY;
+    ui.listY = 0;
+    if (isListRoute(to) && y > 0) requestAnimationFrame(() => window.scrollTo(0, y));
   }
 });
 
 // Signed in again (the session had ended): try what failed while it was gone
 onSignedIn(() => {
   failures.clear();
-  listError = null;
+  listError.clear();
 });
 
 const isMode = (m: string): m is Mode => m === 'all' || m === 'weak' || m === 'retry';
@@ -93,6 +106,9 @@ function activeById(): Map<string, Question> {
 function backButton(label: string, to: Route, name?: string): HTMLElement {
   return h('a', { class: 'btn quiet rec-back', href: routeHash(to), 'aria-label': name ?? null }, miniIcon('back', 'rec-back-ic'), label);
 }
+
+/** The list a detail page goes back to */
+const listRoute = (tg: number | null): Route => (tg == null ? { name: 'records' } : { name: 'userRecords', user: tg });
 
 // ---------------------------------------------------------------- deleting
 
@@ -160,7 +176,7 @@ function banksInRecords(records: readonly RecordSummary[]): RecordBank[] {
 }
 
 /** The overview follows every filter, the type included: its first number counts exams, practice sessions or both */
-function summaryContent(rows: readonly RecordSummary[], total: number): HTMLElement[] {
+function summaryContent(rows: readonly RecordSummary[], total: number, filters: Readonly<RecordFilters>): HTMLElement[] {
   const none = t('common.none');
   const kpi = (value: string, label: string): HTMLElement => h('div', { class: 'rec-kpi' }, h('b', { class: 'num' }, value), h('span', null, label));
   const avg = rows.length ? percentOf(rows.reduce((s, r) => s + r.percent, 0), rows.length * 100) : null;
@@ -237,7 +253,8 @@ function deleteButton(r: RecordSummary, onClick: () => void, label = t('records.
   return btn;
 }
 
-function recordRow(r: RecordSummary, view: AiPlusView, onDelete: (r: RecordSummary) => void): HTMLElement {
+/** `view` / `onDelete` null = the administrator's read-only view of another user (`tg`): no AI 总结, no delete, links go to the target routes */
+function recordRow(r: RecordSummary, view: AiPlusView | null, onDelete: ((r: RecordSummary) => void) | null, tg: number | null): HTMLElement {
   const cell = (label: string, cls: string, ...kids: Array<Node | string | null>): HTMLElement =>
     h('td', { role: 'cell', class: cls, 'data-label': label }, kids);
   const mode = modeName(r.mode);
@@ -250,11 +267,11 @@ function recordRow(r: RecordSummary, view: AiPlusView, onDelete: (r: RecordSumma
     // The whole row opens the detail; the link in the date cell is the keyboard / screen-reader way in
     onclick: (e: MouseEvent) => {
       if (e.target instanceof Element && e.target.closest('a, button')) return;
-      navigate({ name: 'record', id: r.id });
+      navigate(tg == null ? { name: 'record', id: r.id } : { name: 'userRecord', user: tg, id: r.id });
     },
   },
-  view.show ? h('td', { role: 'cell', class: 'rec-ai' }, summaryControl(r, controlState(view, recordSummaryExtra(r), 'summary'))) : null,
-  cell(t('records.col.time'), 'rec-time num', h('a', { href: `#/records/${r.id}`, 'data-rec': r.id }, r.at)),
+  view?.show ? h('td', { role: 'cell', class: 'rec-ai' }, summaryControl(r, controlState(view, recordSummaryExtra(r), 'summary'))) : null,
+  cell(t('records.col.time'), 'rec-time num', h('a', { href: tg == null ? `#/records/${r.id}` : routeHash({ name: 'userRecord', user: tg, id: r.id }), 'data-rec': r.id }, r.at)),
   // The kind tag leads the cell, so exams and practice tell apart in the list and in the phone cards alike
   h('td', { role: 'cell', class: 'rec-banks', 'data-label': t('records.col.banks') },
     kindTag(kindOf(r)), r.ended === 'timeUp' ? h('span', { class: 'tag kind-tag k rec-timeup' }, t('records.timeUpTag')) : null,
@@ -263,20 +280,20 @@ function recordRow(r: RecordSummary, view: AiPlusView, onDelete: (r: RecordSumma
   cell(t('records.col.duration'), 'num rec-st rec-st-dur', fmtTime(r.seconds)),
   cell(t('records.col.score'), 'num rec-st rec-st-ok', `${r.correct} / ${r.total}`),
   cell(t('records.col.accuracy'), 'num rec-pct' + band, `${r.percent}%`),
-  h('td', { role: 'cell', class: 'rec-act' }, deleteButton(r, () => onDelete(r))));
+  onDelete ? h('td', { role: 'cell', class: 'rec-act' }, deleteButton(r, () => onDelete(r))) : null);
 }
 
-function recordTable(rows: readonly RecordSummary[], view: AiPlusView, onDelete: (r: RecordSummary) => void): { el: HTMLElement; body: HTMLElement } {
+function recordTable(rows: readonly RecordSummary[], view: AiPlusView | null, onDelete: ((r: RecordSummary) => void) | null, tg: number | null): { el: HTMLElement; body: HTMLElement } {
   const th = (label: string, hidden = false): HTMLElement =>
     h('th', { role: 'columnheader', scope: 'col' }, hidden ? h('span', { class: 'sr-only' }, label) : label);
-  const body = h('tbody', { role: 'rowgroup' }, rows.map((r) => recordRow(r, view, onDelete)));
+  const body = h('tbody', { role: 'rowgroup' }, rows.map((r) => recordRow(r, view, onDelete, tg)));
   const el = h('div', { class: 'rec-scroll' },
-    h('table', { class: 'rec-table' + (view.show ? ' has-ai' : ''), role: 'table' },
+    h('table', { class: 'rec-table' + (view?.show ? ' has-ai' : ''), role: 'table' },
       h('caption', { class: 'sr-only' }, t('records.table.caption')),
       h('thead', { role: 'rowgroup' }, h('tr', { role: 'row' },
-        view.show ? th(t('aiplus.summary'), true) : null,
+        view?.show ? th(t('aiplus.summary'), true) : null,
         th(t('records.col.time')), th(t('records.col.banks')), th(t('records.col.answered')), th(t('records.col.duration')),
-        th(t('records.col.score')), th(t('records.col.accuracy')), th(t('records.col.actions'), true))),
+        th(t('records.col.score')), th(t('records.col.accuracy')), onDelete ? th(t('records.col.actions'), true) : null)),
       body));
   return { el, body };
 }
@@ -287,29 +304,32 @@ function field(id: string, label: string, control: HTMLElement): HTMLElement {
   return h('div', { class: 'fld rec-field' }, h('label', { class: 'fld-l', for: id }, label), control);
 }
 
-function clearFilters(): void {
-  Object.assign(filters, NO_FILTERS);
-  shownLimit = RECORDS_PAGE;
+function clearFilters(ui: ListUi): void {
+  Object.assign(ui.filters, NO_FILTERS);
+  ui.page = 1;
   render();
 }
 
 /** The record list is not in the store (should not happen after boot): load it, with an error state and retry */
-function listPlaceholder(): HTMLElement {
-  if (listError) {
-    const { e } = listError;
+function listPlaceholder(tg: number | null): HTMLElement {
+  const key = tg ?? 'own';
+  if (listError.has(key)) {
+    const e = listError.get(key);
     return h('div', { class: 'err', role: 'alert' },
       h('p', null, t('records.loadFailed')),
       h('p', null, errorText(e)),
-      h('div', { class: 'acts' }, h('button', { class: 'btn', type: 'button', onclick: () => { listError = null; render(); } }, t('common.retry'))));
+      h('div', { class: 'acts' },
+        h('button', { class: 'btn', type: 'button', onclick: () => { listError.delete(key); render(); } }, t('common.retry')),
+        tg == null ? null : backButton(t('records.target.back'), { name: 'users' })));
   }
-  if (!listLoading) {
-    listLoading = true;
-    refreshRecords().then(() => {
-      listLoading = false;
+  if (!listLoading.has(key)) {
+    listLoading.add(key);
+    (tg == null ? refreshRecords() : loadUserRecords(tg).then(() => undefined)).then(() => {
+      listLoading.delete(key);
       render();
     }, (e: unknown) => {
-      listLoading = false;
-      listError = { e };
+      listLoading.delete(key);
+      listError.set(key, e);
       render();
     });
   }
@@ -329,23 +349,50 @@ function restoreFocusAfterDelete(page: HTMLElement): void {
   });
 }
 
-function renderList(): HTMLElement {
-  const all = S.records;
-  const head = pageHead(t('records.title'),
-    h('button', { class: 'btn', type: 'button', onclick: () => navigate({ name: 'wrong' }) }, t('records.reviewWrong')));
-  const page = h('div', { class: 'page page-records' }, head);
-  const retention = h('p', { class: 'rec-retention dim' }, t('records.retention', { n: S.recordsRetention }));
+/** The name an administrator sees for the user being read: the display name, else the login */
+const nameOf = (u: UserRef): string => u.displayName || u.username;
+/** The target's name for a read-only page: from the loaded record / list (null until one of them has arrived) */
+const targetName = (tg: number | null, d?: UserRecordDetail): string | null => {
+  if (tg == null) return null;
+  const u = d?.user ?? (UR.uid === tg ? UR.list?.user : undefined);
+  return u ? nameOf(u) : null;
+};
+/** The label of the back link to the list: the target's list title for an administrator, else "Study records" */
+const listBackLabel = (name: string | null): string => (name ? t('records.target.title', { name }) : t('records.title'));
+
+/** "View only" under the page head of the administrator's view */
+const targetNote = (): HTMLElement => h('p', { class: 'dim rec-target-note' }, t('records.target.note'));
+
+/** The page head of the list: own (with the wrong-answer review) or the read-only view of user `tg` */
+function listHead(tg: number | null): HTMLElement {
+  if (tg == null) {
+    return pageHead(t('records.title'),
+      h('button', { class: 'btn', type: 'button', onclick: () => navigate({ name: 'wrong' }) }, t('records.reviewWrong')));
+  }
+  const who = UR.uid === tg ? UR.list?.user : undefined;
+  return pageHead(who ? t('records.target.title', { name: nameOf(who) }) : t('records.title'), backButton(t('records.target.back'), { name: 'users' }));
+}
+
+/** `tg`: the user an administrator is reading (read only: no delete, no AI, no study buttons); null = the own records */
+function renderList(tg: number | null): HTMLElement {
+  const ui = uiOf(tg);
+  const filters = ui.filters;
+  const ro = tg != null;
+  const all = ro ? (UR.uid === tg ? UR.list?.records : undefined) : S.records;
+  const retentionDays = ro ? (UR.list?.retention ?? 0) : S.recordsRetention;
+  const page = h('div', { class: 'page page-records' }, listHead(tg), ro ? targetNote() : null);
+  const retention = h('p', { class: 'rec-retention dim' }, t('records.retention', { n: retentionDays }));
 
   if (!all) {
-    page.append(listPlaceholder());
+    page.append(listPlaceholder(tg));
     return page;
   }
   if (!all.length) {
     page.append(
       h('section', { class: 'panel rec-empty' },
-        h('h2', { tabindex: '-1' }, t('records.empty.title')),
-        h('p', { class: 'empty' }, t('records.empty.body')),
-        h('div', { class: 'acts' }, h('button', { class: 'btn primary', type: 'button', onclick: () => navigate({ name: 'study' }) }, t('records.empty.start')))),
+        h('h2', { tabindex: '-1' }, t(ro ? 'records.target.empty' : 'records.empty.title')),
+        ro ? null : h('p', { class: 'empty' }, t('records.empty.body')),
+        ro ? null : h('div', { class: 'acts' }, h('button', { class: 'btn primary', type: 'button', onclick: () => navigate({ name: 'study' }) }, t('records.empty.start')))),
       retention);
     restoreFocusAfterDelete(page);
     return page;
@@ -377,66 +424,62 @@ function renderList(): HTMLElement {
   const count = h('p', { class: 'rec-count', role: 'status' });
   const badRange = h('p', { class: 'rec-warn' }, t('records.filter.badRange'));
   // Up to 400 px only the x shows (the text stays as the accessible name)
-  const resetBtn = h('button', { class: 'btn quiet rec-reset', type: 'button', title: t('records.filter.reset'), onclick: clearFilters },
+  const resetBtn = h('button', { class: 'btn quiet rec-reset', type: 'button', title: t('records.filter.reset'), onclick: () => clearFilters(ui) },
     miniIcon('x', 'rec-ri'), h('span', { class: 'rec-rtxt' }, t('records.filter.reset')));
   // Up to 640 px the filters fold behind this button (RC-1): [筛选 (n)] · the count · 清除筛选
   const toggleText = h('span', { class: 'rec-ftxt' });
   const toggle = h('button', {
-    class: 'btn rec-ftoggle', type: 'button', 'aria-expanded': String(filtersOpen), 'aria-controls': 'rec-filters',
+    class: 'btn rec-ftoggle', type: 'button', 'aria-expanded': String(ui.filtersOpen), 'aria-controls': 'rec-filters',
     onclick: () => {
-      filtersOpen = !filtersOpen;
-      filterPanel.classList.toggle('open', filtersOpen);
-      toggle.setAttribute('aria-expanded', String(filtersOpen));
+      ui.filtersOpen = !ui.filtersOpen;
+      filterPanel.classList.toggle('open', ui.filtersOpen);
+      toggle.setAttribute('aria-expanded', String(ui.filtersOpen));
     },
   }, miniIcon('filter', 'rec-fi'), toggleText, miniIcon('chevDown', 'rec-fchev'));
   const listBox = h('div', { class: 'rec-list' });
-  const deleteAllBtn = h('button', { class: 'btn danger', type: 'button', disabled: busy, onclick: () => void removeAll() }, t('records.deleteAll'));
-  const view = aiPlusNow();
-  /** The rows on screen, in order (the neighbour of a deleted record is looked up here) */
+  // Which rows are on screen, read out for screen readers (v2.7)
+  const range = h('p', { class: 'sr-only', role: 'status', 'aria-live': 'polite' });
+  const deleteAllBtn = ro ? null : h('button', { class: 'btn danger', type: 'button', disabled: busy, onclick: () => void removeAll() }, t('records.deleteAll'));
+  const view = ro ? null : aiPlusNow();
+  /** The rows of the current page, in order (the neighbour of a deleted record is looked up here) */
   let shownIds: number[] = [];
 
-  const onDelete = (r: RecordSummary): void => {
+  const onDelete = ro ? null : (r: RecordSummary): void => {
     void removeOne(r, undefined, focusAfterDelete(shownIds, r.id));
   };
 
   const update = (): void => {
     const rows = all.filter((r) => matchesRecord(r, filters));
-    const { shown, rest } = pageRows(rows, shownLimit);
-    shownIds = shown.map((r) => r.id);
+    // Numbered pages (v2.7): 10 on a phone, 20 elsewhere; a page past the end (after a delete) falls back to the last one
+    const pg = pageRecords(rows, ui.page, recordsPageSize(matches(PHONE_MQ)));
+    ui.page = pg.page;
+    shownIds = pg.items.map((r) => r.id);
     const n = filterCount(filters);
-    summary.replaceChildren(...summaryContent(rows, all.length));
+    summary.replaceChildren(...summaryContent(rows, all.length, filters));
     count.textContent = tn('records.count', all.length, { shown: rows.length });
+    range.textContent = rows.length ? t('records.range', { from: pg.from, to: pg.to, total: pg.total }) : '';
     toggleText.textContent = n ? `${t('records.filter.heading')} (${n})` : t('records.filter.heading');
     badRange.hidden = !(filters.from && filters.to && filters.from > filters.to);
     resetBtn.hidden = !isFiltered(filters);
     // "Delete all" would also delete what the filters hide: it is offered only on the full list (RC-11)
-    deleteAllBtn.hidden = isFiltered(filters);
+    if (deleteAllBtn) deleteAllBtn.hidden = isFiltered(filters);
     if (!rows.length) {
       listBox.replaceChildren(h('div', { class: 'rec-nomatch' },
         h('p', { class: 'empty' }, t('records.noMatch')),
-        h('button', { class: 'btn', type: 'button', onclick: clearFilters }, t('records.filter.reset'))));
+        h('button', { class: 'btn', type: 'button', onclick: () => clearFilters(ui) }, t('records.filter.reset'))));
       return;
     }
-    const table = recordTable(shown, view, onDelete);
-    const more = h('button', { class: 'btn rec-more', type: 'button' }, t('records.more', { n: rest }));
-    more.hidden = rest <= 0;
-    // "Show more" appends the next page to the table that is there (nothing above it is redrawn, the scroll stays)
-    more.addEventListener('click', () => {
-      const from = shownLimit;
-      shownLimit = nextLimit(from, rows.length);
-      const add = rows.slice(from, shownLimit);
-      shownIds = rows.slice(0, shownLimit).map((r) => r.id);
-      table.body.append(...add.map((r) => recordRow(r, view, onDelete)));
-      const left = rows.length - shownLimit;
-      if (left > 0) more.textContent = t('records.more', { n: left });
-      else more.hidden = true;
-      const first = add[0];
-      if (first) table.body.querySelector<HTMLElement>(`a[data-rec="${first.id}"]`)?.focus();
-    });
-    listBox.replaceChildren(table.el, more);
+    const table = recordTable(pg.items, view, onDelete, tg);
+    listBox.replaceChildren(table.el, pager({
+      id: 'rec', page: pg.page, pages: pg.pages, scrollTarget: listBox, preventScroll: true,
+      onGo: (p) => {
+        ui.page = p;
+        update();
+      },
+    }));
   };
   const refilter = (): void => {
-    shownLimit = RECORDS_PAGE;
+    ui.page = 1;
     update();
   };
   bankSel.addEventListener('change', () => {
@@ -461,7 +504,7 @@ function renderList(): HTMLElement {
     refilter();
   });
 
-  const filterPanel = h('section', { class: 'panel rec-filter' + (filtersOpen ? ' open' : ''), 'aria-labelledby': 'rec-filter-h' },
+  const filterPanel = h('section', { class: 'panel rec-filter' + (ui.filtersOpen ? ' open' : ''), 'aria-labelledby': 'rec-filter-h' },
     h('h2', { id: 'rec-filter-h' }, t('records.filter.heading')),
     h('div', { class: 'rec-bar' }, toggle, count, resetBtn),
     // Type and bank first, so that From and To share a row in the two-column phone layout (accuracy comes last)
@@ -473,10 +516,11 @@ function renderList(): HTMLElement {
       field('rec-f-score', t('records.filter.score'), scoreSel)),
     badRange);
 
-  const listPanel = h('section', { class: 'panel rec-listpanel' + (view.show ? ' has-ai' : ''), 'aria-labelledby': 'rec-list-h' },
+  const listPanel = h('section', { class: 'panel rec-listpanel' + (view?.show ? ' has-ai' : ''), 'aria-labelledby': 'rec-list-h' },
     h('h2', { id: 'rec-list-h', tabindex: '-1' }, t('records.list.heading')),
     // When AI 总结 is greyed for everyone, one note says why (instead of a tag on every row)
-    view.show ? aiNote(controlState(view, null, 'summary')) : null,
+    view?.show ? aiNote(controlState(view, null, 'summary')) : null,
+    range,
     listBox);
 
   update();
@@ -488,19 +532,20 @@ function renderList(): HTMLElement {
 
 // ---------------------------------------------------------------- detail (#/records/<id>)
 
-function fetchDetail(id: number): void {
+function fetchDetail(id: number, tg: number | null): void {
   pending.add(id);
-  loadRecord(id).then(() => {
+  (tg == null ? loadRecord(id) : loadUserRecord(tg, id)).then(() => {
     failures.delete(id);
   }, (e: unknown) => {
     failures.set(id, e);
   }).finally(() => {
     pending.delete(id);
-    if (S.route.name === 'record' && S.route.id === id) render();
+    const r = S.route;
+    if ((r.name === 'record' || r.name === 'userRecord') && r.id === id) render();
   });
 }
 
-function detailError(id: number, e: unknown): HTMLElement {
+function detailError(id: number, e: unknown, tg: number | null): HTMLElement {
   const notFound = e instanceof ApiError && (e.status === 404 || e.status === 400);
   return h('div', { class: 'page page-records' },
     pageHead(notFound ? t('records.detail.notFound') : t('records.detail.loadFailed')),
@@ -514,7 +559,7 @@ function detailError(id: number, e: unknown): HTMLElement {
             render();
           },
         }, t('common.retry')),
-        backButton(t('records.title'), { name: 'records' }))));
+        backButton(listBackLabel(targetName(tg)), listRoute(tg)))));
 }
 
 /** A question that no longer exists (deleted with its bank): a small card that still says whether it was right */
@@ -531,8 +576,11 @@ function goneCard(it: RecordItem, no: number): HTMLElement {
       h('p', { class: 'dim' }, t('records.detail.gone'))));
 }
 
-function detailView(d: RecordDetail): HTMLElement {
+function detailView(d: RecordDetail, tg: number | null): HTMLElement {
+  const ro = tg != null;
+  const ui = uiOf(tg);
   const rec = d.record;
+  const who = ro ? targetName(tg, d as UserRecordDetail) : null;
   const items = [...d.items].sort((a, b) => a.seq - b.seq);
   const active = activeById();
   // v1.1 (TL-7): a record saved by v1.1 flags its not-completed items; older records and practice have none
@@ -571,7 +619,8 @@ function detailView(d: RecordDetail): HTMLElement {
     btn.append(h('span', { class: 'rec-lbl', 'aria-hidden': 'true' }, text));
     return btn;
   };
-  if (hasDetail) {
+  // The administrator's read-only view has no retry / retake / delete / AI 总结: those would act on the administrator's own session
+  if (hasDetail && !ro) {
     if (wrongIds.length) {
       retryBtn = retryButton();
       if (!retryQs.length) hints.push(t('records.detail.retryNone'));
@@ -586,15 +635,20 @@ function detailView(d: RecordDetail): HTMLElement {
     else if (retakeQs.length < allIds.length) hints.push(tn('records.detail.retakeSkip', allIds.length - retakeQs.length));
   }
   // AI 总结: the same control as in the list (AI+ users only; a record without detail has no wrong answers to read)
-  const aiBtn = summaryControl(rec, controlState(aiPlusNow(), recordSummaryExtra(rec), 'summary'));
+  const aiBtn = ro ? null : summaryControl(rec, controlState(aiPlusNow(), recordSummaryExtra(rec), 'summary'));
   // The red trash button, set apart from the study actions (the dialog still asks before anything is deleted)
-  const delBtn = labelled(
+  const delBtn = ro ? null : labelled(
     deleteButton(rec, () => void removeOne(rec, () => navigate({ name: 'records' })), t('records.detail.delete')),
     t('records.detail.delete'));
-  delBtn.classList.add('rec-del');
+  delBtn?.classList.add('rec-del');
 
   const page = h('div', { class: 'page page-records page-record' },
-    pageHead(t(kind === 'practice' ? 'records.detail.titlePractice' : 'records.detail.title'), backButton(t('records.title'), { name: 'records' })),
+    pageHead(
+      who
+        ? t(kind === 'practice' ? 'records.target.detailTitlePractice' : 'records.target.detailTitle', { name: who })
+        : t(kind === 'practice' ? 'records.detail.titlePractice' : 'records.detail.title'),
+      backButton(listBackLabel(who), listRoute(tg))),
+    ro ? targetNote() : null,
     h('section', { class: 'score rec-score' },
       h('div', { class: 'big num', role: 'img', 'aria-label': t('records.detail.scoreLabel', { pct: rec.percent }) }, String(rec.percent), h('small', null, '%')),
       h('div', { class: 'says' },
@@ -603,7 +657,7 @@ function detailView(d: RecordDetail): HTMLElement {
           : t('records.detail.summary', { correct: rec.correct, total: rec.total })),
         counts.open > 0 && rec.ended === 'submit' ? h('p', { class: 'dim rec-opennote' }, t('result.openNote')) : null,
         meta,
-        h('div', { class: 'acts rec-acts' }, retryBtn, retakeBtn, aiBtn, delBtn),
+        ro ? null : h('div', { class: 'acts rec-acts' }, retryBtn, retakeBtn, aiBtn, delBtn),
         hints.length ? h('div', { class: 'rec-hints' }, hints.map((x) => h('p', null, x))) : null)));
 
   if (!hasDetail) {
@@ -619,16 +673,16 @@ function detailView(d: RecordDetail): HTMLElement {
         no: i + 1,
         retired: !it.question.active,
         // v0.9: AI analysis of this record's questions (the controls build themselves only for users with the AI+ feature)
-        ai: { page: 'detail', mode: kind, key: rec.sessionKey ?? null, startedAt: rec.startedAt ?? null, recordId: rec.id },
+        ...(ro ? { stats: null, ...(who ? { who } : {}) } : { ai: { page: 'detail' as const, mode: kind, key: rec.sessionKey ?? null, startedAt: rec.startedAt ?? null, recordId: rec.id } }),
       })
       : goneCard(it, i + 1)),
   }));
   // The default filter: wrong answers first, else the not-completed ones, else all (TL-7); a record from before v1.1 keeps v1.0's
   const dflt: ReviewFilter = rec.ended ? defaultFilter(counts) : 'wrong';
-  const parts = reviewParts(rows, { get: () => detailFilter ?? dflt, set: (f) => { detailFilter = f; } });
+  const parts = reviewParts(rows, { get: () => ui.detailFilter ?? dflt, set: (f) => { ui.detailFilter = f; } });
   page.append(...parts.els);
   // After reading through the answers, practise the wrong ones without scrolling back up
-  if (wrongIds.length && retryQs.length) page.append(h('div', { class: 'acts wr-foot' }, retryButton()));
+  if (!ro && wrongIds.length && retryQs.length) page.append(h('div', { class: 'acts wr-foot' }, retryButton()));
   page.append(jumpButton(rows, parts));
   return page;
 }
@@ -697,13 +751,14 @@ function openJumpSheet(rows: readonly ReviewRow[], parts: ReviewParts): void {
   d.showModal();
 }
 
-function renderDetail(id: number): HTMLElement {
-  const d = S.recordCache.get(id);
-  if (d) return detailView(d);
-  if (failures.has(id)) return detailError(id, failures.get(id));
-  if (!pending.has(id)) fetchDetail(id);
+function renderDetail(id: number, tg: number | null): HTMLElement {
+  const d = tg == null ? S.recordCache.get(id) : cachedUserRecord(tg, id);
+  if (d) return detailView(d, tg);
+  if (failures.has(id)) return detailError(id, failures.get(id), tg);
+  if (!pending.has(id)) fetchDetail(id, tg);
   return h('div', { class: 'page page-records' },
-    pageHead(t('records.detail.title'), backButton(t('records.title'), { name: 'records' })),
+    pageHead(t('records.detail.title'), backButton(listBackLabel(targetName(tg)), listRoute(tg))),
+    tg == null ? null : targetNote(),
     h('p', { class: 'dim', role: 'status' }, t('records.detail.loading')));
 }
 
@@ -780,7 +835,16 @@ function renderWrong(): HTMLElement {
 // ---------------------------------------------------------------- entry
 
 export function renderRecords(route: Route): HTMLElement {
-  if (route.name === 'record') return renderDetail(route.id);
+  // The administrator's read-only view of a user (v2.7): its own state, never S.records / S.recordCache
+  if (route.name === 'userRecord') {
+    enterUserRecords(route.user);
+    return renderDetail(route.id, route.user);
+  }
+  if (route.name === 'userRecords') {
+    enterUserRecords(route.user);
+    return renderList(route.user);
+  }
+  if (route.name === 'record') return renderDetail(route.id, null);
   if (route.name === 'wrong') return renderWrong();
-  return renderList();
+  return renderList(null);
 }

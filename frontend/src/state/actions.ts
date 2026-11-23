@@ -796,11 +796,13 @@ function scheduleAdvance(): void {
   const se = S.session;
   // Practice: the feedback on the answer is the point, so the page never moves on by itself
   if (!se || se.kind === 'practice' || !S.settings.autoAdvance || se.idx >= se.qs.length - 1) return;
+  // v2.7: no auto-advance while the phone answer sheet (drawer) is open: the page under it must not be rebuilt
+  if (document.documentElement.classList.contains('qz-sheet-open')) return;
   const idx = se.idx;
   cancelAdvance();
   advanceTimer = window.setTimeout(() => {
     advanceTimer = undefined;
-    if (S.session === se && se.idx === idx && S.route.name === 'quiz' && !document.querySelector('dialog[open]')) go(idx + 1);
+    if (S.session === se && se.idx === idx && S.route.name === 'quiz' && !document.querySelector('dialog[open]') && !document.documentElement.classList.contains('qz-sheet-open')) go(idx + 1);
   }, ADVANCE_DELAY_MS);
 }
 

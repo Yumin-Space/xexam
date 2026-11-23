@@ -1054,7 +1054,8 @@ pub async fn assess_ask(ctx: Ctx) -> Answer {
         purpose: Some("summary"),
         attempt: ids.attempt,
     };
-    launch(&ctx, &route, target, slot, permit, l)
+    drop(target);
+    super::user::launch_assess(&ctx, &route, slot, permit, l, lang)
 }
 
 // —— GET /api/ai/assess/latest ———————————————————————————————————————————————————————————————————————————————————————
@@ -1070,10 +1071,15 @@ fn assess_quota(
     if who.is_admin() && l.assess_admins_exempt == 1 {
         return Ok((None, None));
     }
+    // today's capsule that fails the checks is hidden from the viewer ("no assessment yet"), so its run is not counted
     let used = app
         .store
         .read(|c| data::assess_latest(c, who.id))?
         .filter(|a| a.day == today)
+        .filter(|a| {
+            let lang = Lang::parse(&a.lang).unwrap_or(Lang::Zh);
+            crate::study::assess_check::check_assess(&a.content, lang).is_ok()
+        })
         .map_or(0, |a| a.runs);
     Ok((
         Some(l.assess_per_day),
@@ -1094,8 +1100,14 @@ pub async fn assess_latest(ctx: Ctx) -> Answer {
         .store
         .read(|c| data::chat_by_ref(c, who.id, "summary", &assess_ref(&today)))?;
     let running = chat.is_some_and(|c| app.chat_running(c));
+    // a capsule saved by an older version that fails today's checks (counting, drafts, cut off) reads as "no assessment
+    // yet": nothing is deleted or migrated, the next good run replaces it
+    let shown = latest.as_ref().filter(|a| {
+        let lang = Lang::parse(&a.lang).unwrap_or(Lang::Zh);
+        crate::study::assess_check::check_assess(&a.content, lang).is_ok()
+    });
     let mut v = json!({
-        "assess": latest.as_ref().map(data::AssessLatest::to_json),
+        "assess": shown.map(data::AssessLatest::to_json),
         "today": today,
         "running": running,
         "perDay": per_day,

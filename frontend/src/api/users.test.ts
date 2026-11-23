@@ -8,7 +8,7 @@ import { setUiLang } from '../i18n/index.ts';
 import { isServiceOff, MSG_AI_SERVICE_OFF } from '../domain/user-admin.ts';
 import type { UserRow } from '../types/api.ts';
 import { ApiError } from './client.ts';
-import { createUser, deleteUser, fetchUsers, resetUserPassword, setGeoSource, unlockUser, updateUser, usersListOf, type UsersList } from './users.ts';
+import { createUser, deleteUser, fetchUserRecord, fetchUserRecords, fetchUsers, resetUserPassword, setGeoSource, unlockUser, updateUser, usersListOf, type UsersList } from './users.ts';
 
 interface Call {
   url: string;
@@ -160,4 +160,16 @@ test('v1.6: createUser and updateUser pass canDownloadBanks through', async () =
   await updateUser({ id: 2, canDownloadBanks: false });
   assert.deepEqual(calls[0]?.body, { username: 'demo-new', password: 'demo-pass-1', role: 'user', banks: [], newBanks: false, canManageBanks: false, canDownloadBanks: true, ai: false });
   assert.deepEqual(calls[1]?.body, { id: 2, canDownloadBanks: false });
+});
+
+test('fetchUserRecords / fetchUserRecord call the administrator read-only routes (v2.7)', async () => {
+  const who = { id: 7, username: 'demo-user', displayName: null };
+  replies = [json(200, { user: who, records: [], retention: 90 }), json(200, { user: who, record: { id: 42 }, items: [] })];
+  const list = await fetchUserRecords(7);
+  assert.deepEqual(list.user, who);
+  const rec = await fetchUserRecord(7, 42);
+  assert.equal(rec.record.id, 42);
+  assert.deepEqual(calls.map((c) => [c.method, c.url]), [['GET', '/api/users/records?user=7'], ['GET', '/api/users/record?user=7&id=42']]);
+  replies = [json(404, { error: 'x' })];
+  await assert.rejects(fetchUserRecord(7, 1), (e: unknown) => e instanceof ApiError && e.status === 404);
 });

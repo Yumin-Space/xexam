@@ -376,7 +376,9 @@ fn runs_count_per_day_and_restart_on_a_new_day() {
         let ids = pair(&store, 1, &ins, &format!("text {n}"));
         store
             .write(|tx| {
-                data::save_assess_latest(tx, ids.answer, "done", &format!("text {n}"), "m", NOW)
+                // a text that passes the answer checks (a hidden capsule does not count as a run)
+                let good = format!("A small step taken each day adds up like drops filling a quiet pond. You have answered a good number of questions lately and most were right. Next week, spend a short session on the ones you missed. Go at your own pace, run {n}.");
+                data::save_assess_latest(tx, ids.answer, "done", &good, "m", NOW)
             })
             .expect("save")
     };

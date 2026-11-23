@@ -82,3 +82,19 @@ export function pageList(page: number, pages: number, siblings = 1): Array<numbe
   });
   return out;
 }
+
+/** Which pager control takes the focus after a click: the pressed one, unless it just became unusable (an arrow at the end),
+ *  then the current page number. `pressed` is "prev", "next" or "p<n>"; ids are `<id>-<key>`. */
+export function pagerFocusId(id: string, pressed: string, pressedDisabled: boolean, page: number): string {
+  return pressedDisabled ? `${id}-p${page}` : `${id}-${pressed}`;
+}
+
+/** True when the top of the list starts above the visible screen, so a page change should scroll it back into view */
+export function startsAboveScreen(top: number): boolean {
+  return top < 0;
+}
+
+/** A click on page `target` is acted on only inside the range and when it changes the page */
+export function canGoTo(target: number, page: number, pages: number): boolean {
+  return Number.isInteger(target) && target >= 1 && target <= pages && target !== page;
+}

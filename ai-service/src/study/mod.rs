@@ -2,6 +2,7 @@
 //! types of the backend's data routes and the record-identity cache. Everything here is pure (no I/O) except the cache,
 //! which only holds memory.
 pub mod assess;
+pub mod assess_check;
 pub mod cache;
 pub mod explain;
 pub mod guard;

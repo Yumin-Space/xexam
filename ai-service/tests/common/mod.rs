@@ -1141,6 +1141,8 @@ enum Study {
     Hint,
     Explain,
     Summary,
+    /// The study assessment, in the language its system prompt asks for
+    Assess(&'static str),
 }
 
 /// A clean made-up hint: no option letter, no option text, no verdict.
@@ -1156,7 +1158,15 @@ pub fn long_hint() -> String {
 /// What the stub answers to a study prompt (by its system prompt): the text of the answer.
 fn study_kind(body: &Value) -> Option<Study> {
     let sys = system_text(body);
-    if sys.contains("asked for a HINT") {
+    if sys.contains("You are a study coach inside Xexam") {
+        Some(Study::Assess(if sys.contains("Chinese") {
+            "zh"
+        } else if sys.contains("Japanese") {
+            "ja"
+        } else {
+            "en"
+        }))
+    } else if sys.contains("asked for a HINT") {
         Some(Study::Hint)
     } else if sys.contains("asked for an EXPLANATION") {
         Some(Study::Explain)
@@ -1209,6 +1219,10 @@ fn study_text(kind: Study, user: &str) -> String {
             }
             t
         }
+        // made-up, plain, 3 to 4 sentences: it passes the assessment checks (no counting, no drafts, ends with a mark)
+        Study::Assess("zh") => "一滴水每天落进池塘，不知不觉就汇成了一片安静的湖。你最近完成了不少题目，大部分都答对了，节奏很稳。接下来可以抽一小段时间，把做错的题再看一遍。慢慢来，每一步都算数。".to_string(),
+        Study::Assess("ja") => "毎日落ちる一滴の水が、いつか静かな湖になります。最近はたくさんの問題に取り組み、ほとんど正解できています。次は短い時間で、間違えた問題をもう一度見直してみましょう。無理のないペースで続けてください。".to_string(),
+        Study::Assess(_) => "A small step taken each day adds up like drops filling a quiet pond. You have answered a good number of questions lately and most of them were right, which is a steady sign. Next week, spend a short session on the questions you missed. Go at your own pace and be kind to yourself.".to_string(),
         Study::Summary => {
             let n = user.matches("<item").count();
             format!("## Weak knowledge points\nMade-up topics.\n\n## What to watch out for\nMade-up traps.\n\n## How to approach such questions\nMade-up steps.\n\n## Summary of the knowledge points\nMade-up notes.\n\nItems: {n}")
@@ -1247,8 +1261,8 @@ fn study_openai(sh: StubShared, kind: Study, user: String, usage: bool) -> Respo
             ));
             return;
         }
-        // an assessment whose newest record is at 23:07 also waits (its time cannot carry a marker)
-        let slow = user.contains("[slow]") || user.contains("latest=2026-11-21 23:07 ");
+        // an assessment of exactly 4 saved sessions also waits (it cannot carry a marker)
+        let slow = user.contains("[slow]") || user.contains("saved in the last 30 days: 4 (");
         if slow && !hold_with_pings(n, &tx).await {
             return;
         }

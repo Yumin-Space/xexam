@@ -73,7 +73,7 @@ cargo tree -e normal --target all | grep -E 'aws-lc|openssl-sys|native-tls'   # 
 cd frontend
 npm ci
 npm run typecheck      # tsc for the app, then for the test files (tsconfig.test.json)
-npm test               # unit tests: the API client (Nginx's 429 and its retries, time limits, the AI stream and error
+npm test               # (since v2.7 the files of src/*.test.ts, the router tests, are included) unit tests: the API client (Nginx's 429 and its retries, time limits, the AI stream and error
                        # codes), grading and random pick, practice checking, saved results, language rules, records filter,
                        # lock notes and waits, import warnings, the System log buffer, bank status, bank access, saved exam,
                        # settings cache, the event-stream parser, the AI chat state, the answers' Markdown, memory requests,

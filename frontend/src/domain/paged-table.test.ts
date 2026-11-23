@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { clickSort, matchesQuery, pageList, pageTable, withQuery, type TableState } from './paged-table.ts';
+import { canGoTo, clickSort, matchesQuery, pageList, pagerFocusId, pageTable, startsAboveScreen, withQuery, type TableState } from './paged-table.ts';
 
 type R = { n: string; c: number };
 const rows: R[] = Array.from({ length: 23 }, (_, i) => ({ n: `user${String(i + 1).padStart(2, '0')}`, c: (i * 7) % 11 }));
@@ -49,4 +49,20 @@ test('page list', () => {
   assert.deepEqual(pageList(3, 5), [1, 2, 3, 4, 5]);
   assert.deepEqual(pageList(5, 12), [1, 'gap', 4, 5, 6, 'gap', 12]);
   assert.deepEqual(pageList(5, 12, 0), [1, 'gap', 5, 'gap', 12]);
+});
+
+test('pagerFocusId keeps the pressed control unless it became disabled', () => {
+  assert.equal(pagerFocusId('us', 'next', false, 3), 'us-next');
+  assert.equal(pagerFocusId('us', 'next', true, 5), 'us-p5');
+  assert.equal(pagerFocusId('us', 'p4', false, 4), 'us-p4');
+});
+
+test('startsAboveScreen and canGoTo', () => {
+  assert.equal(startsAboveScreen(-1), true);
+  assert.equal(startsAboveScreen(0), false);
+  assert.equal(canGoTo(2, 1, 3), true);
+  assert.equal(canGoTo(1, 1, 3), false);
+  assert.equal(canGoTo(4, 1, 3), false);
+  assert.equal(canGoTo(0, 1, 3), false);
+  assert.equal(canGoTo(1.5, 1, 3), false);
 });

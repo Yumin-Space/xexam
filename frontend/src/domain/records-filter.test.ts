@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  NO_FILTERS, RECORDS_PAGE, filterCount, focusAfterDelete, isFiltered, isKindFilter, matchesRecord, nextLimit, pageRows, type RecordFilters,
+  NO_FILTERS, filterCount, focusAfterDelete, isFiltered, isKindFilter, matchesRecord, pageRecords, recordsPageSize, type RecordFilters,
 } from './records-filter.ts';
 import type { RecordSummary } from '../types/api.ts';
 
@@ -43,20 +43,22 @@ test('isKindFilter accepts only all / exam / practice', () => {
   for (const v of ['', 'Exam', 'practise', null, 1]) assert.equal(isKindFilter(v), false);
 });
 
-test('paging: 50 rows first, then 50 more, never past the end (RC-6)', () => {
-  const rows = Array.from({ length: 120 }, (_, i) => i);
-  assert.equal(RECORDS_PAGE, 50);
-  const a = pageRows(rows, RECORDS_PAGE);
-  assert.equal(a.shown.length, 50);
-  assert.equal(a.rest, 70);
-  const l2 = nextLimit(RECORDS_PAGE, rows.length);
-  assert.equal(l2, 100);
-  assert.equal(pageRows(rows, l2).rest, 20);
-  const l3 = nextLimit(l2, rows.length);
-  assert.equal(l3, 120);
-  assert.equal(pageRows(rows, l3).rest, 0);
-  assert.deepEqual(pageRows([1, 2], RECORDS_PAGE), { shown: [1, 2], rest: 0 });
-  assert.deepEqual(pageRows([], RECORDS_PAGE), { shown: [], rest: 0 });
+test('paging: 10 rows per phone page, 20 elsewhere, the page is clamped (v2.7)', () => {
+  const rows = Array.from({ length: 45 }, (_, i) => i);
+  assert.equal(recordsPageSize(true), 10);
+  assert.equal(recordsPageSize(false), 20);
+  const a = pageRecords(rows, 1, 20);
+  assert.equal(a.items.length, 20);
+  assert.deepEqual([a.page, a.pages, a.from, a.to, a.total], [1, 3, 1, 20, 45]);
+  const c = pageRecords(rows, 3, 20);
+  assert.deepEqual([c.items.length, c.from, c.to], [5, 41, 45]);
+  // Past the end (the last row of the last page was deleted): the last page
+  assert.equal(pageRecords(rows, 9, 20).page, 3);
+  assert.equal(pageRecords(rows, 0, 20).page, 1);
+  assert.equal(pageRecords(rows, Number.NaN, 20).page, 1);
+  const e = pageRecords([], 4, 10);
+  assert.deepEqual([e.items.length, e.page, e.pages, e.from, e.to], [0, 1, 1, 0, 0]);
+  assert.equal(pageRecords(rows, 1, 10).pages, 5);
 });
 
 test('focus after a delete: the next row, else the previous, else nothing (RC-11)', () => {

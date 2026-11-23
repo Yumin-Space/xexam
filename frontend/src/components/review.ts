@@ -42,8 +42,10 @@ export interface ReviewOptions {
   showMine?: boolean;
   /** The question was retired from its bank (shows a badge) */
   retired?: boolean;
-  /** Replaces the default per-question stats line (null = no stats line) */
+  /** Replaces the default per-question stats line (null = no stats line). Without it, a card read for another user (`who`) has none: the stats are the reader's own. */
   stats?: HTMLElement | null;
+  /** v2.7: the name of the user whose answers an administrator reads; the card then speaks about that user ("Lee's choice") */
+  who?: string;
   /**
    * v0.9, AI+ only: where the AI analysis of each card belongs (result page or record detail). Without it, or when the
    * account has no AI+ feature, a card shows no AI control at all.
@@ -106,14 +108,14 @@ function statsLine(q: Question): HTMLElement | null {
       tail ? chip('nb', tail) : null));
 }
 
-function choiceBody(q: Question, view: Shown, mine: string[] | null): HTMLElement {
+function choiceBody(q: Question, view: Shown, mine: string[] | null, who?: string): HTMLElement {
   const right = q.answer as string[];
   return h('div', { class: 'opts' + (q.kind === 'multi' ? ' multi' : '') }, q.options.map((o, oi) => {
     const isAns = right.includes(o.key);
     const picked = !!mine && mine.includes(o.key);
     const tags = [
       isAns ? h('span', { class: 'tag g' }, t('result.q.correctTag')) : null,
-      picked ? h('span', { class: 'tag ' + (isAns ? 'k' : 'ng') }, t('result.q.mineTag')) : null,
+      picked ? h('span', { class: 'tag ' + (isAns ? 'k' : 'ng') }, who ? t('result.q.mineTagOf', { name: who }) : t('result.q.mineTag')) : null,
     ].filter((x): x is HTMLSpanElement => !!x);
     return h('div', { class: 'opt review' + (isAns ? ' is-ans' : '') + (picked && !isAns ? ' is-bad' : '') },
       h('span', { class: 'bubble' }, o.key),
@@ -123,7 +125,7 @@ function choiceBody(q: Question, view: Shown, mine: string[] | null): HTMLElemen
   }));
 }
 
-function choiceVerdict(q: Question, mine: string[] | null, correct: boolean): HTMLElement {
+function choiceVerdict(q: Question, mine: string[] | null, correct: boolean, who?: string): HTMLElement {
   const sep = t('common.listSep');
   const right = (q.answer as string[]).join(sep);
   const key = h('span', { class: 'vp' }, withEl(t('result.q.key'), 'a', h('b', { class: 'r' }, right)));
@@ -135,11 +137,11 @@ function choiceVerdict(q: Question, mine: string[] | null, correct: boolean): HT
     ? h('span', null, mine.flatMap((k, i) => [i ? sep : null, h('b', { class: rightKeys.includes(k) ? 'r' : 'w' }, k)]))
     : h('b', { class: correct ? 'r' : 'w' }, t('result.q.unanswered'));
   return h('p', { class: 'verdict' },
-    h('span', { class: 'vp' }, withEl(t('result.q.mine'), 'a', mineEl)),
+    h('span', { class: 'vp' }, withEl(who ? t('result.q.mineOf', { name: who }) : t('result.q.mine'), 'a', mineEl)),
     key);
 }
 
-function hotspotBody(q: Question, view: Shown, ans: Answer, showMine: boolean): { body: HTMLElement; okN: number } {
+function hotspotBody(q: Question, view: Shown, ans: Answer, showMine: boolean, who?: string): { body: HTMLElement; okN: number } {
   const right = q.answer as number[];
   const mineAt = (k: number): number | null => {
     const v = Array.isArray(ans) ? ans[k] : null;
@@ -165,7 +167,7 @@ function hotspotBody(q: Question, view: Shown, ans: Answer, showMine: boolean): 
       h('p', { lang: itemLang, class: 'pre' }, view.itemText(k)),
       h('div', { class: 'hsa' },
         h('span', { class: 'tag ' + (ok ? 'g' : 'ng') }, ok ? t('result.q.correct') : t('result.q.wrong')),
-        h('span', null, withEl(t('result.q.youChose'), 'a',
+        h('span', null, withEl(who ? t('result.q.youChoseOf', { name: who }) : t('result.q.youChose'), 'a',
           // the chosen choice as a solid green (right) or orange (wrong) key; "not answered" is plain text (nothing was chosen)
           h('b', { class: mine == null ? 'none' : ok ? 'g' : 'r', lang: mine == null ? null : htmlLang(view.choiceLang(k, mine)) }, mineText))),
         ok ? null : h('span', null, withEl(t('result.q.key'), 'a', keyText))));
@@ -177,11 +179,11 @@ function hotspotBody(q: Question, view: Shown, ans: Answer, showMine: boolean): 
  * The answer part of a card in the language of `view`: the options (or hotspot items) marked right / wrong / chosen, and
  * the verdict line. showMine false: only the correct answer (wrong-answer review).
  */
-export function answerReview(q: Question, view: Shown, ans: Answer, correct: boolean, showMine = true, notJudged = false): { body: HTMLElement; verdict: HTMLElement } {
+export function answerReview(q: Question, view: Shown, ans: Answer, correct: boolean, showMine = true, notJudged = false, who?: string): { body: HTMLElement; verdict: HTMLElement } {
   if (q.kind === 'hotspot') {
     // a not-completed question is not judged (v1.1): its items get no right / wrong verdict, only the right answers show
     const judged = showMine && !notJudged;
-    const hs = hotspotBody(q, view, ans, judged);
+    const hs = hotspotBody(q, view, ans, judged, who);
     const n = q.items.length;
     const verdict = judged
       ? h('p', { class: 'verdict' }, withEl(tn('result.q.hsVerdict', n), 'ok', h('b', { class: correct ? 'r' : 'w' }, hs.okN)))
@@ -189,7 +191,7 @@ export function answerReview(q: Question, view: Shown, ans: Answer, correct: boo
     return { body: hs.body, verdict };
   }
   const mine = showMine ? letters(ans) : null;
-  return { body: choiceBody(q, view, mine), verdict: choiceVerdict(q, mine, correct) };
+  return { body: choiceBody(q, view, mine, who), verdict: choiceVerdict(q, mine, correct, who) };
 }
 
 /**
@@ -219,13 +221,13 @@ export function reviewItem(e: ReviewEntry, opts: ReviewOptions): HTMLElement {
       ? h('span', { class: 'badge open' }, t('result.q.notCompleted'))
       : h('span', { class: 'badge ng' }, unanswered ? t('result.q.unanswered') : t('result.q.wrong'));
   const source = S.banks.length > 1 ? t('result.q.source', { bank: bankName(q.bank), sheet: q.sheet }) : q.sheet;
-  const stats = opts.stats === undefined ? statsLine(q) : opts.stats;
+  const stats = opts.stats !== undefined ? opts.stats : opts.who ? null : statsLine(q);
   const paper = h('div', { class: 'paper' });
 
   // Draws the card's content in a language (the effective one: a language the question lacks falls back to its base)
   const draw = (want: Lang, focusSwitch: boolean): void => {
     const view = shown(q, want);
-    const { body, verdict } = answerReview(q, view, e.ans, e.correct, showMine, !e.correct && !!e.unanswered);
+    const { body, verdict } = answerReview(q, view, e.ans, e.correct, showMine, !e.correct && !!e.unanswered, opts.who);
     const sw = langSwitch(q, view.lang, (l) => {
       cardLang.set(q.id, l);
       draw(l, true);

@@ -55,20 +55,34 @@ export function matchesRecord(r: Row, f: Readonly<RecordFilters>): boolean {
   }
 }
 
-// ---------------------------------------------------------------- paging (v1.0, RC-6)
+// ---------------------------------------------------------------- paging (v2.7: numbered pages like AI+ users)
 
-/** How many records the list shows at first, and how many each "show more" adds */
-export const RECORDS_PAGE = 50;
+/** Rows per page: 10 on a phone, 20 elsewhere */
+export const RECORDS_PAGE_PHONE = 10;
+export const RECORDS_PAGE_WIDE = 20;
 
-/** The first `limit` rows and how many are left out */
-export function pageRows<T>(rows: readonly T[], limit: number): { shown: T[]; rest: number } {
-  const n = Math.max(0, Math.floor(limit));
-  return { shown: rows.slice(0, n), rest: Math.max(0, rows.length - n) };
+export const recordsPageSize = (phone: boolean): number => (phone ? RECORDS_PAGE_PHONE : RECORDS_PAGE_WIDE);
+
+export interface RecordsPage<T> {
+  items: T[];
+  /** The page actually shown (the asked one, clamped into 1..pages) */
+  page: number;
+  /** At least 1, also for an empty list */
+  pages: number;
+  /** 1-based position of the first / last shown row (0 / 0 for an empty list) */
+  from: number;
+  to: number;
+  total: number;
 }
 
-/** The limit after one "show more" tap (never beyond what exists, so the label count stays exact) */
-export function nextLimit(limit: number, total: number): number {
-  return Math.min(Math.max(total, 0), Math.max(0, limit) + RECORDS_PAGE);
+/** One page of `rows`; a page past the end (after a delete) falls back to the last one */
+export function pageRecords<T>(rows: readonly T[], page: number, size: number): RecordsPage<T> {
+  const sz = Math.max(1, Math.floor(size));
+  const pages = Math.max(1, Math.ceil(rows.length / sz));
+  const p = Math.min(Math.max(1, Math.floor(Number.isFinite(page) ? page : 1)), pages);
+  const start = (p - 1) * sz;
+  const items = rows.slice(start, start + sz);
+  return { items, page: p, pages, from: items.length ? start + 1 : 0, to: start + items.length, total: rows.length };
 }
 
 /**

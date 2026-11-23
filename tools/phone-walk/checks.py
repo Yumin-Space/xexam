@@ -819,10 +819,11 @@ def panel_case(rc, lang, theme, size):
         steps = [('Next', lambda: d.tap_sel('.pfoot [data-act="next"]')), ('Previous', lambda: d.tap_sel('.pfoot [data-slot="prev"]'))]
 
         def tile():
-            if d.js("(() => { const t = document.querySelector('[data-focus=\"rail-toggle\"], .rail-toggle'); return t ? t.getAttribute('aria-expanded') : null })()") == 'false':
-                d.tap_sel('[data-focus="rail-toggle"], .rail-toggle')
-                time.sleep(0.3)
-            d.tap_sel('.tile', 2)
+            # v2.7: the answer sheet is a left drawer opened by the "1 / n" button; a tile tap closes it again
+            if d.js("(() => { const t = document.getElementById('qz-pos'); return t ? t.getAttribute('aria-expanded') : null })()") == 'false':
+                d.tap_sel('#qz-pos')
+                time.sleep(0.4)
+            d.tap_sel('#qz-rail .tile', 2)
         steps.append(('a tile of the answer sheet', tile))
         for name, act in steps:
             act()
@@ -833,9 +834,9 @@ def panel_case(rc, lang, theme, size):
         asks = d.net_requests('/api/ai/study/ask')
         if asks:
             problems.append('%d POST /api/ai/study/ask during question changes' % len(asks))
-        # fold the answer sheet again (the app remembers it per user and browser; later checks expect the default)
-        if d.js("(() => { const t = document.querySelector('[data-focus=\"rail-toggle\"], .rail-toggle'); return t ? t.getAttribute('aria-expanded') : null })()") == 'true':
-            d.tap_sel('[data-focus="rail-toggle"], .rail-toggle')
+        # the drawer closes after a tile tap; make sure it is closed for the later checks
+        if d.js("(() => { const t = document.getElementById('qz-pos'); return t ? t.getAttribute('aria-expanded') : null })()") == 'true':
+            d.tap_sel('#qz-rail .rail-close')
             time.sleep(0.3)
         rc.rec('W-QZ-5', 'quiz', 'question-change', 'sam', size, lang, theme, not problems, '; '.join(problems) or 'panel stays expanded, 0 ask requests', d if problems else None)
 
@@ -884,24 +885,24 @@ def sheet_case(rc, lang, theme, size):
     d = rc.dev('sam', lang, theme, size)
     start_quiz(d, 'practice', 51)
     if phone(size):
-        tog = d.js("""(() => { const t = document.querySelector('[data-focus="rail-toggle"], .rail-toggle'); return t && (t.offsetParent || t.getClientRects().length) ? t.getAttribute('aria-expanded') : null })()""")
-        tiles_hidden = d.js("[...document.querySelectorAll('.tile')].filter(e => e.offsetParent || e.getClientRects().length).length") == 0
+        # v2.7: closed by default (hidden, off screen), opened by #qz-pos as a left drawer with tiles <= 44 px, closed by its button
+        tog = d.js("(() => { const t = document.getElementById('qz-pos'); return t && (t.offsetParent || t.getClientRects().length) ? t.getAttribute('aria-expanded') : null })()")
+        tiles_hidden = d.js("[...document.querySelectorAll('#qz-rail .tile')].filter(e => { const r = e.getBoundingClientRect(); return getComputedStyle(e).visibility !== 'hidden' && r.width > 0 && r.right > 0 }).length") == 0
         problems = []
         if tog != 'false':
-            problems.append('no collapsed sheet toggle (aria-expanded=%s)' % tog)
+            problems.append('no closed sheet button #qz-pos (aria-expanded=%s)' % tog)
         if not tiles_hidden:
-            problems.append('tiles visible while collapsed')
+            problems.append('tiles visible while the drawer is closed')
+        big = 0
         if tog:
-            d.tap_sel('[data-focus="rail-toggle"], .rail-toggle')
+            d.tap_sel('#qz-pos')
+            time.sleep(0.5)
+            big = d.js("[...document.querySelectorAll('#qz-rail .tile')].map(e => e.getBoundingClientRect()).filter(r => r.width > 44.5 || r.height > 44.5).length")
+            d.tap_sel('#qz-rail .rail-close')
             time.sleep(0.4)
-        big = d.js("[...document.querySelectorAll('.tile')].map(e => e.getBoundingClientRect()).filter(r => r.width > 44.5 || r.height > 44.5).length")
         if big:
             problems.append('%d tiles larger than 44 px' % big)
-        if tog:
-            # fold it again: the app remembers the choice per user and browser, and the next size reuses this browser
-            d.tap_sel('[data-focus="rail-toggle"], .rail-toggle')
-            time.sleep(0.3)
-        rc.rec('W-QZ-8', 'quiz', 'sheet-phone', 'sam', size, lang, theme, not problems, '; '.join(problems) or 'collapsed with a summary row, tiles <= 44 px', d if problems else None)
+        rc.rec('W-QZ-8', 'quiz', 'sheet-phone', 'sam', size, lang, theme, not problems, '; '.join(problems) or 'closed drawer opened by the 1 / n button, tiles <= 44 px', d if problems else None)
     else:
         r = W(d, 'rectOf', '.rail')
         ok = bool(r) and r['h'] <= size[1] + 1
@@ -2836,17 +2837,17 @@ def ab1_case(rc, lang, theme, size):
           await post('/api/ai/gen/dismiss', {id: %d}); await post('/api/banks/delete', {id: %d, withRecords: true}); return 1 })()""" % (job or 0, bank))
 
 
-TOP_SUBMIT = """(() => { const vis = e => !!e && e.getClientRects().length > 0 && getComputedStyle(e).display !== 'none';
+TOP_SUBMIT = """(() => { const vis = e => !!e && e.getClientRects().length > 0 && getComputedStyle(e).display !== 'none'; const tx = e => { if (!e) return ''; const c = e.cloneNode(true); c.querySelectorAll('.same-w-ghost').forEach(g => g.remove()); return c.textContent; };
   const r = e => { const b = e.getBoundingClientRect(); return {l: b.left, r: b.right, t: b.top, b: b.bottom, h: b.height, w: b.width} };
   const rail = document.querySelector('.rail .btn.primary'); const sub = document.querySelector('.qbar .qsubmit');
   const cnt = document.querySelector('.qbar .qcount'); const clock = document.querySelector('.qbar .qtime'); const exit = document.querySelector('.qbar .qexit');
   const over = (a, b) => a && b && a.l < b.r - 0.5 && b.l < a.r - 0.5 && a.t < b.b - 0.5 && b.t < a.b - 0.5;
   const rs = vis(sub) ? r(sub) : null, rc = vis(clock) ? r(clock) : null, re = vis(exit) ? r(exit) : null, rn = vis(cnt) ? r(cnt) : null;
-  return {rail: vis(rail), sub: !!rs, count: rn ? ((vis(cnt.querySelector('.qcount-s')) ? cnt.querySelector('.qcount-s') : cnt.querySelector('.qcount-l')).textContent.trim()) : null, subH: rs ? Math.round(rs.h) : 0, subW: rs ? Math.round(rs.w) : 0,
+  return {rail: vis(rail), sub: !!rs, count: rn ? ((vis(cnt.querySelector('.qcount-s')) ? cnt.querySelector('.qcount-s') : cnt.querySelector('.qcount-l')) ? tx(vis(cnt.querySelector('.qcount-s')) ? cnt.querySelector('.qcount-s') : cnt.querySelector('.qcount-l')).trim() : '') : null, subH: rs ? Math.round(rs.h) : 0, subW: rs ? Math.round(rs.w) : 0,
     overlap: !!(over(rs, rc) || over(rs, re) || over(rn, rs) || over(rn, rc)), inside: !rs || (rs.r <= innerWidth + 0.5 && rs.l >= -0.5),
     leftOfClock: !rs || !rc || rs.r <= rc.l + 0.5,
     colors: sub ? (() => { const c = getComputedStyle(sub); const q = document.createElement('i'); q.style.color = 'var(--go-exam)'; document.body.appendChild(q); const ex = getComputedStyle(q).color; q.style.color = 'var(--go-practice)'; const pr = getComputedStyle(q).color; q.remove();
-      return {bg: c.backgroundColor, fg: c.color, ex, pr, tip: sub.getAttribute('aria-label'), lbl: (sub.querySelector('.lbl') || {}).textContent || ''} })() : null, label: !!sub && vis(sub.querySelector('.lbl')), side: document.documentElement.scrollWidth <= innerWidth + 1} })()"""
+      return {bg: c.backgroundColor, fg: c.color, ex, pr, tip: sub.getAttribute('aria-label'), lbl: tx(sub.querySelector('.lbl'))} })() : null, label: !!sub && vis(sub.querySelector('.lbl')), side: document.documentElement.scrollWidth <= innerWidth + 1} })()"""
 
 
 def as1_case(rc, lang, theme, size):
@@ -2856,14 +2857,13 @@ def as1_case(rc, lang, theme, size):
     for kind in ('practice', 'exam'):
         d = rc.dev('sam', lang, theme, size)
         start_quiz(d, kind)
-        toggle = '[data-focus="rail-toggle"], .rail-toggle'
         states = [d.js(TOP_SUBMIT)]
-        if size[0] <= 600 and d.js("!!document.querySelector('%s') && getComputedStyle(document.querySelector('.rail-toggle')).display !== 'none'" % toggle):
-            d.tap_sel(toggle)
-            time.sleep(0.4)
+        if size[0] <= 600 and d.js("(() => { const t = document.getElementById('qz-pos'); return !!t && getComputedStyle(t).display !== 'none' })()"):
+            d.tap_sel('#qz-pos')       # v2.7: the answer sheet is a drawer opened by the "1 / n" button
+            time.sleep(0.5)
             states.append(d.js(TOP_SUBMIT))
-            d.tap_sel(toggle)
-            time.sleep(0.3)
+            d.tap_sel('#qz-rail .rail-close')
+            time.sleep(0.4)
         narrow = size[0] <= 880
         s0 = states[0]
         if narrow and s0['colors']:
@@ -3233,31 +3233,33 @@ L60_JS = """(() => { const b = e => { const r = e.getBoundingClientRect(); retur
   const items = [...r.children].filter(vis).map(e => ({c: e.className.split(' ')[0], ...b(e)}));
   let overlap = ''; for (let i = 0; i < items.length; i++) for (let j = i + 1; j < items.length; j++) if (items[i].x < items[j].r - 0.5 && items[j].x < items[i].r - 0.5) overlap += items[i].c + '/' + items[j].c + ' ';
   const cs = sub ? getComputedStyle(sub) : null; const after = sub ? getComputedStyle(sub, '::after') : null;
-  const vtxt = e => [...e.children].filter(c => getComputedStyle(c).position !== 'absolute' && c.getClientRects().length).map(c => c.textContent).join('');
+  const tx = e => { if (!e) return ''; const c = e.cloneNode(true); c.querySelectorAll('.same-w-ghost').forEach(g => g.remove()); return c.textContent; };
+  const vtxt = e => [...e.children].filter(c => getComputedStyle(c).position !== 'absolute' && c.getClientRects().length).map(tx).join('');
   return {bar: b(bar), sub: sub && vis(sub) ? b(sub) : null, cnt: cnt && vis(cnt) ? b(cnt) : null, cntText: cnt ? vtxt(cnt) : '', cntAria: cnt ? cnt.textContent : '',
-    label: sub ? [...sub.querySelectorAll('.lbl')].filter(vis).map(e => e.textContent).join('') : '', border: cs ? cs.borderTopWidth : '', shadow: cs ? cs.boxShadow : '',
+    label: sub ? [...sub.querySelectorAll('.lbl')].filter(vis).map(tx).join('') : '', border: cs ? cs.borderTopWidth : '', shadow: cs ? cs.boxShadow : '',
     hitH: after ? parseFloat(after.height) || 0 : 0, hitW: after ? parseFloat(after.width) || 0 : 0, overlap, side: document.documentElement.scrollWidth <= innerWidth + 1,
     barKids: [...bar.children].filter(vis).length, rBottom: b(r).bt, rTop: b(r).y, safeTop: parseFloat(getComputedStyle(bar).paddingTop) || 0,
-    wrap: items.length ? Math.max(...items.map(i => i.y)) - Math.min(...items.map(i => i.y)) : 0} })()"""
+    tight2: bar.classList.contains('tightest2'),
+    wrap: items.length ? Math.max(...items.map(i => i.y + i.h / 2)) - Math.min(...items.map(i => i.y + i.h / 2)) : 0} })()"""
 
 
 L60_POS_JS = """(() => { const q = document.querySelector('.qbar .ql'); const vis = e => e.getClientRects().length > 0;
   const parts = [...q.querySelectorAll('.pos-full .num, .pos-short .num')].filter(vis);
-  const tops = [...q.querySelectorAll('.pos-full, .pos-short, .qkind')].filter(vis).map(e => e.getBoundingClientRect().top);
+  const tops = [...q.querySelectorAll('.pos-full, .pos-short, .qkind')].filter(vis).map(e => { const b = e.getBoundingClientRect(); return (b.top + b.bottom) / 2 });
   const lines = parts.length ? Math.max(...parts.map(e => Math.round(e.getBoundingClientRect().height / (parseFloat(getComputedStyle(e).lineHeight) || 20)))) : 0;
   return {lines: Math.max(1, lines), spread: tops.length ? Math.max(...tops) - Math.min(...tops) : 0, text: parts.map(e => e.textContent).join(' ')} })()"""
 
 
 def l60_case(rc, lang, theme, size):
     """A-OWNER-60: the finish pill sits inside the top bar (bar height unchanged, pill <= 32 px tall, 44 px tap area on touch, one frame),
-    the count reads "<word> a/n" with spacing (only "a/n" up to 360 px), no overlap, no wrap, no sideways scroll; exam and practice"""
+    the count reads "<word> a / n" (v2.7: two lines on phones, gone only at .tightest2), no overlap, no wrap, no sideways scroll; exam and practice"""
     for user, kind in (('riley', 'exam'), ('sam', 'practice')):
         d = rc.dev(user, lang, theme, size)
         start_quiz(d, kind, 51)
         time.sleep(0.4)
         r = d.js(L60_JS)
         problems = []
-        want_word = cat(lang, 'quiz.top.answered').split('{')[0].strip()
+        want_word = cat(lang, 'quiz.top.answered' if kind == 'exam' else 'quiz.top.checked').split('{')[0].strip()
         if size[0] > 880:
             if r['sub'] or r['cnt']:
                 problems.append('the pill / count show on the wide layout')
@@ -3276,13 +3278,16 @@ def l60_case(rc, lang, theme, size):
                     problems.append('a second frame (border %s, shadow %s)' % (r['border'], r['shadow'][:30]))
                 if d.js("matchMedia('(pointer: coarse)').matches") and (r['hitH'] < 43.5 or r['hitW'] < 43.5 and r['sub']['w'] < 43.5):
                     problems.append('tap area %dx%d' % (r['hitW'], r['hitH']))
-            if not r['cnt']:
-                problems.append('no count')
+            # v2.7 (owner): on phones the count is two lines, the word over "a / n"; it leaves the row only at the last but one
+            # step (.tightest2, the narrowest phones) and always keeps its word while shown
+            if not r['cnt'] or r['tight2']:
+                if not r['tight2']:
+                    problems.append('no count')
             else:
                 nums = r['cntText'].strip()
-                if not re.fullmatch(r'(%s ?)?0/51' % re.escape(want_word), nums) or (size[0] > 360 and not nums.startswith(want_word)):
+                if not re.fullmatch(r'%s ?0 ?/ ?51' % re.escape(want_word), nums):
                     problems.append('count reads "%s"' % nums)
-                if r['sub'] and r['sub']['x'] - r['cnt']['r'] < 6:
+                if r['sub'] and r['sub']['x'] - r['cnt']['r'] < 3.5:
                     problems.append('count and pill %d px apart' % (r['sub']['x'] - r['cnt']['r']))
         if r['overlap']:
             problems.append('overlap: ' + r['overlap'])
@@ -3661,8 +3666,9 @@ from checks_v22 import GROUPS_V22  # noqa: E402
 from checks_v23 import GROUPS_V23  # noqa: E402
 from checks_v25 import GROUPS_V25  # noqa: E402
 from checks_v26 import GROUPS_V26  # noqa: E402
+from checks_v27 import GROUPS_V27  # noqa: E402
 
-GROUPS = GROUPS + GROUPS_V12_QUIZ + GROUPS_V12_AI + GROUPS_V12_TOKENS + GROUPS_V12_CHARTS + GROUPS_V13 + GROUPS_V22 + GROUPS_V23 + GROUPS_V25 + GROUPS_V26
+GROUPS = GROUPS + GROUPS_V12_QUIZ + GROUPS_V12_AI + GROUPS_V12_TOKENS + GROUPS_V12_CHARTS + GROUPS_V13 + GROUPS_V22 + GROUPS_V23 + GROUPS_V25 + GROUPS_V26 + GROUPS_V27
 
 
 def run(walk):

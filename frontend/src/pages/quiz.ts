@@ -14,6 +14,7 @@ import { grade, stateOf, type Answer } from '../domain/grading.ts';
 import { htmlLang, shown } from '../domain/language.ts';
 import { studyButton, studyDock, studyState, type StudyTarget } from '../components/ai-plus-controls.ts';
 import { aiSetMark, kindLabel } from '../components/common.ts';
+import { BACKDROP_ID, POS_BTN_ID, RAIL_ID, applySheet, closeSheet, installSheetListeners, onSheetTouchEnd, onSheetTouchStart, resetSheet, sheetOpen, toggleSheet } from '../components/quiz-drawer.ts';
 import { shortLabel } from '../components/icon-button.ts';
 import { langSwitch } from '../components/lang-switch.ts';
 import { miniIcon, type MiniIcon } from '../components/mini-icons.ts';
@@ -22,7 +23,6 @@ import { handButton, themeButton } from '../components/shell.ts';
 import { holdTip } from '../components/tooltip.ts';
 import { t, type MsgKey } from '../i18n/index.ts';
 import { S, type Session } from '../state/store.ts';
-import { sheetOpenKey } from '../state/storage-keys.ts';
 import {
   checkAnswer, elapsed, examTick, go, leaveQuiz, onRefresh, pick, pickItem, resetRefreshers, runRefreshers, setSessionLang, submit, toggleFlag,
 } from '../state/actions.ts';
@@ -100,15 +100,21 @@ export function renderQuiz(): HTMLElement {
   const railCount = h('span', { class: 'num' });
   // A-OWNER-24b / 25: up to the rail line (BAR_MQ) the top row shows the answered count ("已完成 1/50"; up to 360 px only "1/50")
   const topCountFull = h('span', { class: 'qcount-l' });
-  const topCountShort = h('span', { class: 'qcount-s num', 'aria-hidden': 'true' });
-  const topCount = h('span', { class: 'qcount num', 'data-focus': 'q-count' }, topCountFull, topCountShort);
+  // v2.7 (owner): on phones the count is two lines like the answer-sheet button, the word ("已核对") over the numbers. Both lines
+  // keep one width in both modes and for the whole session (sameWidth: the exam word and "n / n" sit hidden under the shown text),
+  // so the top row steps down the same way in an exam and in a practice and nothing moves while answering
+  const topCountNums = h('span');
+  const topCountShort = h('span', { class: 'qcount-s num', 'aria-hidden': 'true' }, sameWidth(topCountNums, `${n} / ${n}`));
+  const topCountWord = h('span', { class: 'qcount-w', 'aria-hidden': 'true' },
+    sameWidth(t(practice ? 'quiz.top.checkedW' : 'quiz.top.answeredW'), t(practice ? 'quiz.top.answeredW' : 'quiz.top.checkedW')));
+  const topCount = h('span', { class: 'qcount num', 'data-focus': 'q-count' }, topCountFull, topCountWord, topCountShort);
   const flagsPart = (): string => (se.flags.size > 0 ? t('quiz.sum.flags', { f: se.flags.size }) : '');
   onRefresh(() => {
     const answered = se.qs.filter((x) => stateOf(x, answerOf(x.id)) === 2).length;
     // The top count shows the same number as the answer sheet: checked questions in a practice, answered ones in an exam
     const topN = practice ? practiceCounts(se.qs, se.answers, se.checked).checked : answered;
     topCountFull.textContent = t(practice ? 'quiz.top.checked' : 'quiz.top.answered', { a: topN, n });
-    topCountShort.textContent = `${topN} / ${n}`;
+    topCountNums.textContent = `${topN} / ${n}`;
     if (practice) {
       const c = practiceCounts(se.qs, se.answers, se.checked);
       meterFill.style.width = (100 * c.checked) / n + '%';
@@ -244,7 +250,7 @@ export function renderQuiz(): HTMLElement {
   let filter: SheetFilter = 'all';
   const mark0 = (x: Question, a: Answer): boolean => (practice ? !se.checked.has(x.id) : stateOf(x, a) < 2);
   const tiles = h('div', { class: 'tiles' }, se.qs.map((x, i) => {
-    const tile = h('button', { class: 'tile num', type: 'button', 'data-focus': `tile-${i}`, onclick: () => go(i) }, String(i + 1));
+    const tile = h('button', { class: 'tile num', type: 'button', 'data-focus': `tile-${i}`, onclick: () => { if (sheetOpen()) closeSheet(() => go(i)); else go(i); } }, String(i + 1));
     onRefresh(() => {
       const a = answerOf(x.id);
       const fl = se.flags.has(x.id);
@@ -314,34 +320,27 @@ export function renderQuiz(): HTMLElement {
   // above the body (tiles, legend, key hints). Phones fold the body (remembered per user and browser); 601–880 px and
   // desktop always show it (CSS only: the same DOM at every width).
   const sheetBody = h('div', { class: 'rail-body', id: 'rail-body' }, chips, tiles, legend, h('p', { class: 'keys' }, t('quiz.keys.nav'), h('br'), t('quiz.keys.pick')));
-  const toggle = h('button', {
-    class: 'rail-toggle', type: 'button', 'aria-expanded': 'false', 'aria-controls': 'rail-body', 'aria-label': t('quiz.sheet'), 'data-focus': 'rail-toggle',
-  }, miniIcon('chevDown', 'mi'));
-  holdTip(toggle, t('quiz.sheet'));
   // A-OWNER-25: the summary row's finish button belongs to the side rail (> 880 px); under BAR_MQ the CSS hides it and the
   // top row's 交卷 / 完成 button takes its place
   const finishBtn = h('button', { class: 'btn primary', type: 'button', 'data-focus': 'rail-submit', onclick: () => void submit() }, finishLabel);
-  const rail = h('aside', { class: 'rail', 'aria-labelledby': 'rail-h' },
+  // v2.7 PHONE: the sheet is a left drawer (components/quiz-drawer.ts); this close button exists only there (CSS)
+  const closeBtn = h('button', {
+    class: 'rail-close', type: 'button', 'aria-label': t('quiz.sheet.close'), 'data-focus': 'rail-close', onclick: () => closeSheet(),
+  }, miniIcon('x', 'mi'));
+  const rail = h('aside', {
+    id: RAIL_ID, class: 'rail', 'aria-labelledby': 'rail-h',
+  },
     h('div', { class: 'rail-sum' },
       h('div', { class: 'rail-t' }, h('h2', { id: 'rail-h' }, t('quiz.sheet')), h('p', { class: 'rail-count' }, railCount)),
       finishBtn,
-      toggle),
+      closeBtn),
     sheetBody);
-  const setSheetOpen = (open: boolean): void => {
-    rail.classList.toggle('open', open);
-    toggle.setAttribute('aria-expanded', String(open));
-  };
-  // v2.2 (owner): the sheet starts closed every time the quiz screen is entered (a new start or a resume); it stays as the
-  // examinee set it only while they are on this screen (redraws after an answer keep it), never remembered across visits
-  if (!document.querySelector('#app .qz')) {
-    sheetOpenNow = false;
-    forgetStoredSheetOpen();
-  }
-  setSheetOpen(sheetOpenNow);
-  toggle.addEventListener('click', () => {
-    sheetOpenNow = !rail.classList.contains('open');
-    setSheetOpen(sheetOpenNow);
-  });
+  rail.addEventListener('touchstart', onSheetTouchStart, { passive: true });
+  rail.addEventListener('touchend', onSheetTouchEnd, { passive: true });
+  const backdrop = h('div', { id: BACKDROP_ID, class: 'qz-backdrop', 'aria-hidden': 'true', hidden: true, onclick: () => closeSheet() });
+  // v2.2 (owner): the sheet starts closed every time the quiz screen is entered (a new start or a resume); redraws after an
+  // answer keep the drawer as it is (components/quiz-drawer.ts owns the state)
+  if (!document.querySelector('#app .qz')) resetSheet();
 
   // TL-3: a timed exam shows the time left (countdown); an untimed exam and a practice keep the count-up
   const limit = !practice ? se.limit : null;
@@ -366,8 +365,10 @@ export function renderQuiz(): HTMLElement {
   const autoTag = !practice && S.settings.autoAdvance
     ? h('span', { class: 'qauto', title: t('quiz.auto.hint') }, h('span', { class: 'qauto-dot', 'aria-hidden': 'true' }), h('span', { class: 'qauto-l' }, t('quiz.auto.on')))
     : null;
-  // Practice: a tag next to the position, so it is clear that answers are checked one by one
-  const kindTag = practice ? h('span', { class: 'tag b qkind', title: t('quiz.practice.hint') }, t('quiz.practice.tag')) : null;
+  // Practice: a tag next to the position, so it is clear that answers are checked one by one; v2.7 (owner): an exam shows its own
+  // tag in the same place, both as wide as the wider word, so the two modes lay out the top row the same way
+  const kindTag = h('span', { class: 'tag b qkind', title: practice ? t('quiz.practice.hint') : undefined },
+    sameWidth(t(practice ? 'quiz.practice.tag' : 'quiz.exam.tag'), t(practice ? 'quiz.exam.tag' : 'quiz.practice.tag')));
 
   // Save and exit: the text button on wide screens, an icon on phones (QZ-1); the hint is its tip
   const exit = h('button', { class: 'btn quiet qexit', type: 'button', 'aria-label': t('quiz.saveExit'), 'data-focus': 'q-exit', onclick: leaveQuiz },
@@ -378,8 +379,9 @@ export function renderQuiz(): HTMLElement {
   // not fit, .tight swaps the full label for the short one: en "Finish", ja 「終了」, zh stays 4 characters); it opens the same confirm dialog as the rail button and the last question's bar button
   const topSubmit = h('button', {
     class: `btn qsubmit ${practice ? 'qsubmit-practice' : 'qsubmit-exam'}`, type: 'button', 'aria-label': finishLabel, 'data-focus': 'q-submit', onclick: () => void submit(),
-  }, miniIcon('submit', 'mi'), h('span', { class: 'lbl', 'aria-hidden': 'true' }, t(practice ? 'quiz.top.finish' : 'quiz.top.submit')),
-    h('span', { class: 'lbl-s', 'aria-hidden': 'true' }, t(practice ? 'quiz.top.finishS' : 'quiz.top.submitS')));
+  }, miniIcon('submit', 'mi'),
+    h('span', { class: 'lbl', 'aria-hidden': 'true' }, sameWidth(t(practice ? 'quiz.top.finish' : 'quiz.top.submit'), t(practice ? 'quiz.top.submit' : 'quiz.top.finish'))),
+    h('span', { class: 'lbl-s', 'aria-hidden': 'true' }, sameWidth(t(practice ? 'quiz.top.finishS' : 'quiz.top.submitS'), t(practice ? 'quiz.top.submitS' : 'quiz.top.finishS'))));
   holdTip(topSubmit, finishLabel);
 
   runRefreshers();
@@ -388,7 +390,14 @@ export function renderQuiz(): HTMLElement {
     h('div', { class: 'ql' },
       h('h1', { class: 'l', 'aria-label': `${t('quiz.position', { i: se.idx + 1 })} ${t('quiz.of', { n })}` },
         h('span', { class: 'pos-full' }, h('b', { class: 'num' }, t('quiz.position', { i: se.idx + 1 })), h('span', { class: 'dim num' }, t('quiz.of', { n }))),
-        h('span', { class: 'pos-short', 'aria-hidden': 'true' }, h('b', { class: 'num' }, se.idx + 1), h('span', { class: 'dim num' }, ` / ${n}`))),
+        h('button', {
+          id: POS_BTN_ID, class: 'pos-short qpos-btn', type: 'button', 'data-focus': 'q-pos', 'aria-expanded': 'false', 'aria-controls': RAIL_ID,
+          'aria-label': t('quiz.sheet.open', { n: se.idx + 1, total: n }), onclick: toggleSheet,
+        }, miniIcon('grid', 'qpos-ic'),
+          // v2.7 owner choice "B": grid icon + a small 答题卡 label over the position, so the pill reads as the sheet's button
+          h('span', { class: 'qpos-tx' },
+            h('span', { class: 'qpos-lab', 'aria-hidden': 'true' }, t('quiz.sheet.short')),
+            h('span', { class: 'qpos-n' }, h('b', { class: 'num' }, se.idx + 1), h('span', { class: 'dim num' }, `/ ${n}`))))),
       kindTag),
     h('div', { class: 'r' },
       autoTag,
@@ -404,11 +413,15 @@ export function renderQuiz(): HTMLElement {
   const root = h('div', { class: 'wrap qz' + (practice ? ' practice' : '') },
     qbar,
     h('div', { class: 'quiz-grid' }, h('div', { class: 'quiz-main' }, paper, dock, barPinned ? pfoot : null), rail),
+    backdrop,
     githubLine(),
     // TL-4: the 30-minute notice (assertive) and the 5 / 1 minute lines (polite) for screen readers; examTick() writes them
     limit != null ? h('div', { id: 'quiz-sr-alert', class: 'sr-only', role: 'alert', 'aria-live': 'assertive' }) : null,
     limit != null ? h('div', { id: 'quiz-sr', class: 'sr-only', 'aria-live': 'polite' }) : null,
     se.timeUp ? timeUpOverlay() : null);
+  // the drawer's state survives this rebuild (applySheet paints it); time-up closes it (no history entry is left behind)
+  if (se.timeUp && sheetOpen()) closeSheet(undefined, false);
+  applySheet(root);
   if (fresh && verdictEl) {
     const v = verdictEl;
     queueMicrotask(() => {
@@ -506,19 +519,6 @@ function barButton(o: {
   return btn;
 }
 
-// ---- the answer sheet's open state on phones (QZ-5): only while the quiz screen is shown (v2.2: no longer stored) ----
-let sheetOpenNow = false;
-
-/** Removes the open state that builds before v2.2 kept in the browser (storage may be blocked) */
-function forgetStoredSheetOpen(): void {
-  try {
-    const id = S.user?.id;
-    if (id != null) window.localStorage.removeItem(sheetOpenKey(id));
-  } catch {
-    // storage blocked: nothing was stored either
-  }
-}
-
 // ---- --top-h (2.12 e): the height of the pinned top row under PHONE, else 0; set on every render and when PHONE flips ----
 let topRow: HTMLElement | null = null;
 
@@ -530,10 +530,10 @@ function syncTopH(): void {
   if (row && right && left) {
     // Steps (styles/quiz.css): short labels and count, then smaller gaps and no clock icon, then no tag / finish icon; each
     // only while something is still clipped or pushed onto a second line
-    row.classList.remove('tight', 'tighter', 'tightest', 'tightest2');
+    row.classList.remove('tight', 'tighter', 'tightest', 'tightest2', 'tightest3');
     const lastEnd = (): number => (left.lastElementChild?.getBoundingClientRect().right ?? 0) - left.getBoundingClientRect().right;
     const over = (): boolean => left.scrollWidth > left.clientWidth + 1 || lastEnd() > 0.5 || right.offsetTop > left.offsetTop + 4 || row.scrollWidth > row.clientWidth + 1;
-    for (const step of ['tight', 'tighter', 'tightest', 'tightest2']) {
+    for (const step of ['tight', 'tighter', 'tightest', 'tightest2', 'tightest3']) {
       if (!over()) break;
       row.classList.add(step);
     }
@@ -545,6 +545,7 @@ function syncTopH(): void {
 /** Keyboard (and the PHONE watcher of --top-h): ← → switch questions, A–H pick an answer, M flags. Holding a key does not repeat; ignored while a dialog is open or an input is focused. */
 export function installQuizKeys(): void {
   // A phone turned sideways (or a window resized across the PHONE line) changes the pinned row's height: --top-h follows
+  installSheetListeners();
   if (typeof window.matchMedia === 'function') {
     window.matchMedia(PHONE_MQ).addEventListener('change', () => {
       if (S.route.name === 'quiz') syncTopH();
@@ -557,6 +558,8 @@ export function installQuizKeys(): void {
     const se = S.session;
     if (S.route.name !== 'quiz' || !se || S.authView || e.ctrlKey || e.metaKey || e.altKey || e.repeat) return;
     if (document.querySelector('dialog[open]')) return;
+    // the open answer sheet owns the keyboard (Esc / Tab are handled by it)
+    if (sheetOpen()) return;
     const target = e.target;
     if (target instanceof HTMLElement && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
     // keys typed inside the AI+ panel (its buttons, the answer text) are not quiz shortcuts
@@ -577,4 +580,10 @@ export function installQuizKeys(): void {
       if (q.options.some((o) => o.key === k)) pick(q, k);
     }
   });
+}
+
+/** v2.7: `shown` with `other` hidden under it in one grid cell, so the box is as wide as the wider of the two (styles/quiz.css .same-w);
+ *  the hidden text is not read by screen readers (visibility: hidden) */
+function sameWidth(shown: string | Node, other: string): HTMLElement {
+  return h('span', { class: 'same-w' }, h('span', {}, shown), h('span', { class: 'same-w-ghost', 'aria-hidden': 'true' }, other));
 }

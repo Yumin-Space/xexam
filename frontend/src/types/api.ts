@@ -359,6 +359,23 @@ export interface RecordDetail {
   items: RecordItem[];
 }
 
+/** Who an administrator is reading the records of (v2.7) */
+export interface UserRef {
+  id: number;
+  username: string;
+  displayName: string | null;
+}
+
+/** GET /api/users/records?user= (v2.7, administrators): the user's list, as GET /api/records answers it */
+export interface UserRecordsResponse extends RecordsResponse {
+  user: UserRef;
+}
+
+/** GET /api/users/record?user=&id= (v2.7): the record as GET /api/record answers it, plus who it belongs to */
+export interface UserRecordDetail extends RecordDetail {
+  user: UserRef;
+}
+
 /** POST /api/records/delete */
 export interface RecordsDeleted extends RecordsResponse {
   progress: Progress;

@@ -9,9 +9,9 @@
 //     (the header row is hidden and not focusable there);
 //   · the pager keeps its place: the arrows stay in the DOM (aria-disabled, never removed) and "Page x / y" is always shown.
 import { localeTag, t } from '../i18n/index.ts';
-import { clickSort, pageList, pageTable, withQuery, type PagedResult, type SortDir, type TableState } from '../domain/paged-table.ts';
+import { clickSort, pageTable, withQuery, type PagedResult, type SortDir, type TableState } from '../domain/paged-table.ts';
 import { h, type Child } from '../utils/dom.ts';
-import { matches, PHONE_MQ } from '../utils/media.ts';
+import { pager } from './pager.ts';
 import '../styles/paged-table.css';
 
 export interface PtColumn {
@@ -122,8 +122,7 @@ export function pagedTable<T>(o: PagedTableOptions<T>): HTMLElement {
   const none = h('p', { class: 'empty ptb-none', role: 'status', hidden: '' }, t('ai.set.tbl.none'));
 
   const status = h('p', { class: 'sr-only', role: 'status', 'aria-live': 'polite' });
-  const pagerNav = h('nav', { class: 'ptb-pager', 'aria-label': t('ai.set.tbl.pager') });
-  let focusAfter: string | null = null;
+  let pagerEl: HTMLElement = h('nav', { class: 'ptb-pager' });
 
   function paint(): void {
     const s = stateOf();
@@ -145,40 +144,12 @@ export function pagedTable<T>(o: PagedTableOptions<T>): HTMLElement {
     none.hidden = r.total !== 0;
     status.textContent = r.total ? t('ai.set.tbl.range', { from: num(r.from), to: num(r.to), total: num(r.total) }) : t('ai.set.tbl.none');
 
-    const go = (p: number, key: string): void => {
-      if (p < 1 || p > r.pages || p === r.page) return;
-      focusAfter = key;
-      set({ ...stateOf(), page: p });
-    };
-    const step = (dir: -1 | 1): HTMLElement => {
-      const target = r.page + dir;
-      const off = target < 1 || target > r.pages;
-      return h('button', {
-        type: 'button', id: `${o.id}-${dir < 0 ? 'prev' : 'next'}`, class: 'ptb-pg ptb-step', 'aria-disabled': off ? 'true' : null,
-        'aria-label': t(dir < 0 ? 'ai.set.tbl.prev' : 'ai.set.tbl.next'),
-        onclick: () => go(target, dir < 0 ? 'prev' : 'next'),
-      }, dir < 0 ? '‹' : '›');
-    };
-    const pages = pageList(r.page, r.pages, matches(PHONE_MQ) ? 0 : 1).map((p) => (p === 'gap'
-      ? h('span', { class: 'ptb-gap', 'aria-hidden': 'true' }, '…')
-      : h('button', {
-        type: 'button', id: `${o.id}-p${p}`, class: 'ptb-pg' + (p === r.page ? ' on' : ''), 'aria-current': p === r.page ? 'page' : null,
-        'aria-label': t('ai.set.tbl.goPage', { n: num(p) }), onclick: () => go(p, `p${p}`),
-      }, num(p))));
-    pagerNav.replaceChildren(
-      h('div', { class: 'ptb-btns' }, step(-1), ...pages, step(1)),
-      h('span', { class: 'ptb-of' }, t('ai.set.tbl.pageOf', { p: num(r.page), n: num(r.pages) })));
-    if (focusAfter) {
-      // The arrow keeps the focus unless it just became unusable; then the current page number takes it
-      let id = `${o.id}-${focusAfter}`;
-      const el = document.getElementById(id);
-      if (!el || el.getAttribute('aria-disabled') === 'true') id = `${o.id}-p${r.page}`;
-      focusAfter = null;
-      document.getElementById(id)?.focus();
-    }
+    const next = pager({ id: o.id, page: r.page, pages: r.pages, onGo: (p) => set({ ...stateOf(), page: p }) });
+    pagerEl.replaceWith(next);
+    pagerEl = next;
   }
 
-  const root = h('div', { class: `ptb ptb-${o.cardsAt}` }, tools, wrap, none, pagerNav, status);
+  const root = h('div', { class: `ptb ptb-${o.cardsAt}` }, tools, wrap, none, pagerEl, status);
   paint();
   return root;
 }

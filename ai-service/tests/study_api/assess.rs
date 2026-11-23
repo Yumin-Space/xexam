@@ -46,7 +46,7 @@ async fn an_assessment_streams_and_lands_in_a_day_chat() {
     assert_eq!(s["kind"], "assess");
     assert_eq!(s["recordId"], Value::Null);
     assert_eq!(s["sample"], Value::Null);
-    assert_eq!(s["chatTitle"], "2026-11-22");
+    let day = s["chatTitle"].as_str().expect("title").to_string();
     assert_eq!(
         s["basis"],
         json!({"days": 30, "records": 3, "answered": 6, "latestAt": "2026-11-21 10:30"})
@@ -60,7 +60,7 @@ async fn an_assessment_streams_and_lands_in_a_day_chat() {
             .expect("chat");
     assert_eq!(
         (kind.as_str(), rf.as_str(), rec),
-        ("summary", "assess@2026-11-22", None)
+        ("summary", format!("assess@{day}").as_str(), None)
     );
     let line: String = q1(&e.t, "SELECT content FROM messages WHERE role = 'user'");
     assert_eq!(line, "[AI assessment] latest=2026-11-21 10:30 30d 3r 6q");
@@ -75,8 +75,12 @@ async fn an_assessment_streams_and_lands_in_a_day_chat() {
     let sys = msgs[0]["content"].as_str().expect("system");
     assert!(sys.contains("study coach inside Xexam"));
     let user = msgs[1]["content"].as_str().expect("user");
-    assert!(user.starts_with("<stats>\n") && user.contains("answered: 6"));
-    assert!(!user.contains("tool"));
+    assert!(sys.contains("ONE paragraph of 3 or 4 short sentences"));
+    assert!(
+        user.starts_with("<facts>\n")
+            && user.contains("- Questions answered in those sessions: 6, correct 3 (50%)")
+    );
+    assert!(!user.contains("tool") && !user.contains("Regenerate"));
     // the wire kind is `assess` in the list and in the chat
     let (_, list) = e.t.get("/api/ai/chats", &e.user).await;
     assert_eq!(list["chats"][0]["kind"], "assess");
@@ -463,9 +467,226 @@ async fn latest_says_running_while_today_assessment_is_still_written() {
     let other = e.t.user("kim", false, true);
     let (_, theirs) = e.t.get(LATEST, &other).await;
     assert_eq!(theirs["running"], false);
+    // the whole answer is asked for after the `start` frame: let the request reach the stub before it is released
+    for _ in 0..200 {
+        if e.t.stub.count() > 0 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     e.t.stub.release();
-    assert_eq!(terminal_name(&stream.all().await), "done");
+    let all = stream.all().await;
+    assert_eq!(terminal_name(&all), "done", "{all:?}");
     settle(&e.t).await;
     let (_, after) = e.t.get(LATEST, &e.user).await;
     assert_eq!(after["running"], false);
+}
+
+// —— v2.7: the whole answer is checked, retried and cleaned before it is shown ———————————————————————————————————————
+
+const GOOD_EN: &str = "A small step taken each day adds up like drops filling a quiet pond. You have answered a good number of questions lately and most were right. Next week, spend a short session on the ones you missed. Go at your own pace and be kind to yourself.";
+const COUNTING_EN: &str = "A(1) small(2) step(3) each(4) day(5) adds(6) up(7) like(8) drops(9) in(10) a(11) pond(12). Total length: 144 characters. Verify Constraints.";
+
+/// Answers the assessment prompts with `replies` in order (the last one repeats); everything else falls through.
+fn assess_script(
+    e: &Env,
+    replies: Vec<genkit::Reply>,
+) -> std::sync::Arc<std::sync::atomic::AtomicUsize> {
+    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let c = calls.clone();
+    let replies = std::sync::Mutex::new(replies);
+    e.t.stub.st().script = Some(std::sync::Arc::new(move |sys: &str, _user: &str| {
+        if !sys.contains("study coach inside Xexam") {
+            return genkit::Reply::Fall;
+        }
+        let n = c.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let r = replies.lock().unwrap_or_else(|x| x.into_inner());
+        match r.get(n).or_else(|| r.last()) {
+            Some(genkit::Reply::Text(t)) => genkit::Reply::Text(t.clone()),
+            Some(genkit::Reply::Cut(t)) => genkit::Reply::Cut(t.clone()),
+            Some(genkit::Reply::Status(s, b)) => genkit::Reply::Status(*s, b.clone()),
+            _ => genkit::Reply::Fall,
+        }
+    }));
+    calls
+}
+
+#[tokio::test]
+async fn a_counting_reply_is_asked_again_with_the_retry_note_and_never_shown() {
+    let e = env().await;
+    three_records(&e);
+    let calls = assess_script(
+        &e,
+        vec![
+            genkit::Reply::Text(COUNTING_EN.into()),
+            genkit::Reply::Text(format!("**{GOOD_EN}**")),
+        ],
+    );
+    let ev = ask_to(&e.t, &e.user, ASK, json!({"lang": "en"})).await;
+    assert_eq!(terminal_name(&ev), "done", "{ev:?}");
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    // ONE delta with the cleaned text
+    let deltas = ev.iter().filter(|(n, _)| n == "delta").count();
+    assert_eq!(deltas, 1);
+    assert_eq!(text(&ev), GOOD_EN);
+    let reqs = e.t.stub.requests();
+    assert_eq!(reqs.len(), 2);
+    let sys = |i: usize| {
+        reqs[i].body["messages"][0]["content"]
+            .as_str()
+            .unwrap_or("")
+            .to_string()
+    };
+    assert!(!sys(0).contains("previous reply broke the rules"));
+    assert!(sys(1).ends_with("Reply with only the final 3-4 sentences."));
+    // the request is ONE counted usage row; the retry is a gen_calls row (still in the statistics, outside the caps)
+    let rows: i64 = q1(&e.t, "SELECT COUNT(*) FROM usage WHERE assess = 1");
+    assert_eq!(rows, 1);
+    let retries: i64 = q1(
+        &e.t,
+        "SELECT COUNT(*) FROM gen_calls WHERE purpose = 'assess'",
+    );
+    assert_eq!(retries, 1);
+    let (_, v) = e.t.get(LATEST, &e.user).await;
+    assert_eq!(v["assess"]["text"], GOOD_EN);
+    assert_eq!(v["remaining"], 2);
+}
+
+#[tokio::test]
+async fn three_unusable_replies_end_with_the_unusable_code_and_save_nothing() {
+    let e = env().await;
+    three_records(&e);
+    let calls = assess_script(&e, vec![genkit::Reply::Text(COUNTING_EN.into())]);
+    let ev = ask_to(&e.t, &e.user, ASK, json!({"lang": "en"})).await;
+    assert_eq!(terminal_name(&ev), "error", "{ev:?}");
+    let err = ev.iter().find(|(n, _)| n == "error").expect("error frame");
+    assert_eq!(err.1["code"], "ai.assess.unusable");
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 3);
+    let (st, status): (String, String) = (
+        q1(&e.t, "SELECT status FROM messages WHERE role = 'assistant'"),
+        q1(
+            &e.t,
+            "SELECT error_code FROM messages WHERE role = 'assistant'",
+        ),
+    );
+    assert_eq!(
+        (st.as_str(), status.as_str()),
+        ("error", "ai.assess.unusable")
+    );
+    let saved: i64 = q1(&e.t, "SELECT COUNT(*) FROM assess_latest");
+    assert_eq!(saved, 0);
+    // 3 attempts: the caps see ONE call, the two retries are gen_calls rows
+    let rows: i64 = q1(&e.t, "SELECT COUNT(*) FROM usage WHERE assess = 1");
+    assert_eq!(rows, 1);
+    let retries: i64 = q1(
+        &e.t,
+        "SELECT COUNT(*) FROM gen_calls WHERE purpose = 'assess'",
+    );
+    assert_eq!(retries, 2);
+    let now = xexam_ai_service::util::unix_now();
+    let starts = {
+        let c = e.t.db();
+        xexam_ai_service::store::stats::recent_starts(&c, e.user.id, now, now - 86_400)
+            .expect("starts")
+    };
+    assert_eq!(starts.len(), 1, "{starts:?}");
+    let (_, v) = e.t.get(LATEST, &e.user).await;
+    assert_eq!(
+        (v["assess"].clone(), v["remaining"].clone()),
+        (Value::Null, json!(3))
+    );
+}
+
+#[tokio::test]
+async fn a_cut_reply_is_never_kept_even_when_it_ends_with_a_full_stop() {
+    let e = env().await;
+    three_records(&e);
+    let calls = assess_script(
+        &e,
+        vec![
+            genkit::Reply::Cut(GOOD_EN.into()),
+            genkit::Reply::Text(GOOD_EN.into()),
+        ],
+    );
+    let ev = ask_to(&e.t, &e.user, ASK, json!({"lang": "en"})).await;
+    assert_eq!(terminal_name(&ev), "done", "{ev:?}");
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    let cut = ev
+        .iter()
+        .find(|(n, _)| n == "done")
+        .map(|(_, d)| d["truncated"].clone());
+    assert_eq!(cut, Some(json!(false)));
+}
+
+#[tokio::test]
+async fn the_second_run_of_a_day_carries_no_regenerate_note() {
+    let e = env().await;
+    three_records(&e);
+    for _ in 0..2 {
+        let ev = ask_to(&e.t, &e.user, ASK, json!({"lang": "en"})).await;
+        assert_eq!(terminal_name(&ev), "done", "{ev:?}");
+    }
+    let reqs = e.t.stub.requests();
+    assert_eq!(reqs.len(), 2);
+    let user = reqs[1].body["messages"][1]["content"]
+        .as_str()
+        .unwrap_or("");
+    assert!(
+        user.starts_with("<facts>\n") && !user.contains("Regenerate"),
+        "{user}"
+    );
+}
+
+#[tokio::test]
+async fn a_saved_capsule_that_fails_the_checks_reads_as_no_assessment() {
+    let e = env().await;
+    three_records(&e);
+    assert_eq!(
+        terminal_name(&ask_to(&e.t, &e.user, ASK, json!({})).await),
+        "done"
+    );
+    // an old garbled text (per-character numbering) is hidden; nothing is deleted
+    e.t.db()
+        .execute(
+            "UPDATE assess_latest SET content = '涓(1)涓(2)细(3)流(4)不(5)舍(6)昼(7)夜(8)地(9)雕(10)刻(11)'",
+            [],
+        )
+        .expect("garble");
+    let (st, v) = e.t.get(LATEST, &e.user).await;
+    assert_eq!(st, 200, "{v}");
+    assert_eq!(v["assess"], Value::Null);
+    let kept: i64 = q1(&e.t, "SELECT COUNT(*) FROM assess_latest");
+    assert_eq!(kept, 1);
+}
+
+#[tokio::test]
+async fn a_hidden_capsule_of_today_does_not_use_up_the_day() {
+    let e = env().await;
+    three_records(&e);
+    set_limits(&e, json!({"assessPerDay": 1})).await;
+    assert_eq!(
+        terminal_name(&ask_to(&e.t, &e.user, ASK, json!({})).await),
+        "done"
+    );
+    // the one run of the day is now a garbled capsule (as an older version could have saved)
+    e.t.db()
+        .execute(
+            "UPDATE assess_latest SET content = '涓(1)涓(2)细(3)流(4)不(5)舍(6)昼(7)夜(8)地(9)雕(10)刻(11)'",
+            [],
+        )
+        .expect("garble");
+    let (_, v) = e.t.get(LATEST, &e.user).await;
+    assert_eq!(
+        (v["assess"].clone(), v["remaining"].clone()),
+        (Value::Null, json!(1))
+    );
+    // a new run is allowed, replaces the text, and then the day is used up
+    assert_eq!(
+        terminal_name(&ask_to(&e.t, &e.user, ASK, json!({})).await),
+        "done"
+    );
+    let (_, v) = e.t.get(LATEST, &e.user).await;
+    assert_ne!(v["assess"], Value::Null);
+    assert_eq!(v["remaining"], 0);
 }

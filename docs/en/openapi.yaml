@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Xexam API
-  version: "2.6"
+  version: "2.7"
   description: |
     The REST API of Xexam. The endpoints that existed in the legacy Python implementation behave as it did, and the Rust
     backend stays consistent with it (172 golden responses compared item by item, see tests/baseline/). The intentional
@@ -288,6 +288,89 @@ paths:
               schema: { $ref: "#/components/schemas/UserList" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/ForbiddenGet" }
+  /api/users/records:
+    get:
+      tags: [users]
+      summary: "(v2.7) Another user's study records (administrators, read only)"
+      x-access: Admin
+      description: |
+        The same answer as GET /api/records for the user `user` (every kept record, newest first, and `retention`), plus a
+        `user` header. Works for any account, administrators and yourself included. Read only: there is no route to delete or
+        review another user's records, and /api/records, /api/record and /api/records/delete stay the caller's own. A read of the list
+        is recorded in the activity log as
+        `users.viewRecords` (object: the user's login, no detail; not for a `HEAD`, nor for a later page asked with `offset` > 0 or `page` > 1).
+      parameters:
+        - name: user
+          in: query
+          required: true
+          description: "Exactly one `user` parameter of 1–18 ASCII digits (percent-encoding is decoded)"
+          schema: { type: string, pattern: "^[0-9]{1,18}$" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/RecordList" }
+                  - type: object
+                    required: [user]
+                    properties:
+                      user: { $ref: "#/components/schemas/RecordsOwner" }
+        "400":
+          description: "`user` missing, repeated or not 1–18 digits: `请求的格式不对。`"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/ForbiddenGet" }
+        "404": { $ref: "#/components/responses/UserNotFound" }
+  /api/users/record:
+    get:
+      tags: [users]
+      summary: "(v2.7) One study record of another user with its per-question detail (administrators, read only)"
+      x-access: Admin
+      description: |
+        The same answer as GET /api/record for the record `id` of the user `user`, with every bank visible to the
+        administrator (`question` is null only for a question that no longer exists), plus a `user` header. `record` leaves out
+        `sessionKey` and `startedAt` (the keys of the user's AI chats). A record that belongs to another user, or does not exist, is
+        404. Every successful read (not a `HEAD`) is recorded in the activity log as `users.viewRecords` (object: the user's
+        login, detail `{"record": <id>}`).
+      parameters:
+        - name: user
+          in: query
+          required: true
+          description: "Exactly one `user` parameter of 1–18 ASCII digits"
+          schema: { type: string, pattern: "^[0-9]{1,18}$" }
+        - name: id
+          in: query
+          required: true
+          description: "Exactly one `id` parameter of 1–18 ASCII digits"
+          schema: { type: string, pattern: "^[0-9]{1,18}$" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [record, items, user]
+                properties:
+                  record: { $ref: "#/components/schemas/RecordSummary" }
+                  items: { type: array, items: { $ref: "#/components/schemas/RecordItem" } }
+                  user: { $ref: "#/components/schemas/RecordsOwner" }
+        "400":
+          description: "`user` or `id` missing, repeated or not 1–18 digits: `请求的格式不对。`"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/ForbiddenGet" }
+        "404":
+          description: "No such user (`这个用户不存在（可能已被删除），请刷新页面后再试。`) or no such record of that user (`这条考试记录不存在（可能已被删除），请刷新页面后再试。`)"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
   /api/users/create:
     post:
       tags: [users]
@@ -1435,6 +1518,13 @@ paths:
         the kind `assess`. The `start` event has `chatKind` and `kind` `assess`, `questionId`, `questionNo`, `source`, `recordId`
         and `sample` null, `lang`, and `basis` ({days, records, answered, latestAt}). The stored user message is the machine line
         `[AI assessment] latest=<YYYY-MM-DD HH:MM> 30d <records>r <answered>q`. Nginx: the same 20 starts a minute per session as send.
+        (v2.7) The answer is not streamed token by token: ai-service asks the model for the whole answer, cleans it and checks it
+        (one paragraph of plain text, no counting, drafts, lists or Markdown, the right language, a plausible length, ending with a
+        sentence mark) and only then sends one `delta` event with the finished text, then `done` (`truncated` is always false).
+        A refused, cut-off or empty reply, or a transient upstream error (after a 2 s wait), is asked again, at most 3 calls in all;
+        a cut-off reply is asked again without a thinking strength. When no call gives a usable text the stream ends with an `error`
+        event, code `ai.assess.unusable`, and nothing is saved: the day's run is not used up. The retries do not count against the
+        per-user request caps (one assessment counts once) but their tokens show in the usage (by feature `assess`).
       requestBody:
         required: true
         content:
@@ -1465,6 +1555,8 @@ paths:
         deleting chats does not remove it), or null. `model` is sent to administrators only. `perDay` and `remaining` are null
         when the caller is not limited (an administrator while `assessAdminsExempt` is 1). `running` is true while an
         assessment of today is still being written.
+        (v2.7) A saved text that fails today's checks (an older, garbled one) is hidden: `assess` is null, and a run of today that
+        produced it does not count toward `perDay`.
       responses:
         "200":
           description: OK
@@ -3759,6 +3851,14 @@ components:
           properties:
             sessionKey: { type: string, nullable: true, pattern: "^[0-9a-f]{32}$", description: "The `key` the record was saved with; null for older records or without a valid key" }
             startedAt: { type: integer, nullable: true, description: "Unix seconds, when the session started; null likewise" }
+    RecordsOwner:
+      type: object
+      description: "(v2.7) Whose records an administrator is reading"
+      required: [id, username, displayName]
+      properties:
+        id: { type: integer }
+        username: { type: string, description: "The login" }
+        displayName: { type: string, nullable: true, description: "The username the user chose; null while it is not set" }
     RecordList:
       type: object
       required: [records, retention]

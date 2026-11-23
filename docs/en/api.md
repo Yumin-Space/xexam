@@ -46,6 +46,8 @@ Every route has one access level (the route table `ROUTES` in `backend/src/api/a
 | POST | `/api/import/cancel` | Bank manager | Cancel your pending import | No |
 | POST | `/api/banks/delete` | Bank manager | Delete a question bank (optionally with its study data) *(v0.5)* | Yes |
 | GET | `/api/users` | Admin | Every account, with its permissions and sign-in lock *(v0.6)* | No |
+| GET | `/api/users/records?user=<int>` | Admin | Another user's study records, read only *(v2.7)* | No (one activity row) |
+| GET | `/api/users/record?user=<int>&id=<int>` | Admin | One study record of another user with its detail, read only *(v2.7)* | No (one activity row) |
 | POST | `/api/users/create` | Admin | Add a user *(v0.6)* | Yes |
 | POST | `/api/users/update` | Admin | Rename, change the role, disable or enable a user, set their banks and permission *(v0.6)* | Yes |
 | POST | `/api/users/password` | Admin | Give another user a new initial password *(v0.6)* | Yes |
@@ -240,6 +242,14 @@ Admin. Every account, ordered by id:
 | `triesLeft` | Failures left in the round in progress before the next lock (`0` while locked) |
 | `knownBrowser` | `true`: the state shown counts sign-ins from browsers where the user signed in before; `false`: from every other browser. When both are tracked, the one that holds the user back more is shown |
 | `otherUntil` / `otherRetryAfter` | Set only when the other browsers are locked at the same time, so the account is locked in every browser: the end of that second lock and its seconds (`null` / `0` otherwise) |
+
+### `GET /api/users/records?user=<int>` *(v2.7)*
+Admin, read only. The study records of the user `user`, for the **Study records** page that User management opens. The answer is the one of `GET /api/records` for that user (`{"records": [RecordSummary, …], "retention": 500}`, newest first, every kept record) with one more key, `user`: `{"id": <int>, "username": "<login>", "displayName": "<username>" | null}`. It works for every account, other administrators and the caller included. `user` must be exactly one query parameter of 1–18 ASCII digits (percent-encoding is decoded) → otherwise **400** `请求的格式不对。`; an unknown user → **404** `这个用户不存在（可能已被删除），请刷新页面后再试。`. A plain user gets **403** `只有管理员可以进行这个操作。`.
+
+A read of the list writes the activity entry `users.viewRecords` (object: the user's login, no detail); a `HEAD` does not, and neither does a later page asked with `offset` above 0 or `page` above 1 (the page itself sends neither). There is no route to delete, retake or review another user's records, and `GET /api/records`, `GET /api/record` and `POST /api/records/delete` stay the caller's own.
+
+### `GET /api/users/record?user=<int>&id=<int>` *(v2.7)*
+Admin, read only. One record of the user `user`, as `GET /api/record?id=` answers it (`{"record": RecordSummary, "items": [...]}`) for a viewer who sees every bank, so a question is `null` only when it no longer exists, plus the same `user` key as above. `record` has **no** `sessionKey` and **no** `startedAt` (the keys of the user's AI chats are not handed out). `user` and `id` must each be exactly one query parameter of 1–18 ASCII digits → otherwise **400** `请求的格式不对。`; an unknown user → **404** `这个用户不存在（可能已被删除），请刷新页面后再试。`; an unknown id, or a record that belongs to another user, → **404** `这条考试记录不存在（可能已被删除），请刷新页面后再试。`. A successful read (not a `HEAD`) writes `users.viewRecords` with the detail `{"record": <id>}`.
 
 ### `POST /api/users/create` *(v0.6)*
 Admin. Body: `{"username": "…", "password": "…", "role": "admin" | "user", "banks": "all" | [<bank id>, …], "newBanks": <bool>, "canManageBanks": <bool>, "canDownloadBanks": <bool>, "ai": <bool>}`. *(v0.7)* `banks` defaults to `[]` (the new user sees no bank until an administrator chooses some), `newBanks` to `false` and `canManageBanks` to `false`; *(v1.6)* `canDownloadBanks` to `false`; *(v0.8)* `ai` (**AI+**) to `false`. Creating a user with `ai: true` also logs `user "<admin>" turned AI+ on for user "<name>"`; *(v0.8, round 2)* while AI+ is not available (see `aiAvailable` above) it is refused with **409** `ai.serviceOff` and the user is not created. `ai: false` or no `ai` works as always. `"banks": "all"` is a shorthand: every bank that exists now and, unless `newBanks` is given, `newBanks: true`. Duplicate ids are ignored. The new account is enabled and must choose a new password at its first sign-in. Answer: `{"users": [...]}` as in `GET /api/users`.
@@ -532,6 +542,7 @@ Like every backend message they are Chinese and stable (the frontend translates 
 - **`POST /api/activity/visit`** `{"page": "home"}` (signed in; `page` is one of `home`, `study`, `banks`, `users`, `logs`, `records`, `record`, `wrong`, `settings`, `profile`, `about`, `quiz`, `result`, `ai`, `aiSettings`, else 400): administrators are logged, users only when the setting is on; at most 30 writes per user per minute.
   - *(v2.5)* `study` is the **Exam & practice** page; `home` now means the dashboard. Log rows written earlier with `home` keep their name **Home**.
   - *(v2.6)* `profile` is the **Profile** page. The activity log also has the action `auth.name` (**Set username**, `POST /api/auth/name`; detail `{"oldName", "newName"}`).
+  - *(v2.7)* The activity log also has the action `users.viewRecords` (**Viewed a user's study records**): an administrator read the list or one record of another user (object: that user's login; detail `{"record": <id>}` for one record).
 - **`POST /api/attempt`**: a repeat of the same save (same `key`, `startedAt` and kind) writes nothing and answers the first answer plus `"duplicate": true`.
 - **`GET /api/bank`**, **`GET /api/banks`**: the answers carry `ETag` and `Cache-Control: private, no-cache`; a matching `If-None-Match` gets `304` without a body.
 
@@ -791,6 +802,7 @@ The `error` texts are ai-service's (Chinese; `ai.serviceOff` is the backend's); 
 | `ai.hintLeak` | (stream) | *(v0.9)* The hint would have given the answer away and was withheld (text `这个提示透露了答案，已被隐藏。请重新生成。`; with `withdraw: true`). |
 | `ai.noWrong` | 409 | *(v0.9)* The record has no wrong answer to summarise (text `这次没有答错的题（未作答的题不计入 AI 总结）。`). |
 | `ai.assessFew` | 409 | *(v2.5)* The user has fewer than 3 saved study records, so there is nothing to assess (text `学习记录太少，至少需要 3 条。`). |
+| `ai.assess.unusable` | (stream) | *(v2.7)* The AI did not give a usable assessment in 3 calls (text `AI 这次没有给出合适的评估，请稍后再试。`). Nothing is saved and the day's run is not used up. |
 | `ai.assessDaily` | 409 | *(v2.6)* The user has used up today's AI study assessments (`assessPerDay`; text `今天的 AI 学习评估次数已用完，明天再来吧。`). |
 | `ai.noUsable` | 409 | *(v0.9)* Every wrong answer of the record belongs to a question that is deleted or no longer visible to the user (text `这些答错的题已经不可用（题库已删除或没有访问权限），无法总结。`). |
 | `ai.noDetail` | 409 | *(v0.9)* The record has no per-question detail (saved before v0.5; text `这条记录没有逐题记录，无法总结。`). |
@@ -906,6 +918,10 @@ The study assessment of the Home dashboard. Body `{"lang"?: "en" | "zh" | "ja"}`
 
 Order of the checks: validation, the AI user checks of `send`, the numbers from the backend (409 `ai.assessFew` with fewer than 3 saved records), then the per-day limit (409 `ai.assessDaily`, before any place is taken or anything is saved), then the chat and the places as for `send`. The chat is stored as a `summary` chat with the reference `assess@<local date>` (the day the request was accepted) and titled with that date, one per day (asking again the same day adds a pair to it); every listing shows its kind as `assess`, and the stored user message is the machine line `[AI assessment] latest=<YYYY-MM-DD HH:MM> 30d <records>r <answered>q`, which the screens replace by a label. The `start` event has `chatKind` and `kind` `assess`, `questionId`, `questionNo`, `source`, `recordId` and `sample` `null`, `lang`, and `basis` (`{"days", "records", "answered", "latestAt"}`). When the answer ends `done` with text, it also becomes the user's **latest assessment** (`GET /api/ai/assess/latest`), kept apart from the chat: deleting the chat, **Delete all chats**, an administrator's clear and the retention do not remove it; deleting the user does.
 
+*(v2.7)* **The answer arrives whole and checked.** The prompt is rewritten: the model gets plain labelled facts computed in ai-service from the numbers (for example the share of correct answers as a percent, the most active weekday, the trend of the weekly counts, the longest break), never raw arrays, and is asked for one paragraph of three or four short sentences with no exact length, no counting, no drafts, lists, Markdown or emoji. ai-service asks the provider for the **whole** answer (OpenAI-compatible routes; the other formats are streamed upstream and collected), cleans it (reasoning spans, code fences, Markdown markers, wrapping quotes, line breaks) and checks it: not empty, 30 to 260 characters (zh / ja) or 15 to 170 words (en), mostly in the asked language, ending with a sentence mark, and without counting such as `字(12)`, process text such as `Total length:` or `Verify Constraints`, or a list. Only then the stream carries one `delta` event with the finished text, then `done` (`truncated` is `false`); the `start` event is as before. A reply that fails the check, a reply that was cut off at the token limit (the next call sends no thinking strength) and a transient upstream error (the next call follows after 2 seconds) are asked again, **at most 3 calls in all**. An upstream error that is not transient ends the request at once with its own code (as for other AI answers); `ai.assess.unusable` is used only when the 3 calls ran out. When none gives a usable text the stream ends with an `error` event with the code `ai.assess.unusable`, the assistant message is stored as an error, nothing becomes the latest assessment and the day's run is **not** used up. Stop ends the attempt at once and saves nothing. The retries do not count against the per-user request caps (section 5.6): the request counts once, as its first call. Every call's tokens are recorded, and the retries too appear in the usage under the feature `assess`.
+
+*(v2.7)* **Thinking room.** When a call sends a thinking strength, the token limit sent upstream is the **reply max tokens** limit plus room for thinking, because many models count thinking inside `max_tokens`: +2048 for the lowest two levels of the strength family (and `low`, `minimal`, `none`), +4096 for `medium`, +8192 for the higher levels, at most 32 768. On an Anthropic-format route the route's own token ceiling (4096 or 8192, from the token ladder) caps it, never below the reply limit itself. Without a strength the limit is the reply limit unchanged. This applies to every call that goes through the chat plan: AI Chat, hint, analysis, summary, the assessment and memory suggestions; AI generation and import keep their own budgets.
+
 #### `GET /api/ai/assess/latest` *(v2.6)*
 
 Replaces `GET /api/ai/assess/saved` of v2.5 (removed; it answers 404 `ai.notFound` now). No query. **Signed** only: no AI+ feature is needed to read the saved text, and it does not call the backend.
@@ -918,6 +934,7 @@ Replaces `GET /api/ai/assess/saved` of v2.5 (removed; it answers 404 `ai.notFoun
 - `today`: the local day of ai-service (`YYYY-MM-DD`).
 - `running`: `true` while an assessment of today is still being written (for example in another tab).
 - `perDay` and `remaining`: the caller's limit and the successful runs left today; both `null` when the caller is not limited (an administrator while `assessAdminsExempt` is 1).
+- *(v2.7)* A saved text that fails today's checks (counting, drafts, cut off: a text of v2.5 or v2.6) is hidden: `assess` is `null`, as if nothing had been saved, and a run of today that made it does not count toward `perDay` (the next good run starts the day's count again). Nothing is deleted or migrated.
 
 #### Busy answers
 
@@ -940,7 +957,7 @@ Question text, hints, analyses, summaries, answers, chat titles, session keys an
   `cap` is `minute`, `hour` or `day`: the cap that frees last. `limit` is its value. `retryAt` is the unix second when it frees (for `day`, the next 0:00 in the server's time zone). `retryAfter` is the whole number of seconds from now, at least 1. The text names the cap; the day cap ends with 「明天 0 点后可以再次使用。」. Clients translate by `code`, never by the text. Nothing is saved, and the caller keeps the text it sent. Before a stream starts the refusal is plain JSON, like `ai.busy`. Nginx's own 429 (section 5.1) is not JSON and is a different limit.
 - **Counts.** `GET /api/ai/status` has `calls` (see Shapes above) when AI+ is available to you. The admin rows of `GET /api/ai/admin/users` and `GET /api/ai/admin/user` have `calls` (`used`, `blocked`). Each `byUser` row of `GET /api/ai/admin/usage` with a user id has `today`.
 - **Log.** When a user reaches a cap, the System log gets one line until that cap frees again: `user "<name>" reached the AI request cap (20 per hour)`. There is no line per refused request.
-- **Answer length.** A counted call sends `max_tokens` = `replyMaxTokens` unchanged, whatever the language of the request (3000 by default, 1 to 250000 tokens). The connection test and the model list keep their own request bodies. An OpenAI-compatible provider that refuses the field (400 or 422 naming `max_tokens`, before any stream event) is asked again within the same call with `max_completion_tokens`, then without a limit. A Responses connection sends `max_output_tokens` (at least 16) and, when the provider refuses it, is asked once more without a limit; with an unlimited setting no field is sent. An Anthropic provider that refuses `max_tokens` is asked again with the stored test value when that is smaller. The retries belong to the same call: it counts once against the caps and writes one usage row. The step that worked is remembered per settings until the next restart. An answer that reaches the limit ends `done` with `truncated: true` (the note is shown in AI Chat); raise `replyMaxTokens` for long answers, or for models that think before they answer (their thinking counts too).
+- **Answer length.** A counted call sends `max_tokens` = `replyMaxTokens` unchanged, whatever the language of the request (3000 by default, 1 to 250000 tokens). *(v2.7)* When the call sends a thinking strength, the limit sent is this value plus room for thinking (2048 for the lowest two levels, 4096 for medium, 8192 above, at most 32 768; an Anthropic-format route stays within its own ceiling), so this stays the budget of the visible answer. The connection test and the model list keep their own request bodies. An OpenAI-compatible provider that refuses the field (400 or 422 naming `max_tokens`, before any stream event) is asked again within the same call with `max_completion_tokens`, then without a limit. A Responses connection sends `max_output_tokens` (at least 16) and, when the provider refuses it, is asked once more without a limit; with an unlimited setting no field is sent. An Anthropic provider that refuses `max_tokens` is asked again with the stored test value when that is smaller. The retries belong to the same call: it counts once against the caps and writes one usage row. The step that worked is remembered per settings until the next restart. An answer that reaches the limit ends `done` with `truncated: true` (the note is shown in AI Chat); raise `replyMaxTokens` for long answers, or for models that think before they answer (their thinking counts too).
 - **Other limits.** A message is at most 16 000 characters (fixed, not a setting). A memory is counted in estimated tokens (`memoryTokens`, 200 by default): ASCII letters 1/4 token each, other characters 3/2 each, since the service has no tokenizer. Existing messages and memories are never cut when a limit is lowered.
 
 ### 5.7 AI-generated banks, file import and feature permissions (v1.1)
@@ -1321,6 +1338,13 @@ Only the AI routes change, and every change is additive or a default; the other 
 - **Removed**: `popular` of `GET /api/dashboard`; `GET /api/ai/assess/saved`.
 - **Version**: `GET /api/info` reports `"version": "2.6"`, and the AI service's `/healthz` as well. The main database is schema 12 (section 6.19 of [database.md](database.md)); the AI database stays at schema 11 with additive changes (section 8.2k).
 
+### Changes in v2.7 (relative to v2.6)
+
+- **New**: `GET /api/users/records?user=` and `GET /api/users/record?user=&id=` (administrators, read only; activity action `users.viewRecords`); the AI code `ai.assess.unusable`.
+- **Changed**: the assessment (`POST /api/ai/assess/ask`) is asked as a whole answer, cleaned, checked and retried up to 3 calls, and arrives as one `delta` event; `GET /api/ai/assess/latest` hides a saved text that fails today's checks; a call with a thinking strength gets extra token room (section 5.5).
+- **Unchanged**: every other route, field and message; the databases (main schema 12, AI schema 11); the wire between the backend and ai-service.
+- **Version**: `GET /api/info` reports `"version": "2.7"`, and the AI service's `/healthz` as well.
+
 ## 8. Examples
 
 ```bash
@@ -1337,6 +1361,10 @@ curl -s -b cookies.txt http://localhost:8765/api/auth/state
 # Set or change your username (v2.6)
 curl -s -b cookies.txt -X POST http://localhost:8765/api/auth/name \
   -H 'Content-Type: application/json' -d '{"displayName": "Ann"}'
+
+# As an administrator: the study records of user 2, and one of them (v2.7, read only)
+curl -s -b cookies.txt 'http://localhost:8765/api/users/records?user=2'
+curl -s -b cookies.txt 'http://localhost:8765/api/users/record?user=2&id=7'
 
 # Upload a six-column workbook as a new bank (you only get a preview; nothing is written to the database)
 curl -s -b cookies.txt -X POST http://localhost:8765/api/upload \

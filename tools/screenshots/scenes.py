@@ -74,7 +74,7 @@ one-row practice bar, a collapsible AI+ panel under the card, a centered GitHub 
                         password row (an e-mail login, never the fresh-install "admin")
   iphone-10-profile     (v2.6) the Profile page on a phone
   iphone-9-study        (v2.5) the Exam & practice page with the latest card (one-row actions) and the start bar
-  iphone-2-quiz         an exam: compact top row, one-row bar (previous, Next, flag), collapsed answer sheet
+  iphone-2-quiz         an exam: compact top row, one-row bar (previous, Next, flag), the "1 / n" button that opens the answer sheet drawer
   iphone-3-menu         the menu
   iphone-4-records      Study records: compact KPIs, folded filters, three-row cards
   iphone-5-ai-hint      the practice page with the AI+ panel expanded on the AI hint, scrolled into view under the top row

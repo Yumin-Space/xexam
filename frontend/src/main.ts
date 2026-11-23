@@ -59,6 +59,12 @@ function page(): { el: HTMLElement; title: string } {
       return isAdmin()
         ? { el: renderUsers(), title: t('users.title') }
         : { el: renderForbidden('forbidden.users'), title: t('forbidden.title') };
+    case 'userRecords':
+    case 'userRecord':
+      // v2.7: an administrator reads a user's study records (read only); the server refuses everyone else too
+      return isAdmin()
+        ? { el: renderRecords(r), title: t('nav.records') }
+        : { el: renderForbidden('forbidden.users'), title: t('forbidden.title') };
     case 'logs':
       // Administrators only (v0.7); bank managers and users see why they cannot open it
       return isAdmin()

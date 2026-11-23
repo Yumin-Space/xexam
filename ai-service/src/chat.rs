@@ -828,6 +828,344 @@ pub async fn run(g: Generation) {
     drop(slot);
 }
 
+// —— the study assessment: whole answer, check, retry ————————————————————————————————————————————————————————————————
+
+/// Upstream calls one assessment request may make (the first and at most two retries).
+pub const ASSESS_ATTEMPTS: usize = 3;
+/// The wait before the retry that follows a transient upstream error.
+const ASSESS_TRANSIENT_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// What the assessment needs: the places, the prompt and the language the answer is checked in.
+pub struct AssessRun {
+    pub app: AppState,
+    pub slot: Slot,
+    pub permit: GatePermit,
+    pub who: Identity,
+    pub chat: i64,
+    pub message: i64,
+    pub route: crate::route::Route,
+    pub system: String,
+    pub turns: Vec<provider::Turn>,
+    pub lang: crate::prompt::Lang,
+    /// 1 for the first request of the day; above 1 the gateway cache is bypassed
+    pub day_attempt: u32,
+    pub frames: UnboundedSender<Frame>,
+}
+
+/// Watches Stop, shutdown and the access re-check around one awaited call (the same rules as [`run`]).
+struct Watch {
+    cancel: watch::Receiver<Option<StopReason>>,
+    shutdown: watch::Receiver<bool>,
+    access: tokio::time::Interval,
+    check: Option<tokio::task::JoinHandle<Result<Option<SessionUser>, LinkError>>>,
+    failures: u32,
+}
+
+impl Watch {
+    fn new(app: &AppState, slot: &Slot) -> Watch {
+        let t = app.0.timeouts;
+        let start = tokio::time::Instant::now();
+        let mut access = tokio::time::interval_at(start + t.access_interval, t.access_interval);
+        access.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        Watch {
+            cancel: slot.cancel.clone(),
+            shutdown: app.0.shutdown.clone(),
+            access,
+            check: None,
+            failures: 0,
+        }
+    }
+
+    /// Runs `fut`; `Err` when the request has to stop first.
+    async fn run<T>(
+        &mut self,
+        app: &AppState,
+        who: &Identity,
+        fut: impl std::future::Future<Output = T>,
+    ) -> Result<T, StopReason> {
+        tokio::pin!(fut);
+        loop {
+            if let Some(r) = *self.cancel.borrow_and_update() {
+                return Err(r);
+            }
+            if *self.shutdown.borrow_and_update() {
+                return Err(StopReason::Shutdown);
+            }
+            tokio::select! {
+                biased;
+                r = self.cancel.changed() => {
+                    if r.is_err() {
+                        return Err(StopReason::Shutdown);
+                    }
+                }
+                r = self.shutdown.changed() => {
+                    if r.is_err() {
+                        return Err(StopReason::Shutdown);
+                    }
+                }
+                out = &mut fut => return Ok(out),
+                res = join_opt(&mut self.check), if self.check.is_some() => {
+                    self.check = None;
+                    match res {
+                        Some(Ok(Some(u))) if access_ok(who, &u) => {
+                            self.failures = 0;
+                            if !who.is_admin() && suspended_now(app, who.id) {
+                                return Err(StopReason::Suspended);
+                            }
+                        }
+                        Some(Ok(_)) => return Err(StopReason::NotAllowed),
+                        _ => {
+                            self.failures += 1;
+                            if self.failures >= 3 {
+                                return Err(StopReason::BackendDown);
+                            }
+                        }
+                    }
+                }
+                _ = self.access.tick() => {
+                    if self.check.is_none() {
+                        let link = app.0.link.clone();
+                        let sid = who.sid.clone();
+                        let id = who.id;
+                        self.check = Some(tokio::spawn(async move { link.introspect(&sid, id).await }));
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl Drop for Watch {
+    fn drop(&mut self) {
+        if let Some(h) = self.check.take() {
+            h.abort();
+        }
+    }
+}
+
+/// How one upstream attempt of the assessment ended.
+enum AttemptEnd {
+    /// A cleaned answer that passed the checks
+    Good,
+    /// A reply that was refused (checks, cut off, empty) or a transient error: ask again
+    Retry,
+    /// An upstream error that asking again will not fix
+    Fail(UpError),
+    Stopped(StopReason),
+}
+
+/// The assessment: asks for the WHOLE answer, collects it, cleans and checks it and only then sends it (one `delta`
+/// frame, then `done`). A refused or cut-off reply and a transient upstream error are asked again, at most
+/// [`ASSESS_ATTEMPTS`] calls in all; then `ai.assess.unusable` and nothing is saved. Every call writes its own usage
+/// row; the user's call caps count the request once (they are taken before this runs).
+pub async fn run_assess(a: AssessRun) {
+    let AssessRun {
+        app,
+        slot,
+        permit,
+        who,
+        chat,
+        message,
+        route,
+        system,
+        turns,
+        lang,
+        day_attempt,
+        frames,
+    } = a;
+    let t = app.0.timeouts;
+    let mut watch = Watch::new(&app, &slot);
+    let mut no_effort = false;
+    let mut good: Option<(String, Option<i64>, Option<i64>)> = None;
+    let mut ended: Option<AttemptEnd> = None;
+
+    for n in 1..=ASSESS_ATTEMPTS {
+        let started = Instant::now();
+        let sys = if n > 1 {
+            format!("{system}\n\n{}", crate::study::assess::ASSESS_RETRY_NOTE)
+        } else {
+            system.clone()
+        };
+        let whole = !app.0.no_whole_of(&route.key);
+        let planned = app.0.target(&route).map_err(|_| ()).and_then(|target| {
+            let spec = provider::ChatSpec {
+                model: &route.model,
+                system: &sys,
+                turns: &turns,
+                usage_option: route.usage_option != 0,
+                skip_cache: day_attempt > 1 || n > 1,
+                prefix: None,
+                cache: true,
+                schema: None,
+                effort: if no_effort { None } else { route.effort },
+                whole,
+            };
+            app.chat_plan(&route, &target, &spec).map_err(|_| ())
+        });
+        let Ok(plan) = planned else {
+            // the request could not even be built: nothing was sent
+            tracing::warn!("an AI assessment could not build its request");
+            ended = Some(AttemptEnd::Fail(UpError::new(UpCode::Protocol, None)));
+            break;
+        };
+        let was_whole = whole && route.format == crate::settings::Format::OpenAi;
+        let call = provider::collect_chat(&app.0.client, plan, t, t.total);
+        let res = watch.run(&app, &who, call).await;
+        let mut row = stats::UsageRow {
+            connection_id: Some(route.connection_id),
+            connection: Some(route.connection_name.clone()),
+            user_id: Some(who.id),
+            at: crate::util::unix_now(),
+            kind: "chat",
+            provider: route.provider.as_str(),
+            model: route.model.clone(),
+            tokens_in: None,
+            tokens_out: None,
+            tokens_cached: None,
+            tokens_cache_write: None,
+            latency_ms: ms(started.elapsed()),
+            first_byte_ms: None,
+            status: "ok",
+            error_code: None,
+        };
+        let end = match res {
+            Err(reason) => {
+                row.status = "stopped";
+                AttemptEnd::Stopped(reason)
+            }
+            Ok(Err(e)) => {
+                row.status = "error";
+                row.error_code = Some(e.code.short().to_string());
+                app.0.failures.note(&who.username, e.code.code(), e.http);
+                app.0.note_outcome(&route, Some(e.code));
+                let slow_whole =
+                    was_whole && (e.code == UpCode::Timeout || matches!(e.http, Some(504 | 524)));
+                if slow_whole {
+                    // a proxy that cuts a quiet response: the next try streams and collects
+                    app.0.remember_no_whole(&route.key);
+                }
+                if slow_whole || (crate::gen::run::transient(e.code.code()) && !e.daily) {
+                    AttemptEnd::Retry
+                } else {
+                    AttemptEnd::Fail(e)
+                }
+            }
+            Ok(Ok(c)) => {
+                row.tokens_in = c.tokens_in;
+                row.tokens_out = c.tokens_out;
+                row.tokens_cached = c.tokens_cached;
+                row.tokens_cache_write = c.tokens_cache_write;
+                row.first_byte_ms = c.first_byte_ms;
+                app.0.note_outcome(&route, None);
+                let cleaned = crate::study::assess_check::clean_assess(&c.text);
+                let verdict = crate::study::assess_check::check_assess(&cleaned, lang);
+                if !c.truncated && verdict.is_ok() {
+                    good = Some((cleaned, c.tokens_in, c.tokens_out));
+                    AttemptEnd::Good
+                } else {
+                    // the reason only, never the text
+                    tracing::info!(
+                        "an AI assessment reply was refused (attempt {n}): truncated={}, check={:?}",
+                        c.truncated,
+                        verdict.err()
+                    );
+                    if c.truncated {
+                        // thinking probably ate the output budget: the next try sends no strength
+                        no_effort = true;
+                    }
+                    AttemptEnd::Retry
+                }
+            }
+        };
+        // Only the first attempt is a counted `usage` row: a retry is a `gen_calls` row (visible in the statistics, outside
+        // the per-user call caps), so one request counts once.
+        let saved = app.0.store.write(|tx| {
+            if n == 1 {
+                stats::insert_usage_purpose(tx, &row, Some("summary"))?;
+                stats::mark_assess_usage(tx, message)
+            } else {
+                stats::insert_assess_retry(tx, &row)
+            }
+        });
+        if let Err(e) = saved {
+            tracing::error!("could not save the usage of an AI assessment call: {e}");
+        }
+        let retry = matches!(end, AttemptEnd::Retry);
+        let was_error = row.status == "error";
+        ended = Some(end);
+        if !retry {
+            break;
+        }
+        // a transient upstream error waits a little before the next call (Stop still ends the wait)
+        if was_error && n < ASSESS_ATTEMPTS {
+            if let Err(reason) = watch
+                .run(&app, &who, tokio::time::sleep(ASSESS_TRANSIENT_WAIT))
+                .await
+            {
+                ended = Some(AttemptEnd::Stopped(reason));
+                break;
+            }
+        }
+    }
+
+    let now = crate::util::unix_now();
+    let (status, code, text, tin, tout): (&str, Option<String>, String, Option<i64>, Option<i64>) =
+        match (ended, good) {
+            (Some(AttemptEnd::Good), Some((text, tin, tout))) => ("done", None, text, tin, tout),
+            (Some(AttemptEnd::Stopped(r)), _) => match r.code() {
+                None => ("stopped", None, String::new(), None, None),
+                Some(c) => ("error", Some(c.to_string()), String::new(), None, None),
+            },
+            (Some(AttemptEnd::Fail(e)), _) => (
+                "error",
+                Some(e.code.code().to_string()),
+                String::new(),
+                None,
+                None,
+            ),
+            _ => (
+                "error",
+                Some("ai.assess.unusable".to_string()),
+                String::new(),
+                None,
+                None,
+            ),
+        };
+    let saved = app.0.store.write(|tx| {
+        data::finish_answer(tx, message, &text, status, code.as_deref(), false, now)?;
+        data::touch_chat(tx, chat, now)?;
+        // only a checked text ever reaches the capsule (a no-op unless the status is `done`)
+        data::save_assess_latest(tx, message, status, &text, &route.model, now)?;
+        Ok::<(), rusqlite::Error>(())
+    });
+    if let Err(e) = saved {
+        tracing::error!("could not save the end of an AI assessment: {e}");
+    }
+    if status == "done" {
+        let _ = frames.send(Frame {
+            event: "delta",
+            data: json!({ "text": text }),
+        });
+        let _ = frames.send(Frame {
+            event: "done",
+            data: json!({"status": "done", "tokensIn": tin, "tokensOut": tout, "truncated": false}),
+        });
+    } else if let Some(c) = &code {
+        let _ = frames.send(Frame {
+            event: "error",
+            data: json!({"status": "error", "code": c, "error": text_of(c)}),
+        });
+    } else {
+        let _ = frames.send(Frame {
+            event: "stopped",
+            data: json!({"status": "stopped"}),
+        });
+    }
+    drop(frames);
+    drop(permit);
+    drop(slot);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

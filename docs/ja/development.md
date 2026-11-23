@@ -73,7 +73,7 @@ cargo tree -e normal --target all | grep -E 'aws-lc|openssl-sys|native-tls'   # 
 cd frontend
 npm ci
 npm run typecheck      # アプリを tsc でチェックし、続いてテストファイルをチェック（tsconfig.test.json）
-npm test               # 単体テスト：API クライアント（Nginx の 429 とそのやり直し、制限時間、AI のストリームとエラー
+npm test               # （v2.7 から src/*.test.ts のファイル、ルーターのテストを含みます）単体テスト：API クライアント（Nginx の 429 とそのやり直し、制限時間、AI のストリームとエラー
                        # コード）、採点とランダムな出題、練習の答え合わせ、保存した結果、言語の規則、記録の絞り込み、
                        # ロックの説明と待ち時間、インポートの警告、システムログのバッファ、問題集の状態、問題集へのアクセス、保存した試験、
                        # 設定のキャッシュ、イベントストリームのパーサー、AI チャットの状態、回答の Markdown、メモの要求、

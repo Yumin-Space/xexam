@@ -6,7 +6,11 @@ import { defineCatalog } from '../define.ts';
 export default defineCatalog({
   en: {
     'records.title': 'Study records',
-    'records.more': 'Show more ({n} left)',
+    'records.range': 'Showing {from}–{to} of {total}',
+    'records.target.title': '{name}’s study records',
+    'records.target.back': 'Back to User management',
+    'records.target.note': 'View only',
+    'records.target.empty': 'This user has no study records yet',
     'records.jump.title': 'Question numbers',
     'records.wrong.leftChip': '{n} to go',
     'records.reviewWrong': 'Review wrong answers',
@@ -83,6 +87,8 @@ export default defineCatalog({
 
     'records.detail.title': 'Exam record',
     'records.detail.titlePractice': 'Practice record',
+    'records.target.detailTitle': '{name}’s exam record',
+    'records.target.detailTitlePractice': '{name}’s practice record',
     'records.detail.loading': 'Loading this record…',
     'records.detail.notFound': 'Record not found',
     'records.detail.loadFailed': 'This record could not be loaded',
@@ -126,7 +132,11 @@ export default defineCatalog({
   },
   zh: {
     'records.title': '学习记录',
-    'records.more': '显示更多（还有 {n} 条）',
+    'records.range': '第 {from}–{to} 条，共 {total} 条',
+    'records.target.title': '{name} 的学习记录',
+    'records.target.back': '返回用户管理',
+    'records.target.note': '仅供查看',
+    'records.target.empty': '这位用户还没有学习记录',
     'records.jump.title': '题号',
     'records.wrong.leftChip': '还差 {n} 次',
     'records.reviewWrong': '复习错题',
@@ -198,6 +208,8 @@ export default defineCatalog({
 
     'records.detail.title': '考试详情',
     'records.detail.titlePractice': '练习详情',
+    'records.target.detailTitle': '{name} 的考试详情',
+    'records.target.detailTitlePractice': '{name} 的练习详情',
     'records.detail.loading': '正在读取这条记录…',
     'records.detail.notFound': '找不到这条记录',
     'records.detail.loadFailed': '这条记录没能读取出来',
@@ -236,7 +248,11 @@ export default defineCatalog({
   },
   ja: {
     'records.title': '学習記録',
-    'records.more': 'さらに表示（残り {n} 件）',
+    'records.range': '{total} 件中 {from}–{to} 件',
+    'records.target.title': '{name} さんの学習記録',
+    'records.target.back': 'ユーザー管理に戻る',
+    'records.target.note': '閲覧のみ',
+    'records.target.empty': 'このユーザーにはまだ学習記録がありません',
     'records.jump.title': '問題番号',
     'records.wrong.leftChip': 'あと {n} 回',
     'records.reviewWrong': '間違えた問題を復習',
@@ -308,6 +324,8 @@ export default defineCatalog({
 
     'records.detail.title': '試験記録',
     'records.detail.titlePractice': '練習記録',
+    'records.target.detailTitle': '{name} さんの試験記録',
+    'records.target.detailTitlePractice': '{name} さんの練習記録',
     'records.detail.loading': 'この記録を読み込んでいます…',
     'records.detail.notFound': '記録が見つかりません',
     'records.detail.loadFailed': 'この記録を読み込めませんでした',

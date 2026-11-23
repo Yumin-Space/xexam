@@ -1367,12 +1367,22 @@ pub fn save_assess_latest(
     let Some(line) = stored.as_deref().and_then(parse_assess_line) else {
         return Ok(false);
     };
+    // A capsule of the same day that no longer passes today's checks (an older version's garbled text, hidden from the
+    // viewer) did not use up a run: the new good text starts the day's count again.
+    let hidden_today = assess_latest(c, user)?.is_some_and(|p| {
+        p.day == day
+            && crate::study::assess_check::check_assess(
+                &p.content,
+                crate::prompt::Lang::parse(&p.lang).unwrap_or(crate::prompt::Lang::Zh),
+            )
+            .is_err()
+    });
     c.execute(
         "INSERT INTO assess_latest (user_id, content, lang, model, latest_at, records, answered, day, created_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
          ON CONFLICT(user_id) DO UPDATE SET content = excluded.content, lang = excluded.lang, model = excluded.model,
            latest_at = excluded.latest_at, records = excluded.records, answered = excluded.answered,
-           runs = CASE WHEN assess_latest.day = excluded.day THEN assess_latest.runs + 1 ELSE 1 END,
+           runs = CASE WHEN ?10 = 1 THEN 1 WHEN assess_latest.day = excluded.day THEN assess_latest.runs + 1 ELSE 1 END,
            day = excluded.day, created_at = excluded.created_at",
         params![
             user,
@@ -1383,7 +1393,8 @@ pub fn save_assess_latest(
             line.records,
             line.answered,
             day,
-            now
+            now,
+            i64::from(hidden_today)
         ],
     )?;
     Ok(true)

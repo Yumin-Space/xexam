@@ -45,6 +45,8 @@
 | GET | `/api/banks/download` | 可下载题库 | 把一个题库下载为 `.xlsx`（六列导入格式）或 `.docx` *(v1.6)* | 否 |
 | POST | `/api/banks/delete` | 可管理题库 | 删除题库（可以连同学习数据） *(v0.5)* | 是 |
 | GET | `/api/users` | 管理员 | 所有账户，带权限和登录锁定 *(v0.6)* | 否 |
+| GET | `/api/users/records?user=<int>` | 管理员 | 另一个用户的学习记录，只读 *(v2.7)* | 否（一条活动记录） |
+| GET | `/api/users/record?user=<int>&id=<int>` | 管理员 | 另一个用户的一条学习记录及详情，只读 *(v2.7)* | 否（一条活动记录） |
 | POST | `/api/users/create` | 管理员 | 添加用户 *(v0.6)* | 是 |
 | POST | `/api/users/update` | 管理员 | 改名、改角色、停用或启用用户、设置他的题库和权限 *(v0.6)* | 是 |
 | POST | `/api/users/password` | 管理员 | 给别的用户一个新的初始密码 *(v0.6)* | 是 |
@@ -239,6 +241,14 @@ flowchart LR
 | `triesLeft` | 正在进行的那一轮里，下次锁定之前还能失败几次（锁定期间是 `0`） |
 | `knownBrowser` | `true`：显示的状态统计的是这个用户以前登录过的浏览器上的登录；`false`：其他所有浏览器上的。两者都在计数时，显示限制得更厉害的那一个 |
 | `otherUntil` / `otherRetryAfter` | 只有另一类浏览器同时也被锁定、账户在所有浏览器上都被锁定时才有值：那第二个锁定的结束时间和秒数（否则是 `null` / `0`） |
+
+### `GET /api/users/records?user=<int>` *(v2.7)*
+管理员，只读。用户 `user` 的学习记录，给用户管理打开的 **学习记录** 页面用。返回内容和该用户的 `GET /api/records` 一样（`{"records": [RecordSummary, …], "retention": 500}`，最新的在前，保留的每一条记录），多一个键 `user`：`{"id": <int>, "username": "<登录名>", "displayName": "<用户名>" | null}`。对每个账户都有效，包括其他管理员和调用者自己。`user` 必须是恰好一个查询参数，1–18 位 ASCII 数字（百分号编码会被解码）→ 否则 **400** `请求的格式不对。`；用户不存在 → **404** `这个用户不存在（可能已被删除），请刷新页面后再试。`。普通用户得到 **403** `只有管理员可以进行这个操作。`。
+
+读取列表会写一条活动记录 `users.viewRecords`（对象：该用户的登录名，没有详情）；`HEAD` 不写，用 `offset` 大于 0 或 `page` 大于 1 要的后面几页也不写（页面本身两者都不发）。没有任何路由能删除、重考或复习另一个用户的记录，`GET /api/records`、`GET /api/record` 和 `POST /api/records/delete` 仍然只针对调用者自己。
+
+### `GET /api/users/record?user=<int>&id=<int>` *(v2.7)*
+管理员，只读。用户 `user` 的一条记录，和 `GET /api/record?id=` 的返回一样（`{"record": RecordSummary, "items": [...]}`），按能看到所有题库的查看者来返回，所以只有题目已经不存在时它才是 `null`，另外还有上面那个 `user` 键。`record` **没有** `sessionKey`，也**没有** `startedAt`（用户 AI 对话的键不会发出去）。`user` 和 `id` 都必须是恰好一个查询参数，1–18 位 ASCII 数字 → 否则 **400** `请求的格式不对。`；用户不存在 → **404** `这个用户不存在（可能已被删除），请刷新页面后再试。`；`id` 不存在，或者那条记录属于别的用户 → **404** `这条考试记录不存在（可能已被删除），请刷新页面后再试。`。成功的读取（不是 `HEAD`）会写 `users.viewRecords`，详情是 `{"record": <id>}`。
 
 ### `POST /api/users/create` *(v0.6)*
 管理员。请求体：`{"username": "…", "password": "…", "role": "admin" | "user", "banks": "all" | [<题库 id>, …], "newBanks": <bool>, "canManageBanks": <bool>, "ai": <bool>}`。*(v0.7)* `banks` 默认是 `[]`（管理员选好之前，新用户看不到任何题库），`newBanks` 默认是 `false`，`canManageBanks` 默认是 `false`；*(v0.8)* `ai`（**AI+**）默认是 `false`。用 `ai: true` 创建用户时，也会记录 `user "<admin>" turned AI+ on for user "<name>"`；*(v0.8，第二轮)* AI+ 不可用时（见上面的 `aiAvailable`）它会被拒绝，回答 **409** `ai.serviceOff`，并且不创建用户。`ai: false` 或者不带 `ai` 照常工作。`"banks": "all"` 是一种简写：现在存在的所有题库，并且在没有给出 `newBanks` 时同时设置 `newBanks: true`。重复的 id 会被忽略。新账户是启用的，第一次登录时必须设置新密码。回答：和 `GET /api/users` 一样的 `{"users": [...]}`。
@@ -528,6 +538,7 @@ flowchart LR
 - **`POST /api/activity/visit`** `{"page": "home"}`（已登录；`page` 是 `home`、`study`、`banks`、`users`、`logs`、`records`、`record`、`wrong`、`settings`、`profile`、`about`、`quiz`、`result`、`ai`、`aiSettings` 之一，否则 400）：管理员会被记录，用户只在设置打开时记录；每个用户每分钟最多写 30 次。
   - *(v2.5)* `study` 是 **考试&练习** 页面；`home` 现在指仪表盘。以前用 `home` 写下的记录仍显示为 **主页**。
   - *(v2.6)* `profile` 是 **个人资料** 页面。活动记录还多了操作 `auth.name`（**设置用户名**，`POST /api/auth/name`；详情 `{"oldName", "newName"}`）。
+  - *（v2.7）* 活动记录还多了操作 `users.viewRecords`（**查看用户学习记录**）：管理员读了另一个用户的记录列表或某一条记录（对象：那个用户的登录名；读一条记录时详情是 `{"record": <id>}`）。
 - **`POST /api/attempt`**：同一次保存的重复（相同的 `key`、`startedAt` 和种类）什么都不写，回答第一次的结果再加 `"duplicate": true`。
 - **`GET /api/bank`**、**`GET /api/banks`**：响应带 `ETag` 和 `Cache-Control: private, no-cache`；`If-None-Match` 匹配时回答不带正文的 `304`。
 
@@ -786,6 +797,7 @@ data: {"status":"done","tokensIn":38,"tokensOut":112,"truncated":false}
 | `ai.hintLeak` | （流里） | *(v0.9)* 这个提示会透露答案，已被拦下（文字 `这个提示透露了答案，已被隐藏。请重新生成。`；带 `withdraw: true`）。 |
 | `ai.noWrong` | 409 | *(v0.9)* 这条记录没有可总结的答错的题（文字 `这次没有答错的题（未作答的题不计入 AI 总结）。`）。 |
 | `ai.assessFew` | 409 | *(v2.5)* 已保存的学习记录不足 3 条，没有可评估的内容（文字 `学习记录太少，至少需要 3 条。`）。 |
+| `ai.assess.unusable` | （事件流） | *（v2.7）* AI 在 3 次调用里都没有给出可用的评估（文字 `AI 这次没有给出合适的评估，请稍后再试。`）。什么都不保存，当天的次数也不会用掉。 |
 | `ai.assessDaily` | 409 | *(v2.6)* 用户今天的 AI 学习评估次数已用完（`assessPerDay`；文字 `今天的 AI 学习评估次数已用完，明天再来吧。`）。 |
 | `ai.noUsable` | 409 | *(v0.9)* 这条记录里每道答错的题，要么已被删除，要么用户已经看不到它（文字 `这些答错的题已经不可用（题库已删除或没有访问权限），无法总结。`）。 |
 | `ai.noDetail` | 409 | *(v0.9)* 这条记录没有逐题详情（在 v0.5 之前保存；文字 `这条记录没有逐题记录，无法总结。`）。 |
@@ -901,6 +913,10 @@ data: {"chatId":12,"chatTitle":"2026-11-12 09:30","userMessageId":41,"assistantM
 
 检查的顺序：验证请求、`send` 的 AI 用户检查、从后端取数字（已保存的记录不足 3 条时 409 `ai.assessFew`），然后是每天的限制（409 `ai.assessDaily`，在占用任何位置或保存任何东西之前），然后像 `send` 一样处理对话和位置。对话以引用 `assess@<本地日期>`（接受请求的那一天）、以该日期为标题存成 `summary` 对话，每天一个（同一天再问一次，会在里面追加一对）；所有列表里它的类型都是 `assess`，保存的用户消息是机器行 `[AI assessment] latest=<YYYY-MM-DD HH:MM> 30d <records>r <answered>q`，界面上用标签代替它。`start` 事件里 `chatKind` 和 `kind` 是 `assess`，`questionId`、`questionNo`、`source`、`recordId`、`sample` 是 `null`，另有 `lang` 和 `basis`（`{"days", "records", "answered", "latestAt"}`）。回答以 `done` 结束并且有文字时，它也成为用户的**最新评估**（`GET /api/ai/assess/latest`），和对话分开保存：删除对话、**删除全部对话**、管理员清除和保留期都不会删掉它；删除用户会删掉它。
 
+*（v2.7）* **回答完整而且经过检查。** 提示词重写了：模型拿到的是 ai-service 根据数字算好的带标签的普通事实（例如答对的百分比、最活跃的星期几、每周数量的走势、最长的间隔），从不是原始数组，要求写一段三四句话的短文，不规定确切的字数，不计数，不写草稿、列表、Markdown 和表情符号。ai-service 向服务商要**完整**的回答（OpenAI 兼容的路线；其他格式在上游是流式的，再收集起来），先清理（推理片段、代码围栏、Markdown 标记、包住全文的引号、换行），再检查：不能为空，30 到 260 个字（zh / ja）或 15 到 170 个词（en），主要是要求的语言，以句末标点结束，没有 `字(12)` 这样的计数、`Total length:` 或 `Verify Constraints` 这样的过程文字，也不是列表。通过后，事件流只送一个带完成文字的 `delta` 事件，然后是 `done`（`truncated` 为 `false`）；`start` 事件和以前一样。通不过检查的回答、在 token 上限处被截断的回答（下一次调用不带思考强度）和临时的上游错误（隔 2 秒再来一次）会重新要，**一共最多 3 次调用**。不是暂时性的上游错误会立刻以它自己的代码结束这次请求（和其他 AI 回答一样）；只有 3 次调用都用完了才用 `ai.assess.unusable`。没有哪次给出可用文字时，事件流以代码为 `ai.assess.unusable` 的 `error` 事件结束，助手消息存成错误，不会成为最新的评估，当天的次数也**不会**用掉。停止会立刻结束这次尝试，什么也不保存。重试不计入每用户的请求上限（第 5.6 节）：这个请求只算一次，也就是第一次调用。每次调用的 token 都有记录，重试的也在 `assess` 功能的用量里。
+
+*（v2.7）* **思考空间。** 一次调用带思考强度时，发给上游的 token 上限是**每条回答最多 Token 数**加上思考的空间，因为很多模型把思考算在 `max_tokens` 里：该强度系列最低的两档（以及 `low`、`minimal`、`none`）加 2048，`medium` 加 4096，更高的档加 8192，最多 32 768。Anthropic 格式的路线受这条路线自己的 token 上限（4096 或 8192，来自 token 阶梯）限制，但不会低于回复上限本身。没有强度时上限就是回复上限，不变。这适用于所有经过对话计划的调用：AI 对话、提示、解析、总结、评估和记忆建议；AI 出题和导入有自己的预算。
+
 #### `GET /api/ai/assess/latest` *(v2.6)*
 
 取代 v2.5 的 `GET /api/ai/assess/saved`（已删除；现在回答 404 `ai.notFound`）。没有查询参数。只需要**已签名**：读已保存的文字不需要 AI+ 功能，也不调用后端。
@@ -913,6 +929,7 @@ data: {"chatId":12,"chatTitle":"2026-11-12 09:30","userMessageId":41,"assistantM
 - `today`：ai-service 的本地日期（`YYYY-MM-DD`）。
 - `running`：今天还有一份评估正在生成时是 `true`（例如在另一个标签页里）。
 - `perDay` 和 `remaining`：调用者的限额和今天还剩的成功次数；调用者不受限制时（`assessAdminsExempt` 为 1 时的管理员）两者都是 `null`。
+- *（v2.7）* 通不过今天检查的已保存文字（计数、草稿、被截断：v2.5 或 v2.6 的文字）会被隐藏：`assess` 是 `null`，就像从没保存过一样，今天产生它的那次也不计入 `perDay`（下一次好的评估重新开始当天的计数）。什么都不删除、不迁移。
 
 #### 忙碌的回答
 
@@ -935,7 +952,7 @@ data: {"chatId":12,"chatTitle":"2026-11-12 09:30","userMessageId":41,"assistantM
   `cap` 是 `minute`、`hour` 或 `day`：最后一个释放的上限。`limit` 是它的值。`retryAt` 是它释放的 unix 秒数（对于 `day`，是服务器时区的下一个 0 点）。`retryAfter` 是从现在起的整秒数，至少为 1。文字里会说出是哪个上限；天上限以「明天 0 点后可以再次使用。」结尾。客户端按 `code` 翻译，从不按文字。什么都不保存，发送者保留它发出的文字。流开始之前，拒绝是普通的 JSON，和 `ai.busy` 一样。Nginx 自己的 429（第 5.1 节）不是 JSON，是另一个上限。
 - **计数。** 当 AI+ 对你可用时，`GET /api/ai/status` 有 `calls`（见上面的 Shapes）。`GET /api/ai/admin/users` 和 `GET /api/ai/admin/user` 的管理员行有 `calls`（`used`、`blocked`）。`GET /api/ai/admin/usage` 中带用户 id 的每个 `byUser` 行有 `today`。
 - **日志。** 用户达到某个上限时，系统日志里在该上限释放之前写一行：`user "<name>" reached the AI request cap (20 per hour)`。每个被拒绝的请求不写一行。
-- **回答长度。** 一次计入的调用把 `replyMaxTokens`（默认 3000，1 到 250000 个 Token）原样作为 `max_tokens` 发出，与请求的语言无关。连接测试和模型列表保留它们自己的请求体。如果 OpenAI 兼容服务商拒绝这个字段（400 或 422，并点名 `max_tokens`，发生在任何流事件之前），会在同一次调用里改用 `max_completion_tokens` 再试一次，然后不设上限再试。OpenAI Responses 连接发出 `max_output_tokens`（至少 16），服务商拒绝时不设上限再试一次；设为不限时不发这个字段。如果 Anthropic 服务商拒绝 `max_tokens`，会改用已保存的测试值（当它更小时）再试一次。重试属于同一次调用：它只按上限计一次，只写一行用量。成功的那一步会按设置记住，直到下一次重启。达到上限的回答以 `done` 结束，并带 `truncated: true`（AI 对话里会显示提示）；长回答，或对会先思考再回答的模型，请调高 `replyMaxTokens`（它们的思考也计入）。
+- **回答长度。** 一次计入的调用把 `replyMaxTokens`（默认 3000，1 到 250000 个 Token）原样作为 `max_tokens` 发出，与请求的语言无关。 *（v2.7）* 调用带思考强度时，发出的上限是这个值再加上思考的空间（最低两档 2048，medium 4096，更高的 8192，最多 32 768；Anthropic 格式的路线不超过它自己的上限），所以它仍是可见回答的预算。连接测试和模型列表保留它们自己的请求体。如果 OpenAI 兼容服务商拒绝这个字段（400 或 422，并点名 `max_tokens`，发生在任何流事件之前），会在同一次调用里改用 `max_completion_tokens` 再试一次，然后不设上限再试。OpenAI Responses 连接发出 `max_output_tokens`（至少 16），服务商拒绝时不设上限再试一次；设为不限时不发这个字段。如果 Anthropic 服务商拒绝 `max_tokens`，会改用已保存的测试值（当它更小时）再试一次。重试属于同一次调用：它只按上限计一次，只写一行用量。成功的那一步会按设置记住，直到下一次重启。达到上限的回答以 `done` 结束，并带 `truncated: true`（AI 对话里会显示提示）；长回答，或对会先思考再回答的模型，请调高 `replyMaxTokens`（它们的思考也计入）。
 - **其他上限。** 一条消息最多 16 000 个字符（固定，不是设置）。记忆按估算的 Token 数计（`memoryTokens`，默认 200：ASCII 字母约 1/4 个 Token，其他字符 3/2 个）。降低上限时，已有的消息和记忆从不会被截短。
 
 ### 5.7 AI 题库、文件导入与功能权限（v1.1）
@@ -1300,6 +1317,13 @@ data: {"chatId":12,"chatTitle":"2026-11-12 09:30","userMessageId":41,"assistantM
 - **删除**：`GET /api/dashboard` 的 `popular`；`GET /api/ai/assess/saved`。
 - **版本**：`GET /api/info` 报告 `"version": "2.6"`，AI 服务的 `/healthz` 也一样。主数据库是 schema 12（[database.md](database.md) 第 6.19 节）；AI 数据库仍是 schema 11，只做了增加（第 8.2k 节）。
 
+### v2.7 的变化（相对 v2.6）
+
+- **新增**：`GET /api/users/records?user=` 和 `GET /api/users/record?user=&id=`（管理员，只读；活动记录操作 `users.viewRecords`）；AI 代码 `ai.assess.unusable`。
+- **变化**：学习评估（`POST /api/ai/assess/ask`）一次要完整的回答，经过清理、检查，最多重试到 3 次调用，并以一个 `delta` 事件送达；`GET /api/ai/assess/latest` 隐藏通不过今天检查的已保存文字；带思考强度的调用多给一些 token 空间（第 5.5 节）。
+- **不变**：其他所有路由、字段和提示；两个数据库（主库 schema 12，AI 库 schema 11）；后端和 AI 服务之间的接口。
+- **版本**：`GET /api/info` 报告 `"version": "2.7"`，AI 服务的 `/healthz` 也一样。
+
 ## 8. 调用示例
 
 ```bash
@@ -1316,6 +1340,10 @@ curl -s -b cookies.txt http://localhost:8765/api/auth/state
 # 设置或修改你的用户名（v2.6）
 curl -s -b cookies.txt -X POST http://localhost:8765/api/auth/name \
   -H 'Content-Type: application/json' -d '{"displayName": "Ann"}'
+
+# 以管理员身份：用户 2 的学习记录，以及其中一条（v2.7，只读）
+curl -s -b cookies.txt 'http://localhost:8765/api/users/records?user=2'
+curl -s -b cookies.txt 'http://localhost:8765/api/users/record?user=2&id=7'
 
 # 把一份六列格式的工作簿上传为新题库（只得到预览，不写库）
 curl -s -b cookies.txt -X POST http://localhost:8765/api/upload \

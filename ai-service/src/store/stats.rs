@@ -78,6 +78,37 @@ pub fn mark_assess_usage(c: &Connection, message: i64) -> rusqlite::Result<()> {
     Ok(())
 }
 
+/// Records a retried attempt (the 2nd or 3rd upstream call of one AI assessment request) as a `gen_calls` row with the
+/// purpose `assess`. The per-user call caps read `usage` only, so a retry never uses up the user's 5 / min, 20 / h and
+/// 100 / day; the statistics (`ALL_CALLS`, `by_purpose`) still see its tokens. The first attempt stays a `usage` row, so
+/// one request counts once.
+pub fn insert_assess_retry(c: &Connection, u: &UsageRow) -> rusqlite::Result<()> {
+    insert_gen_call(
+        c,
+        &GenCallRow {
+            task_id: 0,
+            user_id: u.user_id.unwrap_or(0),
+            purpose: "assess",
+            at: u.at,
+            provider: u.provider,
+            model: u.model.clone(),
+            tokens_in: u.tokens_in,
+            tokens_out: u.tokens_out,
+            tokens_cached: u.tokens_cached,
+            tokens_cache_write: u.tokens_cache_write,
+            latency_ms: u.latency_ms,
+            first_byte_ms: u.first_byte_ms,
+            status: u.status,
+            error_code: u.error_code.clone(),
+            asked: 0,
+            accepted: 0,
+            truncated: false,
+            connection_id: u.connection_id,
+            connection: u.connection.clone(),
+        },
+    )
+}
+
 /// Sums over a set of usage rows.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Sums {
@@ -270,7 +301,8 @@ pub fn tokens_today(c: &Connection, day: &str) -> rusqlite::Result<i64> {
 
 /// The features, in the order `by_purpose` returns them. `generate` = AI bank generation calls; `import` = the AI file
 /// import's calls (`gen_calls` purposes `import` and `recognise`); `other` = the calls that belong to no feature (the
-/// administrators' model list and connection tests).
+/// administrators' model list and connection tests). Retried assessment attempts are `gen_calls` rows of purpose
+/// `assess` and are added to the `assess` row.
 pub const PURPOSES: [&str; 8] = [
     "chat", "hint", "explain", "summary", "assess", "generate", "import", "other",
 ];
@@ -291,7 +323,8 @@ pub fn by_purpose(c: &Connection, w: &Window) -> rusqlite::Result<Vec<(&'static 
     })?;
     let mut found: Vec<(String, Sums)> = rows.collect::<rusqlite::Result<_>>()?;
     let mut st = c.prepare(&format!(
-        "SELECT CASE WHEN purpose IN ('generate', 'plan') THEN 'generate' ELSE 'import' END AS p, {SUMS} FROM gen_calls
+        "SELECT CASE WHEN purpose IN ('generate', 'plan') THEN 'generate' WHEN purpose = 'assess' THEN 'assess'
+                     ELSE 'import' END AS p, {SUMS} FROM gen_calls
          WHERE {f} GROUP BY p"
     ))?;
     let rows = st.query_map(rusqlite::params_from_iter(vals), |r| {
@@ -301,11 +334,15 @@ pub fn by_purpose(c: &Connection, w: &Window) -> rusqlite::Result<Vec<(&'static 
     Ok(PURPOSES
         .iter()
         .map(|p| {
-            let s = found
-                .iter()
-                .find(|(k, _)| k == p)
-                .map(|(_, s)| s.clone())
-                .unwrap_or_default();
+            let mut s = Sums::default();
+            for (_, x) in found.iter().filter(|(k, _)| k == p) {
+                s.calls += x.calls;
+                s.tokens_in += x.tokens_in;
+                s.tokens_out += x.tokens_out;
+                s.errors += x.errors;
+                s.tokens_cached += x.tokens_cached;
+                s.tokens_cache_write += x.tokens_cache_write;
+            }
             (*p, s)
         })
         .collect())
@@ -630,6 +667,47 @@ mod tests {
     fn sorted(mut v: Vec<i64>) -> Vec<i64> {
         v.sort_unstable();
         v
+    }
+
+    #[test]
+    fn by_purpose_adds_assess_retries_to_the_assess_row() {
+        let (_d, store) = store();
+        let w = Window::Since(NOW - 1000);
+        let (rows, total) = store
+            .write(|tx| {
+                add_user(tx, 1);
+                add_call(tx, Some(1), "chat", NOW, 1);
+                tx.execute("UPDATE usage SET assess = 1, purpose = 'summary'", [])?;
+                let u = UsageRow {
+                    connection_id: None,
+                    connection: None,
+                    user_id: Some(1),
+                    at: NOW + 2,
+                    kind: "chat",
+                    provider: "openai",
+                    model: "demo-model".into(),
+                    tokens_in: Some(10),
+                    tokens_out: Some(5),
+                    tokens_cached: None,
+                    tokens_cache_write: None,
+                    latency_ms: 1000,
+                    first_byte_ms: None,
+                    status: "ok",
+                    error_code: None,
+                };
+                insert_assess_retry(tx, &u)?;
+                Ok::<_, rusqlite::Error>((by_purpose(tx, &w)?, totals(tx, &w)?))
+            })
+            .expect("write");
+        let assess = rows
+            .iter()
+            .find(|(p, _)| *p == "assess")
+            .expect("row")
+            .1
+            .clone();
+        assert_eq!(assess.calls, 2);
+        assert_eq!(assess.tokens_in, 10);
+        assert_eq!(rows.iter().map(|(_, s)| s.calls).sum::<i64>(), total.calls);
     }
 
     #[test]

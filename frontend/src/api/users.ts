@@ -1,6 +1,6 @@
 // User management (administrators only). Every change answers with the whole, current list and (v0.8 round 2) whether
 // AI+ is available, so the page always draws the AI+ switches from the newest answer.
-import type { GeoSource, UserCreate, UserRow, UsersResponse, UserUpdate } from '../types/api.ts';
+import type { GeoSource, UserCreate, UserRecordDetail, UserRecordsResponse, UserRow, UsersResponse, UserUpdate } from '../types/api.ts';
 import { getJson, postJson } from './client.ts';
 
 /** The list and whether AI+ is available, from one answer of `GET /api/users` or `POST /api/users/*` */
@@ -64,3 +64,10 @@ export const clearSigninInfo = (): Promise<UsersList> => list(postJson<UsersResp
 
 /** v1.4: sets the place source back to Cloudflare request headers (switching to the external API goes through `enableGeo`, api/geo.ts) */
 export const setGeoSource = (source: 'cloudflare'): Promise<UsersList> => list(postJson<UsersResponse>('/api/users/geo-source', { source }));
+
+/** v2.7 (administrators, read only): the study-record list of one user, as `GET /api/records` answers it plus `user` */
+export const fetchUserRecords = (uid: number): Promise<UserRecordsResponse> =>
+  getJson<UserRecordsResponse>(`/api/users/records?user=${encodeURIComponent(String(uid))}`);
+/** v2.7: one record of that user (404 when it is not theirs) */
+export const fetchUserRecord = (uid: number, rid: number): Promise<UserRecordDetail> =>
+  getJson<UserRecordDetail>(`/api/users/record?user=${encodeURIComponent(String(uid))}&id=${encodeURIComponent(String(rid))}`);

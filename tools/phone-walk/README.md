@@ -76,7 +76,7 @@ is reported as `skipped` with the reason.
 | Group | Checks |
 |---|---|
 | Shared | W-SH-1 sideways scroll, W-SH-2 toast vs pinned bars and the screen, W-SH-3 hit areas, W-SH-4 insets, W-SH-5 nothing covers a control, W-SH-6 contrast (also the footer lines and the Saved text), W-SH-7 dialog action rows, W-SH-8 nothing in the AI+ panel or the AI summary window navigates (the Saved text and its tip), W-SH-9 no focus frame on titles focused by script, W-SH-10 the footer's GitHub line on every page (a short page's blank space under it is reported as P2), W-MN-1 menu |
-| Practice / exam | W-QZ-1 first stem line, W-QZ-2 one-row bar, one-line button labels and fixed slots (Check answer and Next too), W-QZ-3 Next not covered, W-QZ-4 panel head position, W-QZ-5 question changes keep the panel and send no ask, W-QZ-6 greyed bar, W-QZ-7 landscape space, W-QZ-8 answer sheet, W-QZ-9 Check answer and Next are two buttons on every practice question (no Check answer in an exam) |
+| Practice / exam | W-QZ-1 first stem line, W-QZ-2 one-row bar, one-line button labels and fixed slots (Check answer and Next too), W-QZ-3 Next not covered, W-QZ-4 panel head position, W-QZ-5 question changes keep the panel and send no ask, W-QZ-6 greyed bar, W-QZ-7 landscape space, W-QZ-8 answer sheet (phones: a left drawer opened by the "1 / n" button), W-QZ-9 Check answer and Next are two buttons on every practice question (no Check answer in an exam) |
 | Other pages | W-RS-1 / 2 result, W-RC-1 records, W-HM-1 Home, W-CH-1 / 2 / 3 AI Chat (W-CH-3 = the keyboard, CH-13), W-US-1 users, W-LG-1 log swipe, W-ST-1 Settings, W-AS-1 AI settings, W-AS-2 answer and memory length in characters, W-AS-3 the four category tabs, W-CH-4 memory length (n / 200), W-CH-5 touch swipes on the history list / conversation head move no frame (A-OWNER-76), W-US-2 #/users without permission (P2) |
 | Caps | W-CAP-1 second ask (with `--slow`: the callout goes away after `retryAt`), W-CAP-2 AI Chat capped, W-CAP-3 stale block |
 
@@ -102,7 +102,7 @@ How some checks measure (so a finding means what a thumb would meet):
 - W-QZ-2 compares the slots' left edge, width and top inside the bar; the bar itself may sit higher up on a short page.
 - W-QZ-4 also passes when the page cannot scroll the panel head that far up (a short page): the whole panel is then between
   the top row and the pinned bar.
-- The checks that open the folded answer sheet (W-QZ-5, W-QZ-8) fold it again, because the app remembers it per browser.
+- Since v2.7 the phone answer sheet is a left drawer (`#qz-rail`, opened by `#qz-pos`, closed by `.rail-close`, the backdrop, Escape or a tile tap); W-QZ-5, W-QZ-8 and W-AS-1v open and close it that way.
 
 ## Contract with `checks.py` (T1b)
 
@@ -131,7 +131,7 @@ insets are then reported as skipped.
 | W-FP-1 | AI settings > AI+ users: five checkboxes in two groups per row (AI hint and AI analysis are one box), each group on one row in zh / ja; administrators' boxes disabled |
 | W-UC-1 | AI settings > AI usage at 360 / 390 / 412: three charts with an `aria-label`, every bar labelled, the calls / tokens switch on both bar charts (the title follows, tokens are stacked), a tip on a tapped bar and 10 px beside the line (none 90 px away), the line 3 px, labels never overlap, they fit the card |
 | W-AB-1 | one AI bank is generated (admin), practised and deleted again: the AI+题集 badge with its tip and caution line is on the question card and on the result (skipped when no AI bank can be made on the stack) |
-| W-AS-1v | practice and exam at 360 / 390 / 768: no finish button in the answer sheet (folded or open), the top row has "已答 x/n" and a 完成考试 (green) / 完成练习 (orange) button, white text, left of the clock (44 px on touch, no overlap, inside the screen); at 1280 the rail keeps its button and the top row has neither |
+| W-AS-1v | practice and exam at 360 / 390 / 768: no finish button in the answer sheet (closed or open drawer), the top row has "已答 x/n" and a 完成考试 (green) / 完成练习 (orange) button, white text, left of the clock (44 px on touch, no overlap, inside the screen); at 1280 the rail keeps its button and the top row has neither |
 | W-FT-1 | the footer has one blank text line between its divider and its text, and one between the text and the GitHub line |
 | W-SI-1 | sign-in page: the language switch is about 16 px under the card; the GitHub line is at the screen bottom |
 
@@ -244,3 +244,19 @@ card check makes one assessment of `lee` through the made-up provider on first u
 
 `W-V25-AI` (the amber AI button and its dialog) was retired in v2.6; the AI card is checked by `W-V26-CAP`. The page list of `walk.py`
 (`--pages`) has a new entry `profile`.
+
+
+## v2.7 checks (`checks_v27.py`)
+
+`checks_v27.py` (group `g_v27`, registered at the end of `checks.py`; run alone with `--only 'W-V27-*'`), zh / en / ja, light and
+dark. It uses the users the walk already seeds: `rc.paging_users()` (12 made-up AI+ users) gives User management a second page and
+`lee` (60 records) gives Study records one. No extra seed data was needed (`seed_extra.py` is unchanged).
+
+| Check | What |
+|---|---|
+| W-V27-QD | Phone answer sheet drawer (sam, practice, 51 questions) at 320 / 360 / 375 / 393 / 430 px: closed = `#qz-pos` button with `aria-expanded` false, drawer hidden and off screen, top row without overlap or sideways scroll; open = flush left and fully on screen, dialog role, backdrop over the whole page, page locked, close button >= 44 px, tiles <= 44 px, the tile list scrolls inside the drawer; closes by backdrop, close button and Escape; a tile tap closes it and goes to that question. At 1280 px the sheet stays a static side rail (no dialog role, no backdrop, no `#qz-pos`). On 320 / 393 px (light) the drawer's history entry is tested too: Back closes it and stays on the quiz, one more Back leaves the quiz in one step (also after a close by button, backdrop or tile), Forward over the entry a close left behind does not reopen it |
+| W-V27-QT | Quiz top row, exam (riley) and practice (sam), 320 / 360 / 393 / 430 px, light and dark: a screenshot is kept for every case; at 360-430 px the answer-sheet button and the two-line count are both visible inside the width and sit at the same x (+-1 px) in the exam and the practice |
+| W-V27-PG | Shared pager in User management (`#us-*`, admin) and Study records (`#rec-*`, lee) at 320 / 390 / 1280 px: drawn with "Page 1 / n", inside the width, no overlap, no sideways scroll, buttons >= 44 px on phones, page size 5 / 10 (users) and 10 / 20 (records), page 2 marks itself and changes the rows |
+| W-V27-UR | The administrator's read-only view (admin, 375 and 1280 px): the book icon `#us-records-<id>` of lee (found on any list page) opens `#/users/<id>/records`: note + back link, no delete / delete-all / AI summary; a record opens read-only (no retry / retake / delete / AI buttons); Back returns to the same list page, and the list's back link returns to User management on the same page |
+
+The walk itself was not run for these checks in the build step; the stack run belongs to the release gate.

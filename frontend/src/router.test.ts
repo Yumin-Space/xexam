@@ -25,3 +25,17 @@ test('profile parses, round-trips and has its own menu section (v2.6)', () => {
   assert.equal(sectionOf({ name: 'profile' }), 'profile');
   assert.ok(sameRoute(parseHash('#/profile/'), { name: 'profile' }));
 });
+
+test('an administrator reading the records of a user: routes parse, round-trip and stay in the users section (v2.7)', () => {
+  assert.deepEqual(parseHash('#/users/7/records'), { name: 'userRecords', user: 7 });
+  assert.deepEqual(parseHash('#/users/7/records/42/'), { name: 'userRecord', user: 7, id: 42 });
+  assert.equal(routeHash({ name: 'userRecords', user: 7 }), '#/users/7/records');
+  assert.equal(routeHash({ name: 'userRecord', user: 7, id: 42 }), '#/users/7/records/42');
+  assert.equal(sectionOf({ name: 'userRecords', user: 7 }), 'users');
+  assert.equal(sectionOf({ name: 'userRecord', user: 7, id: 42 }), 'users');
+  assert.ok(!sameRoute({ name: 'userRecords', user: 7 }, { name: 'userRecords', user: 8 }));
+  // Anything malformed is the plain users page
+  for (const bad of ['#/users/x/records', '#/users/7', '#/users/7/other', '#/users/7/records/abc', '#/users/7/records/1/2', '#/users/1234567890123456/records']) {
+    assert.deepEqual(parseHash(bad), { name: 'users' }, bad);
+  }
+});

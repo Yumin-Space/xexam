@@ -30,6 +30,10 @@
 /* "3 / 51": the slash keeps a little space on both sides (the leading space of the second part is dropped in the flex row) */
 .qbar .pos-short .dim { margin-left: .25em; }
 .qbar .qkind { vertical-align: 2px; font-size: 12.5px; font-weight: 500; }
+/* v2.7: a text as wide as the wider of two (pages/quiz.ts sameWidth): both in one grid cell, the other one hidden */
+.same-w { display: inline-grid; justify-items: start; }
+.same-w > * { grid-area: 1 / 1; }
+.same-w-ghost { visibility: hidden; }
 .qbar .r { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px 14px; }
 .timer { font-size: 17px; font-weight: 600; }
 .qtime { display: inline-flex; align-items: baseline; gap: 4px; }
@@ -43,7 +47,7 @@
 /* v1.1 A-OWNER-22 / 24b / 25: the top row's answered count and 交卷 / 完成 button exist only under BAR_MQ (see below) */
 .qcount, .btn.qsubmit { display: none; }
 .qcount { font-size: 13.5px; color: var(--ink2); white-space: nowrap; }
-.qcount-s { display: none; }
+.qcount-s, .qcount-w { display: none; }
 .btn.qsubmit .lbl-s { display: none; }
 .btn.qsubmit { position: relative; align-items: center; gap: 4px; min-height: 30px; padding: 0 10px; border: 0; box-shadow: none; white-space: nowrap;
   color: var(--on-answer-solid); font-size: 13.5px; font-weight: 600; line-height: 1.2; }
@@ -126,7 +130,8 @@
 .rail h2 { margin: 0 0 4px; font-size: 15px; font-weight: 600; }
 .rail-count { margin: 0 0 10px; font-size: 13.5px; font-weight: 600; color: var(--ink2); overflow-wrap: anywhere; }
 .rail-sum > .btn { width: 100%; margin-bottom: 14px; }
-.rail-toggle { display: none; }
+/* v2.7: the drawer's close button and backdrop exist only under PHONE (below) */
+.rail-close, .qz-backdrop { display: none; }
 /* Desktop: the tiles scroll inside the sheet, so the sheet is never taller than the window */
 .rail-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 .tiles { display: grid; grid-template-columns: repeat(auto-fill, 36px); justify-content: start; gap: 6px; padding: 3px; }
@@ -233,6 +238,11 @@
   /* A-OWNER-60: the count keeps its word ("已完成 1/50"; up to 360 px only "1/50", screen readers keep the full text); the button is a
      30 px pill with a 44 px tap area, its label goes when the row does not fit (.tight, set by the quiz page), the hold tip names it */
   .qcount { font-size: 13px; margin-right: 2px; }
+  /* v2.7 (owner): two lines like the answer-sheet button, the word over the numbers; the full sentence stays for screen readers */
+  .qcount { display: inline-flex; flex-direction: column; align-items: flex-start; line-height: 1.1; }
+  .qcount-l { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+  .qcount-w { display: block; font-size: 11px; color: var(--ink3); }
+  .qcount-s { display: block; font-size: 14px; color: var(--ink); }
   /* A-OWNER-81: the label is always visible; the pill is a little smaller here, and .tight (row too narrow) only swaps in the short label */
   .btn.qsubmit { min-width: 30px; padding: 0 8px; gap: 3px; font-size: 12.5px; justify-content: center; }
   .btn.qsubmit .mi { width: 14px; height: 14px; }
@@ -264,13 +274,13 @@
   .qbar.tighter .hand-btn { margin-right: 0; }
   .qbar.tighter .qtime .mi { display: none; }
   .qbar.tightest .qkind { display: none; }
-  /* Last resort on the narrowest phones (320 px, 100 questions): the answered count leaves the row (the meter under it shows it;
-     the screen-reader text stays), which pays for the theme toggle's full 44 px tap area */
-  .qbar.tightest .qcount { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
-  .qbar.tightest .qcount-s { display: none; }
   .qbar.tightest .qsubmit .mi { display: none; }
-  /* Fourth step (320-340 px, 100 questions with auto-advance or a long timer): the Aa button leaves the row; the switch stays in Settings and the other bars */
-  .qbar.tightest2 .hand-btn { display: none; }
+  /* v2.7 (owner): the two-line count ("已核对" over "2 / 50") outlasts the mode tag; it leaves the row only on the narrowest phones
+     (the meter under it shows it; the screen-reader text stays), which pays for the theme toggle's full 44 px tap area */
+  .qbar.tightest2 .qcount { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+  .qbar.tightest2 :is(.qcount-s, .qcount-w) { display: none; }
+  /* Last step (320-340 px, 100 questions with auto-advance or a long timer): the Aa button leaves the row; the switch stays in Settings and the other bars */
+  .qbar.tightest3 .hand-btn { display: none; }
   .qexit .mi { display: inline; width: 22px; height: 22px; }
   .qexit .lbl { display: none; }
 
@@ -289,20 +299,54 @@
   .pfoot .bbtn[data-slot="prev"] .lbl { display: none; }
   .pfoot .bar-main > .btn { padding-inline: 12px; font-size: 15px; }
 
-  /* The answer sheet: folded under the panel, the chevron opens it */
-  .rail { padding: 14px 12px; }
-  .rail-toggle {
-    position: relative; display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; padding: 0;
+  /* v2.7: the answer sheet is a drawer from the left (the same aside.rail; components/quiz-drawer.ts opens it from the "1 / 25"
+     button in the top row). Its header (title, count, close) stays; the chips, tiles and legend scroll under it */
+  .rail {
+    position: fixed; z-index: 40; top: 0; bottom: 0; left: 0; box-sizing: border-box; display: flex; flex-direction: column; width: min(320px, 86vw);
+    max-height: none; margin: 0; overflow: hidden; border: 0; border-right: 1px solid var(--line-soft); border-radius: 0; background: var(--sheet);
+    padding: calc(8px + env(safe-area-inset-top)) 12px calc(12px + env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+    box-shadow: var(--shadow-pop); transform: translateX(-102%); visibility: hidden; transition: transform .22s ease, visibility 0s linear .22s;
+  }
+  .rail.open { transform: none; visibility: visible; transition: transform .22s ease, visibility 0s; }
+  /* the focus moves to the drawer itself when it opens: no ring around the whole panel */
+  .rail:focus { outline: none; }
+  .rail-sum { flex: none; }
+  .rail-close {
+    position: relative; display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; margin-right: -8px; padding: 0;
     border: 0; border-radius: 6px; background: transparent; color: var(--ink2);
   }
-  .rail-toggle .mi { width: 18px; height: 18px; transition: transform .15s ease; }
-  .rail.open .rail-toggle .mi { transform: rotate(180deg); }
-  .rail:not(.open) .rail-body { display: none; }
-  .rail h2 { margin: 0; font-size: 14px; }
+  .rail-close .mi { width: 18px; height: 18px; }
+  .rail-body { display: block; flex: 1 1 auto; min-height: 0; margin-top: 8px; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; }
+  /* the tile grid fills the drawer width (44 px targets kept); the 4 practice filter chips stay on one line at 360 px */
+  .rail .tiles { grid-template-columns: repeat(auto-fill, minmax(44px, 1fr)); justify-items: center; }
+  .rail .sheet-chips { flex-wrap: nowrap; gap: 4px; }
+  .rail .sheet-chip { flex: 0 1 auto; min-width: 0; padding: 0 8px; font-size: 12.5px; white-space: nowrap; }
+  .rail h2 { margin: 0; font-size: 16px; }
   .rail-count { font-size: 12.5px; font-weight: 500; }
+  .qz-backdrop { display: block; position: fixed; z-index: 39; inset: 0; background: rgba(0, 0, 0, .45); animation: qz-fade .2s ease; }
+  .qz-backdrop[hidden] { display: none; }
+  @keyframes qz-fade { from { opacity: 0; } to { opacity: 1; } }
+  /* the page behind the open drawer does not scroll */
+  html.qz-sheet-open { overflow: hidden; overscroll-behavior: none; }
+
+  /* The answer-sheet button (owner choice "B"): grid icon + a small "答题卡" label over "2 / 50", on a soft fill so it reads as a
+     button; 34 px tall, so it still fits the 48 px row; the invisible box around it (::after) keeps the tap area at least 44 px */
+  .qbar .qpos-btn {
+    position: relative; box-sizing: border-box; display: inline-flex; align-items: center; gap: 5px; margin: 0; padding: 2px 9px 2px 7px;
+    min-height: 34px; border: 1px solid var(--line); border-radius: 10px; background: var(--fill);
+    color: inherit; font: inherit; line-height: 1.1; cursor: pointer; -webkit-tap-highlight-color: transparent;
+  }
+  .qbar .qpos-btn .qpos-ic { flex: none; width: 18px; height: 18px; color: var(--primary); }
+  .qbar .qpos-btn .qpos-tx { display: inline-flex; flex-direction: column; align-items: flex-start; }
+  .qbar .qpos-btn .qpos-lab { font-size: 11px; font-weight: 400; color: var(--ink3); white-space: nowrap; }
+  .qbar .qpos-btn .qpos-n { font-size: 14px; white-space: nowrap; }
+  .qbar .qpos-btn .qpos-n .dim { margin-left: .2em; }
+  .qbar .qpos-btn::after { content: ""; position: absolute; inset: -5px -4px; }
+  .qbar .qpos-btn:active, .qbar .qpos-btn[aria-expanded="true"] { background: var(--hover-strong); }
 }
 @media (max-width: 600px) and (prefers-reduced-motion: reduce), (orientation: landscape) and (max-height: 500px) and (prefers-reduced-motion: reduce) {
-  .rail-toggle .mi { transition: none; }
+  .rail, .rail.open { transition: none; }
+  .qz-backdrop { animation: none; }
 }
 
 /* Short labels follow the room the two main buttons really have (the .bar-main container), not the viewport width: the full
@@ -380,6 +424,8 @@
   .qbar.tighter :is(.theme-btn, .hand-btn) { margin-inline: -4px -1px; }
   .qbar.tighter .hand-btn { margin-right: 0; }
   .qbar .btn.qsubmit::after { inset: -4px -4px -12px; }
+  /* the 24 px pill sits in the 36 px row: its tap area reaches 4 px above (the screen edge) and 10 px below */
+  .qbar .qpos-btn::after { inset: -6px -6px -10px; }
   .wrap.qz .paper { padding: 8px 12px; }
   .wrap.qz .phead { min-height: 28px; margin-bottom: 4px; }
   .wrap.qz .stem { margin-bottom: 8px; }

@@ -19,6 +19,7 @@
     "src/state/ai.test.ts",
     "src/router.ts",
     "src/state/router.test.ts",
+    "src/router.test.ts",
     "src/domain/**/*.ts",
     "src/types/**/*.ts",
     "src/state/session-storage.ts",

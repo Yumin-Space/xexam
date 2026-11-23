@@ -73,7 +73,7 @@ cargo tree -e normal --target all | grep -E 'aws-lc|openssl-sys|native-tls'   # 
 cd frontend
 npm ci
 npm run typecheck      # 先对程序跑 tsc，再对测试文件跑（tsconfig.test.json）
-npm test               # 单元测试：API 客户端（Nginx 的 429 和重试、时间限制、AI 的流和错误码）、
+npm test               # （从 v2.7 起包括 src/*.test.ts 文件，即路由测试）单元测试：API 客户端（Nginx 的 429 和重试、时间限制、AI 的流和错误码）、
                        # 判分和随机抽题、练习的核对、保存的成绩、语言规则、记录筛选、
                        # 锁定说明和等待时间、导入提醒、系统日志缓冲、题库状态、题库权限、暂存的考试、
                        # 设置缓存、事件流解析、AI 对话的状态、回答的 Markdown、记忆的请求、

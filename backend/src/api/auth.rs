@@ -118,6 +118,8 @@ pub const ROUTES: &[Route] = &[
     route("GET", "/api/record", Access::SignedIn),
     route("GET", "/api/settings", Access::SignedIn),
     route("GET", "/api/users", Access::Admin),
+    route("GET", "/api/users/records", Access::Admin),
+    route("GET", "/api/users/record", Access::Admin),
     quiet("GET", "/api/logs", Access::Admin),
     quiet("GET", "/api/activity", Access::Admin),
     quiet("GET", "/api/activity/settings", Access::Admin),

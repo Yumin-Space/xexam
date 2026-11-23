@@ -206,6 +206,11 @@ dialog .us-banklist { max-height: none; overflow: visible; }
   .us-tool .l-full { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 }
 
+/* 320 px: five 44 px icons with a gap overflow the list panel; with no gap the 44 px boxes touch and fit */
+@media (max-width: 340px) {
+  .us-icons { gap: 0; }
+}
+
 /* Touch screens: the bank row and the options are 44 px to tap; the icon buttons bring their own 44 px hit area */
 @media (pointer: coarse), (max-width: 480px) {
   .us-bankrow { min-height: 44px; }
@@ -335,7 +340,5 @@ dialog .us-banklist { max-height: none; overflow: visible; }
 .us-disp.none { opacity: .8; }
 .us-row.off .us-disp { opacity: .8; }
 
-/* v2.6: the pager under the user list (the look of styles/paged-table.css); the row never wraps, so on a phone the arrows and
-   the current page stay on one line with the 44 px targets, and the "Page x / y" text sits under them */
-.us-pager .ptb-btns { flex-wrap: nowrap; }
-.us-pager { margin-bottom: 4px; }
+/* v2.7: the shared numbered pager (components/pager.ts) sits under the user list; it may wrap to two centred lines on a phone */
+.us-pagerhost { margin-bottom: 4px; }

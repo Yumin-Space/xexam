@@ -77,3 +77,6 @@ export function pageOfUser(list: readonly UserRow[], view: UsersView, id: number
   const at = sortUsers(filterUsers(list, view.query), view.sort).findIndex((x) => x.id === id);
   return at < 0 ? 1 : Math.floor(at / size) + 1;
 }
+
+/** Route names that belong to User management: the list page, search and order are kept while moving between them (v2.7) */
+export const inUsersArea = (name: string): boolean => name === 'users' || name === 'userRecords' || name === 'userRecord';

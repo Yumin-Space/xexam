@@ -585,6 +585,44 @@ pub(super) fn launch(
     Ok(sse_response(rx, app.0.timeouts.keep_alive))
 }
 
+/// Starts the study assessment: no streaming to the browser. The server asks for the whole answer, checks it (with
+/// retries) and sends the cleaned text as one `delta` frame (`chat::run_assess`). The regenerate note is not used here:
+/// a retry changes the system prompt instead.
+pub(super) fn launch_assess(
+    ctx: &Ctx,
+    route: &crate::route::Route,
+    slot: chat::Slot,
+    permit: chat::GatePermit,
+    l: Launch,
+    lang: Lang,
+) -> Answer {
+    let app = &ctx.app;
+    slot.set_target(l.chat, l.answer);
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut start = l.start;
+    super::hide::for_viewer(ctx.who.is_admin(), &mut start);
+    let _ = tx.send(Frame {
+        event: "start",
+        data: start,
+    });
+    let run = chat::AssessRun {
+        app: app.clone(),
+        slot,
+        permit,
+        who: ctx.who.clone(),
+        chat: l.chat,
+        message: l.answer,
+        route: route.clone(),
+        system: l.system,
+        turns: l.history,
+        lang,
+        day_attempt: l.attempt,
+        frames: tx,
+    };
+    tokio::spawn(chat::run_assess(run));
+    Ok(sse_response(rx, app.0.timeouts.keep_alive))
+}
+
 /// Starts the generation of a prepared answer.
 fn start_stream(
     ctx: &Ctx,

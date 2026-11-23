@@ -11,6 +11,8 @@
 .ptb-pg[aria-disabled="true"] { opacity: .45; cursor: default; }
 @media (hover: hover) { .ptb-dir:hover, .ptb-pg:not(.on):not([aria-disabled="true"]):hover { background: var(--hover); } }
 .ptb-dir:focus-visible, .ptb-pg:focus-visible, .ptb-sort:focus-visible { outline: 2px solid var(--print); outline-offset: 2px; }
+/* Focus moved by script after a tap / click shows no ring (pager.ts sets data-ptr); keyboard presses keep it */
+.ptb-pg[data-ptr]:focus-visible { outline: none; }
 
 /* Sortable header: a button that looks like the header text, with a fixed-width arrow so nothing shifts */
 .ptb-sort {
