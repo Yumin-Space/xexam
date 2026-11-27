@@ -146,7 +146,7 @@ one-line token check W-TK-1 is retired (its group `g_tk` stays in `checks.py` bu
 
 | Check | What |
 |---|---|
-| W-QZ-81 | `checks_v12_quiz.py`: the finish pill in the top row of an exam / practice always shows its text (zh 完成练习 / 完成考试; en and ja use a short label when the row is tight), one line, 44 px tap area, zh / en / ja at nine sizes |
+| W-QZ-81 | `checks_v12_quiz.py`: the finish pill in the top row of an exam / practice always shows its text (since v2.2 the short label on phones in every language: 完成 / Finish / 終了; the full one from 601 px; the v2.7 same-width ghost never shows), one line, "1 / n" of the answer-sheet button on one line, zh / en / ja at nine sizes |
 | W-CH-82 | `checks_v12_ai.py`: AI Chat history and memory screens are fixed frames: every drag (up, down, sideways, diagonal) on the empty area under a short list, the rows, the GitHub line, the list head and the top bar is cancelled; a long list still scrolls |
 | W-CH-83 | the AI Chat title row and the top bar never overlap or spill at text zoom 1 / 1.25 / 1.5 |
 | W-CH-88 | with the keyboard open the messages do not move (open, typing, close; list at its end, middle and top), a send still ends at the bottom |
@@ -208,11 +208,11 @@ phones (< 720 px) and an always-visible sidebar (`aside.ai-list`) on tablets / d
 | W-V23-RO | A paused (read-only) user: the latest chat opens, no new-chat button in the header, the paused line is shown, no greeting |
 | W-V23-FW | Closing the drawer leaves no dead forward entry (Forward twice, then Back, leaves AI Chat) |
 | W-V23-KB | The drawer's bottom follows the keyboard height (`--kb`) |
-| W-V23-LS | Phones turned sideways (568x320, 667x375): the whole drawer scrolls as one, Delete all and the GitHub line are reachable |
+| W-V23-LS | Phones turned sideways (568x320, 667x375, also run by `--full`): the whole drawer scrolls as one, Delete all and the GitHub line are reachable; taller phones (`--full`): the list body is the one scroller of the fixed drawer and reaches the same foot |
 | W-V23-LT | "Jump to latest" scrolls to the end and the focus goes to the message list, never to the input |
 | W-V23-CTR | An empty new chat: greeting, composer and reply-language hint are one group centred in the visible area under the chat head (composer centre in the middle third, greeting above, hint below, no line above the composer, same background as the conversation), above an emulated keyboard (`--vvh` / `--kb`); an open chat with messages has the composer at the bottom |
 | W-V23-CMP | Composer growth: empty = one compact pill row (input and send on one line, fully rounded); a long line = expanded layout (input at the full width above the controls row, radius 16-32 px, focus kept); many lines grow it up to 8 lines / 40 % of the visible height, then it scrolls inside; clearing returns to the compact row (393, 320, 1280) |
-| W-V23-NT | The administrator notice is under the composer on one line at 375 / 393 / 430 px, and not in the drawer |
+| W-V23-NT | The administrator notice is under the composer on one line at 375 / 393 / 430 px, and not in the drawer; over 900 px (`--full`) it is the one line under the page title instead, never shown twice |
 
 W-V22-AB also checks the top bar's brand: the word Xexam without the logo icon on phones, with it on wider screens.
 
@@ -255,7 +255,7 @@ dark. It uses the users the walk already seeds: `rc.paging_users()` (12 made-up 
 | Check | What |
 |---|---|
 | W-V27-QD | Phone answer sheet drawer (sam, practice, 51 questions) at 320 / 360 / 375 / 393 / 430 px: closed = `#qz-pos` button with `aria-expanded` false, drawer hidden and off screen, top row without overlap or sideways scroll; open = flush left and fully on screen, dialog role, backdrop over the whole page, page locked, close button >= 44 px, tiles <= 44 px, the tile list scrolls inside the drawer; closes by backdrop, close button and Escape; a tile tap closes it and goes to that question. At 1280 px the sheet stays a static side rail (no dialog role, no backdrop, no `#qz-pos`). On 320 / 393 px (light) the drawer's history entry is tested too: Back closes it and stays on the quiz, one more Back leaves the quiz in one step (also after a close by button, backdrop or tile), Forward over the entry a close left behind does not reopen it |
-| W-V27-QT | Quiz top row, exam (riley) and practice (sam), 320 / 360 / 393 / 430 px, light and dark: a screenshot is kept for every case; at 360-430 px the answer-sheet button and the two-line count are both visible inside the width and sit at the same x (+-1 px) in the exam and the practice |
+| W-V27-QT | Quiz top row, exam (riley) and practice (sam), 320 / 360 / 393 / 430 px, light and dark: a screenshot is kept for every case; phones (360 px and up, also sideways): the answer-sheet button and the two-line count are visible inside the width and sit at the same x (+-1 px) in the exam and the practice; en / ja at 360 px may drop the count, but in both modes alike; tablet (601-880 px): no sheet button, the one-line count sentence shows; desktop: no sheet button |
 | W-V27-PG | Shared pager in User management (`#us-*`, admin) and Study records (`#rec-*`, lee) at 320 / 390 / 1280 px: drawn with "Page 1 / n", inside the width, no overlap, no sideways scroll, buttons >= 44 px on phones, page size 5 / 10 (users) and 10 / 20 (records), page 2 marks itself and changes the rows |
 | W-V27-UR | The administrator's read-only view (admin, 375 and 1280 px): the book icon `#us-records-<id>` of lee (found on any list page) opens `#/users/<id>/records`: note + back link, no delete / delete-all / AI summary; a record opens read-only (no retry / retake / delete / AI buttons); Back returns to the same list page, and the list's back link returns to User management on the same page |
 

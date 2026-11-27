@@ -60,10 +60,12 @@ def tk2_case(rc, lang, theme, size, source, cache):
             problems.append('call text "%s", wanted "%s..."' % ([x['text'] for x in r['n']], want_calls))
         elif not r['narrow'] and not r['n'][0]['text'].endswith(sep):
             problems.append('wide call text lacks "%s": %s' % (sep, r['n'][0]['text']))
-        if [x['text'] for x in r['l'][:1]] != [cat(lang, 'aigen.card.ioLabel')] or r['v'][0]['text'] != '85.4K/59.2K Token':
+        # v2.2 consistency pass: the unit comes from the catalogue (en "tokens", zh / ja "Token")
+        unit = lambda n: fill(cat(lang, 'aigen.card.tokens'), n=n)  # noqa: E731
+        if [x['text'] for x in r['l'][:1]] != [cat(lang, 'aigen.card.ioLabel')] or r['v'][0]['text'] != unit('85.4K/59.2K'):
             problems.append('row 1 is "%s" "%s"' % (r['l'][:1], r['v'][:1]))
         if cache:
-            if len(r['l']) != 2 or r['l'][1]['text'] != cat(lang, 'aigen.card.cacheLabel') or r['v'][1]['text'] != '6.9K/76.3K Token':
+            if len(r['l']) != 2 or r['l'][1]['text'] != cat(lang, 'aigen.card.cacheLabel') or r['v'][1]['text'] != unit('6.9K/76.3K'):
                 problems.append('row 2 is "%s" "%s"' % (r['l'][1:], r['v'][1:]))
             else:
                 if abs(r['l'][0]['l'] - r['l'][1]['l']) > 0.5 or abs(r['v'][0]['l'] - r['v'][1]['l']) > 0.5:

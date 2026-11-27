@@ -13,6 +13,13 @@ use xexam_ai_service::store::{schema, Store, DB_FILE};
 
 const EFFORT: &str = "/api/ai/admin/models/effort";
 
+/// The log capture is process-global and every refusal retry logs the same INFO line, so the tests that make the stub
+/// refuse a parameter (and one of them counts that line) run one at a time.
+async fn refusal_lock() -> tokio::sync::MutexGuard<'static, ()> {
+    static LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    LOCK.lock().await
+}
+
 struct E {
     t: TestApp,
     admin: Who,
@@ -450,6 +457,7 @@ async fn legacy_stored_levels_read_in_the_new_form() {
 
 #[tokio::test]
 async fn unnamed_google_refusal_retries_without_thinking_level() {
+    let _serial = refusal_lock().await;
     let e = env().await;
     use_family(&e, "google");
     set(&e, "chat", "MINIMAL").await;
@@ -838,6 +846,7 @@ const NAMED: &str = r#"{"error":{"message":"Unrecognized request argument suppli
 
 #[tokio::test]
 async fn effort_refusal_retries_once_without_and_remembers() {
+    let _serial = refusal_lock().await;
     let e = env().await;
     set(&e, "chat", "high").await;
     e.t.stub
@@ -906,6 +915,7 @@ async fn effort_refusal_retries_once_without_and_remembers() {
 
 #[tokio::test]
 async fn unnamed_refusal_is_retried_without_effort() {
+    let _serial = refusal_lock().await;
     let e = env().await;
     set(&e, "chat", "high").await;
     e.t.stub.refuse_if_body_has(Some((
@@ -926,6 +936,7 @@ async fn unnamed_refusal_is_retried_without_effort() {
 
 #[tokio::test]
 async fn responses_refusal_retries_without_reasoning_object() {
+    let _serial = refusal_lock().await;
     let e = env().await;
     use_family(&e, "responses");
     set(&e, "chat", "low").await;
@@ -949,6 +960,7 @@ async fn responses_refusal_retries_without_reasoning_object() {
 
 #[tokio::test]
 async fn generic_schema_refusal_does_not_drop_thinking_strength() {
+    let _serial = refusal_lock().await;
     // a 400 that is about the structured output (not the thinking strength) is answered by the unformatted ladder; that
     // success must not turn the thinking strength off for the route
     let e = env().await;

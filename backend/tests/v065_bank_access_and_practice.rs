@@ -1823,3 +1823,94 @@ fn the_store_keeps_the_kind_of_an_attempt() {
         Some(1)
     );
 }
+
+#[tokio::test]
+async fn a_duplicate_save_does_not_list_questions_of_a_bank_deleted_later_as_not_counted() {
+    let a = app();
+    let c = admin(&a).await;
+    let (b1, herbs) = add_bank(&a.store, "Herbs.xlsx", "Herbs", 1);
+    let (_b2, spices) = add_bank(&a.store, "Spices.xlsx", "Spices", 1);
+    let mut body = attempt_body(&[(&herbs[0], true), (&spices[0], true)], None);
+    body["key"] = json!("fedcba9876543210fedcba9876543210");
+    body["startedAt"] = json!(1_780_000_000);
+    let r = post(&a, "/api/attempt", &c, body.clone()).await;
+    assert_eq!(r.status, 200, "{}", r.text());
+    assert!(r.json().get("notCounted").is_none());
+    // the first bank is deleted with its records; the record survives through the second bank
+    let r = post(
+        &a,
+        "/api/banks/delete",
+        &c,
+        json!({"id": b1, "withRecords": true}),
+    )
+    .await;
+    assert_eq!(r.status, 200, "{}", r.text());
+    // the retry is a duplicate and nothing was left out at the first save
+    let r = post(&a, "/api/attempt", &c, body).await;
+    assert_eq!(r.status, 200, "{}", r.text());
+    let p = r.json();
+    assert_eq!(p["duplicate"], json!(true));
+    assert!(p.get("notCounted").is_none(), "{p}");
+}
+
+#[tokio::test]
+async fn an_exam_started_before_its_bank_was_deleted_leaves_those_questions_out() {
+    let a = app();
+    let c = admin(&a).await;
+    let (b1, herbs) = add_bank(&a.store, "Herbs.xlsx", "Herbs", 2);
+    let (b2, spices) = add_bank(&a.store, "Spices.xlsx", "Spices", 2);
+    // the exam runs on questions of both banks; bank 2 is deleted while it runs
+    let r = post(&a, "/api/banks/delete", &c, json!({"id": b2})).await;
+    assert_eq!(r.status, 200, "{}", r.text());
+    let mut body = attempt_body(&[(&herbs[0], true), (&spices[0], true)], None);
+    body["key"] = json!("0123456789abcdef0123456789abcdef");
+    body["startedAt"] = json!(1_780_000_000);
+    let r = post(&a, "/api/attempt", &c, body.clone()).await;
+    assert_eq!(r.status, 200, "{}", r.text());
+    let p = r.json();
+    assert_eq!(p["notCounted"], json!([spices[0]]));
+    assert_eq!(p["history"][0]["total"], 1);
+    let raw_db = raw(&a.db);
+    assert_eq!(
+        count(
+            &raw_db,
+            &format!(
+                "SELECT COUNT(*) FROM user_stats WHERE question_id='{}'",
+                spices[0]
+            )
+        ),
+        0
+    );
+    assert_eq!(
+        count(
+            &raw_db,
+            &format!(
+                "SELECT COUNT(*) FROM attempt_items WHERE question_id='{}'",
+                spices[0]
+            )
+        ),
+        0
+    );
+    // a retry of the same session is a duplicate that still names the left-out question
+    let r = post(&a, "/api/attempt", &c, body).await;
+    assert_eq!(r.status, 200, "{}", r.text());
+    let p = r.json();
+    assert_eq!(p["duplicate"], json!(true));
+    assert_eq!(p["notCounted"], json!([spices[0]]));
+    assert_eq!(count(&raw_db, "SELECT COUNT(*) FROM attempts"), 1);
+    // once bank 1 is gone too, nothing is left to score: refused, nothing saved
+    let r = post(&a, "/api/banks/delete", &c, json!({"id": b1})).await;
+    assert_eq!(r.status, 200, "{}", r.text());
+    let r = post(
+        &a,
+        "/api/attempt",
+        &c,
+        attempt_body(&[(&herbs[1], true)], None),
+    )
+    .await;
+    assert_eq!(
+        (r.status.as_u16(), r.error()),
+        (409, MSG_EXAM_QUESTIONS_GONE.to_string())
+    );
+    assert_eq!(count(&raw_db, "SELECT COUNT(*) FROM attempts"), 1);
+}

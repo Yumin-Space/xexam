@@ -4,6 +4,7 @@
 
 > This document covers every upgrade path, newest first:
 >
+> - **v2.7 → v2.8** (section 000000000000000): nothing to do besides `docker compose pull` and `docker compose up -d`. No database change (main schema 12, AI schema 11), no new variable, no `docker-compose.yml` or Nginx change. Rolling back to v2.7 needs no restore.
 > - **v2.6 → v2.7** (section 00000000000000): nothing to do besides `docker compose pull` and `docker compose up -d`. No database change (main schema 12, AI schema 11), no new variable, no `docker-compose.yml` or Nginx change. Rolling back to v2.6 needs no restore.
 > - **v2.5 → v2.6** (section 0000000000000): nothing to do besides `docker compose pull` and `docker compose up -d`. The main database moves to schema 12 on start after the copy `backups/xexam-schema11-<date-time>.db` (one new column, `users.display_name`); the AI database stays at schema 11 and only gains a table, columns and a model slot. Every existing user sets a username at the next sign-in, and users who never chose a question language now start in English. No new variable and no `docker-compose.yml` edit. Rolling back to v2.5 needs no restore.
 > - **v2.4 → v2.5** (section 000000000000): nothing to do besides `docker compose pull` and `docker compose up -d`. No database change (main schema 11, AI schema 11), no new variable and no `docker-compose.yml` edit; Home becomes a dashboard and the old Home is the page Exam & practice. Rolling back to v2.4 needs no restore.
@@ -31,6 +32,31 @@
 > **Going straight to v1.0 from an older version** applies every step of the sections below in one go with the current images: one backup named after the schema the database had, then the migration to the current schema (6 for the main database, 4 for the AI database). The sections below are written for the version they lead to, so where one says schema 5, v1.0 ends at schema 6, the log says `Upgraded the database to schema 6`, `/api/info` shows `1.0` and ai-service creates its database at schema 4.
 >
 > **Every upgrade from v0.6 or older retires all your questions.** Since v0.7 only the six-column Excel layout can be imported, and every start retires the questions that were imported from the three- and four-column layouts of earlier versions; every question of v0.6 and older is in one of those. The banks, the study records and the statistics stay. Prepare a six-column version of each workbook before you upgrade (section 12 of [usage.md](usage.md)), and update each bank with it afterwards (section 2.4).
+
+## 000000000000000. Upgrading from v2.7 to v2.8
+
+This section is numbered 000000000000000 because it is the newest one. The older sections keep their numbers.
+
+### 000000000000000.1 What changes
+
+- **Nothing in the data or the servers.** Neither database changes (the main database stays at schema 12, the AI database at schema 11), there is no new variable, and neither `docker-compose.yml` nor the Nginx configuration needs an edit.
+- **Dark theme**: graded options are tinted cards (correct: olive with a green line; wrong: red-brown with an orange-red line) instead of solid blocks; the light theme is unchanged.
+- **User management**: a user's bank access opens from a database icon right after the study-records book, instead of the line under the user's details.
+- **Exam with a deleted bank**: sending the same result again returns the same list of questions that were not counted, so the note is not lost.
+- **Sign-in lock**: reviewed, no change in behaviour.
+- **Tests and docs**: two flaky tests are deterministic, and the API reference, the database diagrams and the architecture page are brought up to date.
+
+### 000000000000000.2 Upgrade
+
+`docker compose pull`, then `docker compose up -d`. The data volumes stay as they are.
+
+### 000000000000000.3 Check
+
+The app menu shows **Xexam v2.8**. In User management every row has a database icon right of the study-records book (greyed for administrators).
+
+### 000000000000000.4 Going back to v2.7
+
+Change `:latest` to `:v2.7` for the three images and run `docker compose up -d`. No restore is needed: nothing in the data changed.
 
 ## 00000000000000. Upgrading from v2.6 to v2.7
 

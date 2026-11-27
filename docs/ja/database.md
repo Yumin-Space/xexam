@@ -168,6 +168,21 @@ erDiagram
     attempts ||--o{ attempt_items : "attempt_id"
     users ||--o{ user_stats : "user_stats.user_id"
     users ||--o{ user_settings : "user_settings.user_id"
+    system_settings {
+        TEXT key PK "サイトスイッチ名"
+        TEXT value
+        TEXT updated_at
+        INTEGER updated_by "監査用のみ。外部キーなし"
+    }
+    activity_log {
+        INTEGER id PK
+        INTEGER ts "UNIX 秒"
+        TEXT actor "user · anon · system"
+        INTEGER user_id "スナップショット。外部キーなし"
+        TEXT action
+        TEXT result "ok · fail"
+        TEXT source "backend · ai"
+    }
 ```
 
 13 のテーブルです。スキーマ 11（v2.0）から、そのうち 9 つが**外部キー**付きで宣言され、すべて `ON DELETE NO ACTION` と明記されています（子の行を残してしまう削除は失敗します。コードはこれまでどおり、同じトランザクションの中で子の行を先に削除します）：`sessions.user_id`、`user_stats.user_id`、`user_settings.user_id`、`user_banks.user_id`、`attempts.user_id`（NULL 可）、`banks.owner_id`（NULL 可）→ `users(id)`、`attempt_items.attempt_id` → `attempts(id)`、`questions.bank_id`（NULL 可）、`imports.bank_id`（NULL 可）、`user_banks.bank_id` → `banks(id)`。意図的に**つないでいない**もの（テーブル定義にもその旨のコメントがあります）：`attempt_items.question_id` と `user_stats.question_id`（記録は削除された問題より長く残り、v0.5 より前の問題集は問題集ごとに区別しない id を使うため）、`activity_log.user_id`（ログは監査用のスナップショット）、`system_settings.updated_by`（書き込むだけの監査用の項目。つなぐと、サイトのスイッチを一度でも変更した管理者を削除できなくなります）。旧テーブルの `stats`（v0.5 以前の問題ごとの統計）と `settings`（v0.5 の設定）はスキーマ 11 からありません。その行は v3 への移行のときに最初の管理者にコピー済みです（`user_stats`、`user_settings`）。作り直した 9 つのテーブルは、名前を引用符で囲んだ `CREATE TABLE "banks" (…)` の形で保存されます（SQLite が名前を変えたテーブルをこう記録します）。
@@ -490,7 +505,7 @@ docker compose start
 
 > ⚠️ v0.1 からアップグレードする場合：データベースファイルの名前が変わり、新しいバージョンは `xexam.db` だけを読み込みます。データディレクトリに別の `.db` ファイルがあって `xexam.db` がない場合は、起動ログでお知らせします。そのファイルを `xexam.db` に名前変更してから起動してください（古いファイルは削除も読み取りもされません）。
 
-## 8. AI のデータベース（`xexam-ai.db`、v0.8。v2.0 からスキーマ 10）
+## 8. AI のデータベース（`xexam-ai.db`、v0.8。v2.1 からスキーマ 11）
 
 ai-service は、AI のものをすべて **専用の** SQLite データベースに保存します。このデータベースを開いて移行するのは ai-service だけです。バックエンドはこれを決して読まず、ai-service も `xexam.db` を決して開きません（データの境界。[architecture.md](architecture.md) の 5 節）。
 
@@ -503,7 +518,7 @@ ai-service は、AI のものをすべて **専用の** SQLite データベー�
 
 メインのデータベースと同じです：`busy_timeout` 5000 ms、`foreign_keys=ON`（ここではスキーマが実際に外部キーを使います。下を参照）、`synchronous=FULL`、WAL モード（`XEXAM_AI_SQLITE_JOURNAL=delete` でロールバックジャーナルのまま。規則は 2.1 節と同じ）、それに加えて **`secure_delete=ON`**。接続は 1 つでミューテックスの後ろに置き、書き込みはどれも `BEGIN IMMEDIATE … COMMIT` で行い、ロックは `.await` をまたぎません。起動時のログには `AI database: /data/xexam-ai.db (journal: wal)` と出ます。
 
-### 8.2 テーブル（スキーマ 10 時点）
+### 8.2 中核テーブル（v0.8 の構成。スキーマ 11 の全体図は 9.2 節）
 
 ```mermaid
 erDiagram
@@ -983,6 +998,7 @@ erDiagram
 ```mermaid
 erDiagram
   users ||--o{ chats : "CASCADE"
+  users ||--o| assess_latest : "CASCADE"
   users ||--o{ memories : "CASCADE"
   users |o--o{ tasks : "CASCADE"
   users |o--o{ usage : "SET NULL"
@@ -1161,6 +1177,18 @@ erDiagram
     text effort
     int updated_at
     text updated_by
+  }
+  assess_latest {
+    int user_id PK
+    text content
+    text lang
+    text model
+    text latest_at
+    int records
+    int answered
+    text day
+    int created_at
+    int runs
   }
   study_shared {
     int id PK

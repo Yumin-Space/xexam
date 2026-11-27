@@ -20,6 +20,7 @@ nothing covers a control) and the checks of what the screen must show:
 Made-up data only (the stub provider, demo model names, example.com hosts). Registered in checks.py (GROUPS_V13).
 """
 import json
+import os
 import re
 import time
 import urllib.request
@@ -91,6 +92,7 @@ VER_JS = """(() => { const v = document.querySelector('.ai-ver'); if (!v) return
 def cv_case(rc, lang, theme, size):
     d = rc.dev('sam', lang, theme, size)
     goto(d, '#/ai/%d' % versions_chat(rc), 2.4)
+    until(d, "document.querySelector('.ai-ver .ai-ver-n') && document.querySelector('.ai-regen')", 10)   # a busy machine renders later
     p = common(d, size)
     r = d.js(VER_JS)
     if not r:
@@ -104,22 +106,27 @@ def cv_case(rc, lang, theme, size):
             p.append('label "%s", inside %s, regenerate %s' % (r['label'], r['inside'], r['reg']))
         # the older version: tap the left arrow, the text becomes 1/2
         d.js("document.getElementById('ai-ver-prev-1') && document.getElementById('ai-ver-prev-1').click(); 1")
-        time.sleep(1.0)
+        until(d, "(document.querySelector('.ai-ver-n') || {}).textContent === '1/2'", 6)
         t1 = d.js("(document.querySelector('.ai-ver-n') || {}).textContent")
         if t1 != '1/2':
             p.append('after the left arrow the text is "%s"' % t1)
-        # back to the newest version (the chosen branch is stored in the chat), so every run starts from 2/2
+        # back to the newest version (the chosen branch is stored in the chat), so every run starts from 2/2; waits for the
+        # switch to finish (the arrows are disabled while it is saved), else the next case opens the chat at 1/2
+        until(d, "(() => { const b = document.getElementById('ai-ver-next-1'); return !!b && !b.disabled })()", 6)
         d.js("document.getElementById('ai-ver-next-1') && document.getElementById('ai-ver-next-1').click(); 1")
-        time.sleep(1.0)
+        until(d, "(document.querySelector('.ai-ver-n') || {}).textContent === '2/2' && !!document.getElementById('ai-ver-prev-1') && !document.getElementById('ai-ver-prev-1').disabled", 6)
     verdict(rc, 'W-V13-CV', 'ai', 'versions', 'sam', lang, theme, size, d, p, 'versions 2/2 -> 1/2, regenerate present, no overflow')
 
 
 def ed_case(rc, lang, theme, size):
     d = rc.dev('sam', lang, theme, size)
     goto(d, '#/ai/%d' % versions_chat(rc), 2.4)
+    # a busy machine renders later: wait for an enabled Edit, then for the banner
+    until(d, "(() => { const b = [...document.querySelectorAll('.ai-edit')].pop(); return !!b && !b.disabled })()", 10)
     p = []
     d.js("(() => { const b = [...document.querySelectorAll('.ai-edit')].pop(); if (b && !b.disabled) b.click(); return 1 })()")
-    time.sleep(0.8)
+    until(d, "(() => { const b = document.getElementById('ai-edit-banner'); return !!b && !b.hidden })()", 5)
+    time.sleep(0.3)
     r = d.js("""(() => { const b = document.getElementById('ai-edit-banner'); const c = document.getElementById('ai-edit-cancel'); if (!b || b.hidden || !c) return null;
       const br = b.getBoundingClientRect(), cr = c.getBoundingClientRect(); return {inside: br.left >= 0 && br.right <= innerWidth && cr.right <= innerWidth + 0.5, h: cr.height} })()""")
     if not r:
@@ -137,6 +144,32 @@ def ed_case(rc, lang, theme, size):
     verdict(rc, 'W-V13-ED', 'ai', 'edit-banner', 'sam', lang, theme, size, d, p, 'edit banner opens, fits, Cancel closes it')
 
 
+# The composer box (v2.3): the brain button (#ai-model-btn in #ai-model-pick), the input and Send in one box; compact = one row
+MM_BOX_JS = """(() => { const q = (s) => document.querySelector(s); const box = q('#ai-composer .ai-box'), bar = q('#ai-composer .ai-bar'),
+  inp = q('#ai-input'), pick = q('#ai-model-pick'), btn = q('#ai-model-btn'), send = q('#ai-send');
+  if (!box || !bar || !inp || !pick || !btn || !send || !btn.getClientRects().length) return null;
+  const R = (e) => e.getBoundingClientRect(); const b = R(box), i = R(inp), k = R(btn), n = R(send); const mid = (r) => (r.top + r.bottom) / 2;
+  const within = (r, o) => r.left >= o.left - 0.5 && r.right <= o.right + 0.5 && r.top >= o.top - 0.5 && r.bottom <= o.bottom + 0.5;
+  const compact = box.classList.contains('compact'); const a = compact ? null : R(bar);
+  return {compact, inBox: box.contains(inp) && box.contains(bar) && within(i, b) && within(k, b) && within(n, b) && (!a || within(a, b)),
+    inBar: bar.contains(pick) && pick.contains(btn) && bar.contains(send),
+    rowOrder: k.right <= i.left + 0.5 && i.right <= n.left + 0.5, rowMid: Math.abs(mid(k) - mid(n)) <= 2 && Math.abs(mid(k) - mid(i)) <= 3,
+    barRow: !!a && Math.abs(mid(k) - mid(n)) <= 1 && k.top >= a.top - 2.5 && k.bottom <= a.bottom + 2.5 && n.top >= a.top - 2.5 && n.bottom <= a.bottom + 2.5,
+    above: !!a && i.bottom <= a.top + 0.5, sides: k.right <= n.left && k.left - b.left < 24 && b.right - n.right < 24,
+    name: (btn.textContent || '').trim(), label: btn.getAttribute('aria-label') || '', dot: !!q('.ai-model-dot:not([hidden])'),
+    h: b.height, oldRow: !!q('.ai-composer-side'), oldSel: !!q('select#ai-model')} })()"""
+
+# The model menu (v1.9): the popover with the API select and the model select
+MM_POP_JS = """(() => { const pop = document.getElementById('ai-model-pop'), cn = document.getElementById('ai-model-conn'), ms = document.getElementById('ai-model-sel');
+  if (!pop || !cn || !ms || !pop.getClientRects().length) return null; const R = (e) => e.getBoundingClientRect(); const b = R(pop);
+  const real = (s) => [...s.options].filter((o) => !o.hidden && !o.disabled);
+  return {inside: b.left >= -0.5 && b.right <= innerWidth + 0.5 && b.top >= -0.5 && b.bottom <= innerHeight + 1, h: Math.min(R(cn).height, R(ms).height),
+    conns: real(cn).length, opts: real(ms).length, shown: ms.selectedIndex >= 0 ? ms.options[ms.selectedIndex].textContent : '',
+    expanded: document.getElementById('ai-model-btn').getAttribute('aria-expanded'),
+    head: (() => { const e = document.querySelector('.ai-conv-head'); if (!e || !e.getClientRects().length) return false; const h = R(e);
+      return b.top < h.bottom - 0.5 && b.bottom > h.top + 0.5 && b.left < h.right - 0.5 && b.right > h.left + 0.5 })()} })()"""
+
+
 def mm_case(rc, lang, theme, size):
     s = rc.session('admin')
     d = rc.dev('admin', lang, theme, size)
@@ -144,53 +177,94 @@ def mm_case(rc, lang, theme, size):
     s.call('/api/ai/free', {'free': True})
     try:
         goto(d, '#/ai', 2.2)
+        until(d, "document.querySelector('#ai-composer .ai-box')", 10)
         d.js("(() => { const b = document.querySelector('.ai-new, #ai-new'); if (b) b.click(); return 1 })()")
         time.sleep(1.0)
+        until(d, "(() => { const b = document.getElementById('ai-model-btn'); return !!b && b.getClientRects().length > 0 })()", 8)
         p = []
-        r = d.js("""(() => { const s = document.getElementById('ai-model'); if (!s || !s.getClientRects().length) return null; const b = s.getBoundingClientRect();
-          return {inside: b.left >= 0 && b.right <= innerWidth && b.bottom <= innerHeight + 1, h: b.height, groups: s.querySelectorAll('optgroup').length, opts: s.options.length, first: s.options[0].textContent} })()""")
-        if not r:
-            p.append('no model menu for an administrator in free mode')
-        else:
-            if not r['inside']:
-                p.append('the model menu is outside the screen')
-            if phone(size) and r['h'] < 36:
-                p.append('menu %d px high' % r['h'])
-            if 'demo-chat-small' not in r['first']:
-                p.append('the default entry names no model: "%s"' % r['first'])
-            if r['opts'] < 2:
-                p.append('only %d option(s)' % r['opts'])
-        # The composer is ONE box: the input on top, one bar under it with the brain button (left) and Send (right)
-        c = d.js("""(() => { const q = (s) => document.querySelector(s); const box = q('#ai-composer .ai-box'), bar = q('#ai-composer .ai-bar'),
-          inp = q('#ai-input'), pick = q('#ai-model-pick'), sel = q('#ai-model'), send = q('#ai-send'); if (!box || !bar || !inp || !pick || !sel || !send) return null;
-          const R = (e) => e.getBoundingClientRect(); const b = R(box), a = R(bar), i = R(inp), k = R(pick), n = R(send); const mid = (r) => (r.top + r.bottom) / 2;
-          const within = (r, o) => r.left >= o.left - 0.5 && r.right <= o.right + 0.5 && r.top >= o.top - 0.5 && r.bottom <= o.bottom + 0.5;
-          return {inBox: box.contains(inp) && bar.parentElement === box && within(i, b) && within(a, b), inBar: bar.contains(pick) && bar.contains(send) && pick.contains(sel),
-            oneRow: Math.abs(mid(k) - mid(n)) <= 1 && k.top >= a.top - 2.5 && k.bottom <= a.bottom + 2.5 && n.top >= a.top - 2.5 && n.bottom <= a.bottom + 2.5,
-            above: i.bottom <= a.top + 0.5, sides: k.right <= n.left && k.left - b.left < 24 && b.right - n.right < 24,
-            hidden: getComputedStyle(sel).opacity === '0', name: ((q('.ai-model-face') || {}).textContent || '').trim(), label: sel.getAttribute('aria-label') || '',
-            dot: !!q('.ai-model-dot:not([hidden])'), custom: sel.value !== '', h: b.height, empty: inp.value === '', oldRow: !!q('.ai-composer-side')} })()""")
+        # v1.9 replaced the v1.3 model select (#ai-model, laid over the brain button) with the brain button #ai-model-btn and its
+        # popover #ai-model-pop: the API (#ai-model-conn), then the model of that API (#ai-model-sel); v2.3 made the empty box one
+        # compact row (brain, input, Send) that expands to the input above a bar (brain left, Send right) when the text wraps.
+        # This checks that design with the v1.3 strength: the box, the rows, the icon-only brain button with a name, the dot,
+        # and the menu inside the screen with the default model named and at least 2 choices.
+        c = d.js(MM_BOX_JS)
         if not c:
             p.append('the composer has no box / bar / brain button / Send')
         else:
             if not c['inBox'] or not c['inBar']:
-                p.append('the input and the bar are not inside the one box, or a button is outside the bar')
-            if not c['oneRow'] or not c['sides']:
-                p.append('the brain button (left) and Send (right) are not on one bar')
-            if not c['above']:
-                p.append('the input is not above the bar')
-            if not c['hidden'] or c['name']:
-                p.append('the model button shows text ("%s") or the select is visible' % c['name'])
+                p.append('the input, the brain button or Send is outside the one box')
+            if not c['compact']:
+                p.append('the empty box is not the compact one-row box')
+            elif not c['rowOrder'] or not c['rowMid']:
+                p.append('the empty box is not one row of brain (left), input and Send (right)')
+            if c['name']:
+                p.append('the brain button shows text ("%s")' % c['name'])
             if not c['label']:
-                p.append('the model select has no name')
-            if c['dot'] != c['custom']:
-                p.append('the dot (%s) does not follow the choice (not the default: %s)' % (c['dot'], c['custom']))
-            if c['oldRow']:
-                p.append('the old composer side column is still there')
-            if size[0] == 393 and c['empty'] and c['h'] > 120:
+                p.append('the brain button has no name')
+            if c['dot']:
+                p.append('the dot shows while the chat follows the default model')
+            if c['oldRow'] or c['oldSel']:
+                p.append('the old composer side column or the v1.3 model select is still there')
+            if size[0] == 393 and c['h'] > 120:
                 p.append('the empty box is %d px high (at most 120)' % c['h'])
+        # two lines expand the box: the input above one bar with the brain button (left) and Send (right)
+        d.js("(() => { const t = document.getElementById('ai-input'); if (t) { t.focus(); t.value = 'a' + String.fromCharCode(10) + 'b'; t.dispatchEvent(new Event('input', {bubbles: true})); } return 1 })()")
+        time.sleep(0.5)
+        e = d.js(MM_BOX_JS)
+        if c and e:
+            if e['compact']:
+                p.append('two lines of text did not expand the box')
+            else:
+                if not e['barRow'] or not e['sides']:
+                    p.append('expanded: the brain button (left) and Send (right) are not on one bar')
+                if not e['above']:
+                    p.append('expanded: the input is not above the bar')
+                if not e['inBox']:
+                    p.append('expanded: the input or the bar is outside the box')
+        d.js("(() => { const t = document.getElementById('ai-input'); if (t) { t.value = ''; t.dispatchEvent(new Event('input', {bubbles: true})); t.blur(); } return 1 })()")
+        time.sleep(0.4)
+        # the model menu: the brain button opens it
+        r = None
+        if c:
+            d.tap_sel('#ai-model-btn', wait=0.8)
+            until(d, "document.getElementById('ai-model-sel')", 5)
+            r = d.js(MM_POP_JS)
+        if not r:
+            p.append('no model menu for an administrator in free mode')
+        else:
+            if r['expanded'] != 'true':
+                p.append('aria-expanded is %r while the model menu is open' % r['expanded'])
+            if not r['inside']:
+                p.append('the model menu is outside the screen')
+            # v2.8: in the empty chat the box is centred; its menu opens above it only when it fits under the chat head, else
+            # below it (pages/ai.ts placeGreetPops), so it never covers the head's title and buttons
+            if r['head']:
+                p.append('the open model menu covers the chat head')
+            if phone(size) and r['h'] < 36:
+                p.append('menu fields %d px high' % r['h'])
+            if 'demo-chat-small' not in r['shown']:
+                p.append('the default entry names no model: "%s"' % r['shown'])
+            if r['conns'] < 1 or r['opts'] < 2:
+                p.append('only %d API(s) / %d model option(s)' % (r['conns'], r['opts']))
+            # the open menu's own controls (the box under the open popover is covered on purpose; the page is measured closed below)
+            a = d.js("(() => { const a = window.__walk.audit({touch: %s, within: '#ai-model-pop'}); const o = window.__walk.overflow(); return {small: a.small, covered: a.covered, n: a.count, doc: o.doc} })()"
+                     % ('true' if phone(size) else 'false'))
+            if a['n'] < 3:
+                p.append('menu: only %d controls measured' % a['n'])
+            if a['small']:
+                p.append('menu small: ' + '; '.join(a['small'][:4]))
+            if a['covered']:
+                p.append('menu covered: ' + '; '.join(a['covered'][:4]))
+            if a['doc'] > 1:
+                p.append('menu: the page scrolls sideways (%s px)' % a['doc'])
+            d.key('Escape', 'Escape', 27)
+            time.sleep(0.4)
+            if d.js("!!document.getElementById('ai-model-pop')"):
+                d.js("(() => { const b = document.getElementById('ai-model-close'); if (b) b.click(); return 1 })()")
+                time.sleep(0.3)
         p += common(d, size)
-        verdict(rc, 'W-V13-MM', 'ai', 'model-menu', 'admin', lang, theme, size, d, p, 'model menu inside the screen (%s groups, %s options)' % (r and r['groups'], r and r['opts']))
+        verdict(rc, 'W-V13-MM', 'ai', 'model-menu', 'admin', lang, theme, size, d, p,
+                'compact box, expanded box and model menu inside the screen (%s APIs, %s models)' % (r and r['conns'], r and r['opts']))
     finally:
         s.call('/api/ai/free', {'free': bool(was)})
 
@@ -198,19 +272,29 @@ def mm_case(rc, lang, theme, size):
 # ------------------------------------------------------------------------------------------------ AI settings
 def ac_case(rc, lang, theme, size):
     d = rc.dev('admin', lang, theme, size)
-    goto(d, '#/ai-settings', 2.6)
+    from checks import quiet
+    goto(d, '#/ai-settings', 1.2)
+    # the tab draws after several requests: wait for the connections and the model rows instead of a fixed time
+    until(d, "document.querySelectorAll('li.ais-conn:not(.ais-conn-add)').length >= 2 && document.querySelector('.ais-slot')", 10)
+    quiet(d)
     p = []
-    r = d.js("""(() => ({cards: document.querySelectorAll('.ais-scard').length, conns: document.querySelectorAll('li.ais-conn:not(.ais-conn-add)').length,
-      slots: document.querySelectorAll('.ais-slot').length, sw: !!document.getElementById('ais-switches-h'), add: !!document.querySelector('.ais-conn-add button'),
-      chips: document.querySelectorAll('.ais-chip').length, http: document.querySelectorAll('.ais-conn-http').length}))()""")
+    # v1.9: the separate feature-switch card is gone; every model row except Default carries its own feature switch
+    r = d.js("""(() => { const rows = [...document.querySelectorAll('li.ais-slot')];
+      const sw = rows.map(li => ({id: li.id, n: li.querySelectorAll('.ais-slot-h button.mini-switch[role=switch][aria-label]').length}));
+      return {cards: document.querySelectorAll('.ais-scard').length, conns: document.querySelectorAll('li.ais-conn:not(.ais-conn-add)').length,
+      slots: rows.length, sw, oldCard: !!document.getElementById('ais-switches-h'), add: !!document.querySelector('.ais-conn-add button'),
+      chips: document.querySelectorAll('.ais-chip').length, http: document.querySelectorAll('.ais-conn-http').length} })()""")
     if r['cards'] < 1:
         p.append('no status cards')
     if r['conns'] < 2:
         p.append('%d connection cards (the stack seeds 2)' % r['conns'])
-    if r['slots'] < 1:
-        p.append('no model slot rows')
-    if not r['sw']:
-        p.append('no feature switches card')
+    if r['slots'] < 2:
+        p.append('%d model slot rows' % r['slots'])
+    bad_sw = [x['id'] for x in r['sw'] if x['n'] != (0 if x['id'] == 'ais-slot-default' else 1)]
+    if bad_sw or not any(x['id'] == 'ais-slot-default' for x in r['sw']):
+        p.append('model rows without exactly one named feature switch (Default: none): %s' % (bad_sw or 'no Default row'))
+    if r['oldCard']:
+        p.append('the old feature switches card is back')
     if not r['add']:
         p.append('no Add connection button')
     p += common(d, size)
@@ -227,7 +311,7 @@ def ac_case(rc, lang, theme, size):
                 p.append('the connection form sticks out of the screen')
             p += ['form ' + x for x in common(d, size)]
     verdict(rc, 'W-V13-AC', 'ai-settings', 'connections', 'admin', lang, theme, size, d, p,
-            '%d status cards, %d connections, %d slots, switches card, form' % (r['cards'], r['conns'], r['slots']))
+            '%d status cards, %d connections, %d slots with their feature switches, form' % (r['cards'], r['conns'], r['slots']))
 
 
 def near_miss(text):
@@ -241,11 +325,14 @@ def near_miss(text):
 def at_case(rc, lang, theme, size):
     d = rc.dev('admin', lang, theme, size)
     p = []
+    from checks import quiet
     for tab in ('users', 'usage', 'safety', 'gen'):
-        goto(d, '#/ai-settings?tab=' + tab, 2.2)
-        if not d.js("!!document.getElementById('ais-card') && document.getElementById('ais-tab-%s').getAttribute('aria-pressed') === 'true'" % tab):
+        goto(d, '#/ai-settings?tab=' + tab, 1.2)
+        # the page draws after several requests (slower on a busy machine): wait for it instead of a fixed time
+        if not until(d, "!!document.getElementById('ais-card') && !!document.getElementById('ais-tab-%s') && document.getElementById('ais-tab-%s').getAttribute('aria-pressed') === 'true'" % (tab, tab), 10):
             p.append('%s: the tab did not open' % tab)
             continue
+        quiet(d)
         p += ['%s: %s' % (tab, x) for x in common(d, size) if 'ptb-sort' not in x.split(';')[0] and not near_miss(x)]
         if tab == 'users' and p:
             p.append('debug ' + json.dumps(d.js("""(() => { const f = [...document.querySelectorAll('.ais-calls-fig')].map(e => { const b = e.getBoundingClientRect(); return [Math.round(b.left), Math.round(b.right), e.textContent] })
@@ -263,6 +350,8 @@ def us_case(rc, lang, theme, size):
         for on in (False, True):
             s.call('/api/users/signin-info', {'enabled': on})
             goto(d, '#/users', 2.2)
+            # the app may still be loading ("Reading the question banks...") on a busy stack: wait for the rows
+            until(d, "document.querySelector('#us-card .us-row')", 15.0)
             # v1.4: two tabs; the list is the first, the eye and the Clear button are on the sign-in tab
             r = d.js("""(() => ({order: [...document.querySelectorAll('.us-row')].map(r => [...r.querySelectorAll('.us-facts .us-meta')].map(m => m.textContent.trim())),
                 facts: document.querySelectorAll('.us-meta').length,
@@ -274,8 +363,17 @@ def us_case(rc, lang, theme, size):
                 p.append('the users tab shows the sign-in panel or has no card')
             if phone(size) and any(t[2] < 43.5 for t in r['tabs']):
                 p.append('a user management tab is under 44 px high')
-            p += ['users tab: ' + x for x in common(d, size)]
+            up = ['users tab: ' + x for x in common(d, size)]
+            if up:
+                # verdict() shoots the page at the end (the sign-in tab): keep a picture of the users list that failed
+                try:
+                    d.shot(os.path.join(rc.out, 'W-V13-US-users-list-%s-%s-%s-eye-%s.png' % (lang, theme, sz(size), 'open' if on else 'closed')))
+                except Exception:
+                    pass
+            p += up
             goto(d, '#/users?tab=signin', 2.2)
+            # the sign-in panel draws after its settings arrive: wait for the eye and the Clear button
+            until(d, "document.getElementById('us-signin') && document.getElementById('us-signin-clear')", 15.0)
             r.update(d.js("""(() => { const sw = document.getElementById('us-signin');
               const b = sw ? sw.getBoundingClientRect() : null;
               const cl = document.getElementById('us-signin-clear'); const cb = cl ? cl.getBoundingClientRect() : null;

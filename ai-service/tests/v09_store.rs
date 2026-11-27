@@ -1588,8 +1588,9 @@ fn the_retention_sweep_works_in_batches_and_keeps_running_chats() {
 
 #[test]
 fn a_burst_sweep_lets_other_writers_in_between_batches() {
+    use std::collections::BTreeSet;
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
     use xexam_ai_service::retention::{sweep_batches, SWEEP_PAUSE};
     let dir = tempfile::tempdir().expect("dir");
     let store = open(dir.path());
@@ -1603,35 +1604,37 @@ fn a_burst_sweep_lets_other_writers_in_between_batches() {
         })
         .expect("seed");
     let done = AtomicBool::new(false);
-    let (deleted, got, longest, total) = std::thread::scope(|sc| {
+    let (deleted, seen) = std::thread::scope(|sc| {
+        // The other writer looks at how many old chats are left inside each of its own write transactions. A count that
+        // is neither 250 nor 0 can only be seen when it got the lock between two batches, so the check is about the
+        // order of the writes, not about how long anything took.
         let other = sc.spawn(|| {
-            let mut got = 0usize;
-            let mut longest = Duration::ZERO;
+            let mut seen = BTreeSet::new();
             while !done.load(Ordering::SeqCst) {
-                let t = Instant::now();
-                store
-                    .write(|tx| tx.execute("UPDATE chats SET title = title WHERE id = 0", []))
+                let left: i64 = store
+                    .write(|tx| {
+                        tx.query_row("SELECT COUNT(*) FROM chats WHERE title = 'old'", [], |r| {
+                            r.get(0)
+                        })
+                    })
                     .expect("other write");
-                longest = longest.max(t.elapsed());
-                got += 1;
-                std::thread::sleep(Duration::from_millis(10));
+                seen.insert(left);
+                std::thread::yield_now();
             }
-            (got, longest)
+            seen
         });
-        let started = Instant::now();
+        // the production pause is what lets the writer in; pin that it is not cut to nothing
+        assert!(SWEEP_PAUSE >= Duration::from_millis(10));
         let n = sweep_batches(&store, NOW - 100, &[], SWEEP_PAUSE);
-        let total = started.elapsed();
         done.store(true, Ordering::SeqCst);
-        let (got, longest) = other.join().expect("join");
-        (n, got, longest, total)
+        (n, other.join().expect("join"))
     });
     assert_eq!(deleted, 250);
-    // 13 batches with 12 pauses of 20 ms: the other writer gets in again and again, and never waits for the sweep. The
-    // bound is relative to the sweep's own time, not a fixed number of milliseconds: a slow CI runner (shared disk) makes
-    // every batch slower, but a writer that waits less than half of the whole sweep was let in between batches.
-    assert!(got >= 6, "the other writer got the lock only {got} times");
+    // 13 batches (12 full ones of 20 and a rest). A sweep that held the lock throughout would leave only 250 and 0 to be
+    // seen; two mid-sweep states prove the writer got in between batches (the exact number depends on the scheduler).
+    let mid = seen.iter().filter(|n| **n > 0 && **n < 250).count();
     assert!(
-        longest * 2 < total,
-        "longest wait {longest:?} of a sweep that took {total:?}"
+        mid >= 2,
+        "the other writer saw only {mid} mid-sweep states: {seen:?}"
     );
 }

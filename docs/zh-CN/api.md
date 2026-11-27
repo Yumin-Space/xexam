@@ -1069,9 +1069,10 @@ data: {"chatId":12,"chatTitle":"2026-11-12 09:30","userMessageId":41,"assistantM
 
 ### 5.10 思考强度和补查（v1.6）
 
-- **思考强度**：`GET settings` 的回答里，每个槽位多一个 `slots.<slot>.effort`（`null` 或 `{"family", "level"}`），顶层多一个 `effortLevels`（每一族可用的级别，按发送的写法）。参数：Anthropic `output_config.effort`，OpenAI `reasoning_effort`，Google `extra_body.google.thinking_config.thinking_level`，Responses API 嵌套的 `reasoning.effort`，Gemma `thinking_level`（和 Google 位置相同）。带参数的请求被拒绝（HTTP 400 / 422）时，去掉参数再发送一次，并在内存里记住这个连接不支持它；**默认**什么都不发送。
+- **思考强度**：`GET settings` 的回答里，每个槽位多一个 `slots.<slot>.effort`（`null` 或 `{"family", "level"}`），顶层多一个 `effortLevels`（每一族可用的级别，按发送的写法）。参数：Anthropic `output_config.effort`，OpenAI `reasoning_effort`，Google `extra_body.google.thinking_config.thinking_level`，Responses API 嵌套的 `reasoning.effort`（`gemma` 族在 v1.9 删除，请求它是 400）。带参数的请求被拒绝（HTTP 400 / 422）时，去掉参数再发送一次，并在内存里记住这个连接不支持它；**默认**什么都不发送。
 - **结构化的题目回答**：要求回答是题目时，ai-service 向服务商要结构化输出（Anthropic `output_config.format` json_schema，OpenAI 兼容 `response_format` json_schema strict，OpenAI Responses `text.format`：`{"type":"json_schema","name":"answer","strict":true,"schema":...}`），服务商拒绝时改用普通请求（按连接记住）。每道题的正确选项只在 `answer` 字段里写一次（字母）；旧的每个选项一个 `correct` 的写法仍然能读。*（v2.4）* 对 OpenAI 兼容的连接，这些调用发送 `"stream": false`，一次读完整个回答。这种调用超时或收到 HTTP 504 / 524 时，这个连接和模型的后台任务改回流式，直到 ai-service 重启（只记在内存里）。AI 对话和学习提问始终是流式的。用字母指代选项（"Option B"、"选项B"、"C项"、"AとB"）时，改写成同一种语言里加引号的选项文字，而不是拒绝这道题；"A项目" 这样的普通词语保持不变。`A.`、`(B)` 之类的选项标签，只有每个选项都按顺序以自己的字母开头时才去掉。导入题目时，只修正由 AI 编写四个选项的题的解析；保留文件原有选项的题不做改动。
 - **补查**：`POST /internal/ai/geo/source` 把来源设为 `api`（或 5.9 节的服务商设置被保存）之后，后端会把没有所在地的已存地址再查一遍（见 [usage.md](usage.md) 的 14.2 节）。补查走同一对 `geo/next` / `geo/result` 路由：实时查询优先，补查每分钟 30 次，限流时暂停 15 分钟，每个地址最多 3 次，已有的所在地从不被覆盖。
+- **日志行的所在地**：在 Cloudflare 模式下，`POST /internal/ai/activity` 的事件可带可选的 `country`、`region`、`city`（来自请求 `X-Geo-*` 请求头的所在地；Nginx 现在只对可信代理把这些头传给 ai-service）。后端像处理请求头一样清理它们（国家是两个字母，不是 `XX` 或 `T1`；地区和城市去掉控制字符并截到 64 个字符；非字符串的值是 400），并且只在登录信息的眼睛睁开时才和地址一起保存。`api` 模式下它们被忽略，使用该地址已缓存的查询结果。
 
 ### 5.11 连接开关、按功能的开关、安全上限分组和匀速发送 *(v1.9)*
 
@@ -1295,7 +1296,7 @@ data: {"chatId":12,"chatTitle":"2026-11-12 09:30","userMessageId":41,"assistantM
 
 - **题库下载**：`GET /api/banks/download?id=&format=xlsx|docx`（新的访问级别 **可下载题库**）；用户的 `canDownloadBanks`（`GET /api/auth/state`、`GET /api/users`、`POST /api/users/create`、`POST /api/users/update`）；系统日志事件 `bank.download`。
 - **AI 设置**：`POST /api/ai/admin/models/effort`；设置的回答带 `slots.<slot>.effort` 和 `effortLevels`；系统日志事件 `ai.settings.effort`。
-- **补查**：见 5.10 节；内部路由没有新增。
+- **补查和所在地**：见 5.10 节；`POST /internal/ai/activity` 的事件可带可选的 `country`、`region`、`city`。
 - **版本**：`GET /api/info` 返回 `"version": "1.6"`，AI 服务的 `/healthz` 也一样。
 
 ### v1.9 的变化（相对 v1.8）

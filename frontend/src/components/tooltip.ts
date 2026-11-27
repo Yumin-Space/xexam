@@ -90,12 +90,16 @@ const wrapOf = (target: EventTarget | null): HTMLElement | null =>
 export function installTooltips(): void {
   if (installed) return;
   installed = true;
-  document.addEventListener('mouseover', (e) => {
+  const enter = (e: Event): void => {
     const wrap = wrapOf(e.target);
     if (wrap === hovered) return;
     hovered = wrap;
     if (wrap) place(wrap);
-  });
+  };
+  document.addEventListener('mouseover', enter);
+  // A scroll under a still mouse hides the tip and forgets the hovered tip; the next mouse move over a tip shows it again
+  // (mouseover does not fire again inside the same element)
+  document.addEventListener('mousemove', (e) => { if (hovered === null) enter(e); }, { passive: true });
   document.addEventListener('focusin', (e) => {
     const wrap = wrapOf(e.target);
     if (wrap) place(wrap);
@@ -117,7 +121,7 @@ export function installTooltips(): void {
     own.classList.toggle('tip-open', open);
     if (open) place(own);
   }, true);
-  window.addEventListener('scroll', () => hideAll(), true);
+  window.addEventListener('scroll', () => { hovered = null; hideAll(); }, true);
   window.addEventListener('resize', () => hideAll());
 }
 

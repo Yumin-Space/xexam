@@ -127,7 +127,10 @@
     const inside = (x, y) => { const h = document.elementFromPoint(x, y); return !!h && (el === h || el.contains(h)); };
     if (!inside(cx, cy)) return null;
     const reach = (dx, dy) => { let n = 0; while (n < 40 && inside(cx + dx * (n + 1), cy + dy * (n + 1))) n++; return n; };
-    return { w: reach(-1, 0) + reach(1, 0) + 1, h: reach(0, -1) + reach(0, 1) + 1 };
+    const L = reach(-1, 0), R = reach(1, 0), U = reach(0, -1), D = reach(0, 1);
+    // what stops the scan in each direction (named in the report, so a covered tap area says what covers it)
+    const stop = (dx, dy, n) => { const h = document.elementFromPoint(cx + dx * (n + 1), cy + dy * (n + 1)); return h ? sel(h) : 'none'; };
+    return { w: L + R + 1, h: U + D + 1, by: 'L' + L + ' ' + stop(-1, 0, L) + ' R' + R + ' ' + stop(1, 0, R) + ' U' + U + ' ' + stop(0, -1, U) + ' D' + D + ' ' + stop(0, 1, D) };
   };
   const pinnedBottomTop = () => {
     let top = innerHeight;
@@ -155,7 +158,10 @@
       const pos = getComputedStyle(e).position;
       const pinned = e.closest('.topbar, .pfoot, .home-go, .ai-composer, dialog') || pos === 'fixed' || pos === 'sticky';
       // not in the free area (above the pinned bottom bar / composer, below the top row): scroll it there first
-      if (!pinned && (r.top < W.topH() + 4 || r.bottom > Math.min(innerHeight, pinnedBottomTop()) - 4)) {
+      // (the tap margin of a small control counts on both sides: its invisible ::after must clear the pinned top row too, or the
+      // top row covers the top of the tap area, as for a switch in the first visible list row)
+      const mg = Math.max(0, (44 - r.height) / 2);
+      if (!pinned && (r.top - mg < W.topH() + 4 || r.bottom > Math.min(innerHeight, pinnedBottomTop()) - 4)) {
         e.scrollIntoView({ block: 'center', inline: 'nearest' });
         r = e.getBoundingClientRect();
       }
@@ -191,7 +197,7 @@
         res.covered.push(sel(e) + ' "' + label(e) + '" covered by ' + sel(hit));
       }
       if (touch && hs && (hs.w < 43.5 || hs.h < 43.5)) {
-        res.small.push(sel(e) + ' "' + label(e) + '" hit ' + Math.round(hs.w) + 'x' + Math.round(hs.h) + ' box ' + Math.round(r.width) + 'x' + Math.round(r.height));
+        res.small.push(sel(e) + ' "' + label(e) + '" hit ' + Math.round(hs.w) + 'x' + Math.round(hs.h) + ' box ' + Math.round(r.width) + 'x' + Math.round(r.height) + ' [' + hs.by + ']');
       }
     }
     window.scrollTo(0, y0);
@@ -356,8 +362,15 @@
   W.tables = () => [...document.querySelectorAll('table')].filter(visible).map((t) => {
     const host = t.closest('.panel, .card, section, .main') || document.body;
     const hb = host.getBoundingClientRect(), tb = t.getBoundingClientRect();
+    // A table may scroll sideways inside its own box (records, the A-OWNER-59 mini tables in .ais-tablewrap): it then counts as
+    // scrolling only when that box really scrolls and itself stays inside the card
+    let sc = null;
+    for (let p = t.parentElement; p && p !== host; p = p.parentElement) if (/(auto|scroll)/.test(getComputedStyle(p).overflowX)) { sc = p; break; }
+    const sb = sc ? sc.getBoundingClientRect() : null;
+    const ownScroll = !!sc && sc.scrollWidth > sc.clientWidth + 1 && sb.left >= hb.left - 1 && sb.right <= hb.right + 1;
     return { el: sel(t), w: Math.round(tb.width), host: Math.round(hb.width), right: Math.round(tb.right), hostRight: Math.round(hb.right),
-      wide: tb.right > hb.right + 1 || tb.width > hb.width + 1, scrolls: !!t.closest('.rec-scroll, .tbl-scroll') && t.scrollWidth > (t.parentElement || t).clientWidth + 1 };
+      wide: tb.right > hb.right + 1 || tb.width > hb.width + 1,
+      scrolls: (!!t.closest('.rec-scroll, .tbl-scroll') && t.scrollWidth > (t.parentElement || t).clientWidth + 1) || ownScroll };
   });
 
   // ------------------------------------------------------------------ AI Chat (W-CH-*)

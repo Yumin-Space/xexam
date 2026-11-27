@@ -343,8 +343,12 @@ def start_quiz(d, kind, count=None):
     d.js(CLEAR_SESSION)
     d.reload(1.4)
     d.js(CHECKS_JS)
+    # the page and its bank list can come later than the fixed pause on a busy machine: ticking or starting too early left the
+    # page on Exam & practice (no start button yet, or nothing ticked and the start buttons disabled)
+    until(d, "document.querySelector('.page-home .home-go-btns .btn.big') && document.querySelector('.home-picklist input[type=checkbox]')", 10)
     # v2.4: Home ticks nothing by default; tick every bank first (Select all, or the only bank's box)
     d.js(TICK_ALL_JS)
+    until(d, "document.querySelector('.page-home .home-go-btns .btn.big:not([disabled]):not([aria-disabled=true])')", 5)
     time.sleep(0.3)
     if count:
         set_count(d, count)
@@ -1075,15 +1079,19 @@ def chat_layout_case(rc, lang, theme, size):
 
 
 def chat_title_case(rc, lang, theme, size):
-    """W-CH-2: on a phone the only header is the chat header row (44 px, no h1 title row); wider, the title row stays 44 px."""
+    """W-CH-2: on a phone the only header is the chat header row (44 px, no h1 title row); wider, the title row stays 44 px.
+    v2.3: the phone header is 44 px inside its 1 px bottom hairline (a 45 px box, ai.css), so it is measured inside its
+    border lines: exactly the 44 px row its 44 px buttons need."""
     d = rc.dev('sam', lang, theme, size)
     goto(d, '#/ai', 2.0)
+    until(d, "document.querySelector('.page-ai .ai-conv-head, .page-ai .ai-head')", 10)
     r = d.js("""(() => { const vis = e => !!e && e.getClientRects().length > 0 && getComputedStyle(e).visibility !== 'hidden';
       const h = [...document.querySelectorAll('h1')].find(vis); const c = document.querySelector('.ai-conv-head');
       const row = h ? h.parentElement : null;
-      return {h1: !!h, row: row ? row.getBoundingClientRect().height : null, chat: vis(c) ? c.getBoundingClientRect().height : null} })()""")
+      const inner = e => { const s = getComputedStyle(e); return e.getBoundingClientRect().height - parseFloat(s.borderTopWidth) - parseFloat(s.borderBottomWidth); };
+      return {h1: !!h, row: row ? row.getBoundingClientRect().height : null, chat: vis(c) ? inner(c) : null} })()""")
     if size[0] < 720:
-        ok = not r['h1'] and r['chat'] is not None and r['chat'] <= 44.5
+        ok = not r['h1'] and r['chat'] is not None and 43.5 <= r['chat'] <= 44.5
         detail = 'phone chat header %s px high (limit 44), title row %s' % (round(r['chat'], 1) if r['chat'] else '?', 'shown' if r['h1'] else 'hidden')
     else:
         ok = r['row'] is not None and r['row'] <= 44.5
@@ -1100,6 +1108,12 @@ def chat_keyboard_case(rc, lang, theme, size):
     before = W(d, 'chat')
     d.tap_sel('.ai-composer textarea, #ai-input')
     time.sleep(0.3)
+    # A keyboard that shrinks the layout (Android) covers the home-indicator / navigation-bar strip, so the page's bottom edge
+    # is no longer the screen's and the browser reports no bottom safe-area inset; keeping the emulated 34 px inset here
+    # charged the composer for a strip the keyboard hides (the iOS layout keeps the window and is checked in (b) below)
+    if d.safe_area_supported and d.w < d.h:
+        from device import PORTRAIT_INSETS
+        d.cdp.call('Emulation.setSafeAreaInsetsOverride', insets=dict(PORTRAIT_INSETS, bottom=0))
     d.keyboard(True)
     time.sleep(0.6)
     after = W(d, 'chat')
@@ -1117,6 +1131,7 @@ def chat_keyboard_case(rc, lang, theme, size):
     rc.rec('W-CH-3', 'ai', 'keyboard-send-focus', 'sam', size, lang, theme, active != 'ai-input',
            'focus after Send: %s' % (active or 'none'), d if active == 'ai-input' else None)
     d.keyboard(False)
+    d._insets()     # the keyboard is gone: the home-indicator inset is back
     time.sleep(0.5)
     back = W(d, 'chat')
     gap = back['composer'] and abs(back['composer']['b'] - back['vh']) > 1.5
@@ -1194,13 +1209,18 @@ def g_users(rc):
     if not rc.want('W-US-1') or not rc.walk.wants_page('users'):
         return
     for lang in rc.langs(LANGS):
-        for size in rc.sizes([(360, 740), (390, 844)], portrait_phone):
+        sizes = rc.sizes([(320, 640), (360, 740), (390, 844), (412, 915)], portrait_phone)
+        if not rc.args.widths and (320, 640) not in sizes:
+            sizes.insert(0, (320, 640))
+        for size in sizes:
             rc.guard('W-US-1', 'users', users_case, rc, lang, rc.themes(['light'])[0], size)
 
 
 def users_case(rc, lang, theme, size):
     d = rc.dev('admin', lang, theme, size)
     goto(d, '#/users', 2.0)
+    # the app may still be loading ("Reading the question banks...") on a busy stack: wait for the list
+    until(d, "document.querySelector('.us-row')", 15.0)
     r = d.js("""(() => { const q = 'a[href], button, input:not([type=hidden]), select, [role=switch]';
       const els = [...document.querySelectorAll('.main ' + q.split(', ').join(', .main '))].filter(e => (e.offsetParent || e.getClientRects().length) && e.getBoundingClientRect().width > 1);
       const boxes = els.map(e => ({e, b: window.__walk.hitBox(e)}));
@@ -1219,17 +1239,89 @@ def users_case(rc, lang, theme, size):
     if r['under']:
         problems.append('7 px under the AI+ switch a tap hits "%s"' % r['under'])
     rc.rec('W-US-1', 'users', 'hit-areas', 'admin', size, lang, theme, not problems, '; '.join(problems) or '%d controls, no overlap%s' % (r['n'], '' if r['hasSwitch'] else ' (no switch found)'), d if problems else None)
-    # The bank-access tools row lives in the add form: open it first
+    # v2.8: no icon of a row's icon group stands alone on a line (7 icons with the database icon and Unlock once wrapped the trash
+    # icon alone at 320 px); the seeded user "jordan" is locked, so the row with the Unlock button is covered too
+    lone = d.js("""(() => { const out = [];
+      for (const row of document.querySelectorAll('.us-row')) {
+        const vis = e => e.getClientRects().length && e.getBoundingClientRect().width > 1;
+        const ics = [...row.querySelectorAll('.ibtn')].filter(vis);
+        const others = [...row.querySelectorAll('.us-line > *, .us-line .tag, .us-icons > *, .us-ailine, .us-disp')].filter(vis);
+        const name = (row.getAttribute('data-name') || '').slice(0, 12);
+        for (const e of ics) {
+          const t = e.getBoundingClientRect().top;
+          if (!others.some(o => o !== e && !e.contains(o) && Math.abs(o.getBoundingClientRect().top - t) < 8 && o.getBoundingClientRect().height > 1))
+            out.push(name + ' alone: ' + (e.getAttribute('aria-label') || '').slice(0, 20));
+        }
+        const ur = row.getBoundingClientRect(), over = ics.filter(e => e.getBoundingClientRect().right > ur.right + 1 || e.getBoundingClientRect().left < ur.left - 1).length;
+        if (over) out.push(name + ' ' + over + ' icon(s) outside the row');
+      }
+      return {out: out.slice(0, 5), locked: !!document.querySelector('.us-row [id^=us-unlock-]')} })()""")
+    if not lone['locked']:
+        lone['out'].append('no locked row found (the seed locks jordan)')
+    lone_p = ['icon alone on a line / outside the row: ' + '; '.join(lone['out'])] if lone['out'] else []
+    rc.rec('W-US-1', 'users', 'icons-lines', 'admin', size, lang, theme, not lone_p, '; '.join(lone_p) or 'no icon alone on a line%s' % ('' if lone['locked'] else ' (no locked row to check Unlock)'), d if lone_p else None)
+    # The bank-access tools row (Manage banks, Download banks, then the Select all / Deselect all pair). Until v1.5 it had three
+    # tools on one line (spread <= 4 px); since v1.6 it has four and may wrap to two lines on a phone (styles/users.css), so the
+    # check is: at most two lines, the All / None pair together on one line at the right end, no tool cut off or overlapping.
+    # It is checked in the Add user form and (v2.8) in the bank-access dialog opened from a row's database icon.
+    problems, seen = [], []
     if d.js("(() => { const b = document.getElementById('us-add-btn'); if (!b || document.getElementById('us-add')) return 0; b.click(); return 1 })()"):
-        time.sleep(0.8)
-    row = d.js("""(() => { const e = [...document.querySelectorAll('label, button, a, span')].find(x => (x.offsetParent || x.getClientRects().length) && /^(全选|All|全選択|すべて選択)$/.test((x.innerText || '').trim()));
-      if (!e) return null; let p = e.parentElement; for (let i = 0; i < 3 && p; i++) { if (/(全部不选|None|全解除|すべて解除)/.test(p.innerText || '')) break; p = p.parentElement }
-      const items = [...p.querySelectorAll('label, button, input[type=checkbox]')].filter(x => x.offsetParent || x.getClientRects().length);
-      const ys = items.map(x => { const r = x.getBoundingClientRect(); return r.top + r.height / 2 }); return {n: items.length, spread: Math.max(...ys) - Math.min(...ys)} })()""")
-    if row is None:
+        until(d, "document.querySelector('#us-add .us-banktools')", 5.0)
+    row = d.js(US_BANKTOOLS_JS % json.dumps('#us-add'))
+    if row:
+        seen.append('add form: %d tools on %d line(s)' % (row['n'], row['lines']))
+        problems += ['add form: ' + x for x in row['problems']]
+    # The seeded stack always has plain users, so a missing or everywhere-disabled database icon is a failure, not a skip
+    opened = d.js("(() => { const all = [...document.querySelectorAll('button[id^=us-banks-]')]; if (!all.length) return 'none'; const b = all.find(x => x.getAttribute('aria-disabled') !== 'true' && !x.disabled); if (!b) return 'disabled'; b.click(); return 'ok' })()")
+    if opened == 'none':
+        problems.append('no database icon (#us-banks-<id>) in any user row')
+    elif opened == 'disabled':
+        problems.append('the database icon (#us-banks-<id>) is disabled for every user, also the plain ones')
+    elif opened == 'ok':
+        if until(d, "document.querySelector('dialog[open] .us-banktools')", 5.0):
+            time.sleep(0.4)
+            dlg = d.js(US_BANKTOOLS_JS % json.dumps('dialog[open]'))
+            if dlg:
+                seen.append('dialog: %d tools on %d line(s)' % (dlg['n'], dlg['lines']))
+                problems += ['bank dialog: ' + x for x in dlg['problems']]
+            else:
+                problems.append('the bank-access dialog opened but its tools row is not visible')
+        else:
+            problems.append('the database icon did not open the bank-access dialog')
+    else:
+        problems.append('could not look for the database icon (page script error)')
+    if not seen and not problems:
         rc.rec('W-US-1', 'users', 'bank-row', 'admin', size, lang, theme, None, 'the bank-access row is not visible on this page state')
     else:
-        rc.rec('W-US-1', 'users', 'bank-row', 'admin', size, lang, theme, row['spread'] <= 4, 'bank-access row of %d controls, spread %s px' % (row['n'], round(row['spread'], 1)), d if row['spread'] > 4 else None)
+        rc.rec('W-US-1', 'users', 'bank-row', 'admin', size, lang, theme, not problems, '; '.join(problems) or '; '.join(seen), d if problems else None)
+    d.js("(() => { const g = document.querySelector('dialog[open]'); if (g) g.close(); return 1 })()")
+
+
+# The bank-access tools row inside `root` (W-US-1): visible tools, their lines, the All / None pair, cut-off labels, overlaps
+US_BANKTOOLS_JS = """((root) => { const box = document.querySelector(root + ' .us-banktools'); if (!box || !box.getClientRects().length) return null;
+  box.scrollIntoView({block: 'center'});
+  const tools = [...box.querySelectorAll('.us-tool')].filter(x => x.getClientRects().length && x.getBoundingClientRect().width > 1);
+  const br = box.getBoundingClientRect(), cs = getComputedStyle(box), right = br.right - parseFloat(cs.paddingRight) - parseFloat(cs.borderRightWidth);
+  const p = [], rs = tools.map(x => x.getBoundingClientRect()), mids = rs.map(r => r.top + r.height / 2);
+  const lines = []; for (const m of mids) { if (!lines.some(l => Math.abs(l - m) <= 4)) lines.push(m) }
+  if (lines.length > 2) p.push('the tools take ' + lines.length + ' lines');
+  const pair = ['all', 'none'].map(k => tools.findIndex(x => (x.getAttribute('for') || '').endsWith('-' + k)));
+  if (pair.some(i => i < 0)) p.push('Select all / Deselect all missing (' + tools.map(x => x.getAttribute('for')).join(', ') + ')');
+  else {
+    const [a, n] = pair;
+    if (Math.abs(mids[a] - mids[n]) > 4) p.push('Select all and Deselect all are on different lines');
+    if (n !== tools.length - 1 || a !== tools.length - 2) p.push('the All / None pair is not at the end');
+    if (Math.abs(rs[n].right - right) > 3) p.push('Deselect all is ' + Math.round(right - rs[n].right) + ' px from the right end');
+  }
+  tools.forEach((x, i) => { const r = rs[i];
+    if (r.left < br.left - 0.5 || r.right > br.right + 0.5) p.push('"' + x.innerText.trim() + '" sticks out of the row');
+    // the visible label (the clipped 1 px full label for screen readers is left out) ends inside its tool, nothing clipped
+    for (const s of x.querySelectorAll('span')) { const q = s.getBoundingClientRect(); if (q.width <= 1 || !s.getClientRects().length) continue;
+      if (q.left < r.left - 0.5 || q.right > r.right + 0.5 || (getComputedStyle(s).overflow !== 'visible' && s.scrollWidth > s.clientWidth + 1)) { p.push('"' + s.innerText.trim() + '" is cut off'); break } }
+    for (let j = i + 1; j < tools.length; j++) { const o = rs[j]; const w = Math.min(r.right, o.right) - Math.max(r.left, o.left), h = Math.min(r.bottom, o.bottom) - Math.max(r.top, o.top);
+      if (w > 0.5 && h > 0.5) p.push('"' + x.innerText.trim() + '" overlaps "' + tools[j].innerText.trim() + '"') } });
+  if (matchMedia('(pointer: coarse)').matches && rs.some(r => r.height < 39.5)) p.push('a tool under 40 px high on touch');
+  return {n: tools.length, lines: lines.length, problems: p} })(%s)"""
 
 
 def g_logs_settings(rc):
@@ -1292,8 +1384,14 @@ def ai_settings_case(rc, lang, theme, size):
         if not tables:
             rc.rec('W-AS-1', 'ai-settings', state, 'admin', size, lang, theme, None, 'no table in the %s tab (nothing to measure yet)' % tab)
         elif phone(size):
-            problems = ['%s %d px in a %d px card' % (t['el'], t['w'], t['host']) for t in tables if t['wide']]
-            rc.rec('W-AS-1', 'ai-settings', state, 'admin', size, lang, theme, not problems, '; '.join(problems) or '%d tables, none wider than its card' % len(tables), d if problems else None)
+            # v1.1 (A-OWNER-59): on phones the by-user usage table is a mini table that scrolls sideways inside its own box
+            # (first column fixed, W-L59); it passes only when that box scrolls and stays inside the card. Any other table must fit.
+            problems = ['%s %d px in a %d px card' % (t['el'], t['w'], t['host']) for t in tables
+                        if t['wide'] and not (t['scrolls'] and 'ais-mini' in t['el'])]
+            if problems:
+                d.js("(() => { const t = document.querySelector('table.ais-mini'); if (t) t.scrollIntoView({block: 'center'}); return 1 })()")
+            rc.rec('W-AS-1', 'ai-settings', state, 'admin', size, lang, theme, not problems,
+                   '; '.join(problems) or '%d tables, none wider than its card (the mini table scrolls inside its own box)' % len(tables), d if problems else None)
         else:
             rc.rec('W-AS-1', 'ai-settings', state, 'admin', size, lang, theme, not wide, '; '.join('%s %d px in a %d px card' % (t['el'], t['w'], t['host']) for t in wide) or '%d tables, none wider than its card' % len(tables), d if wide else None)
 
@@ -1459,6 +1557,8 @@ def g_us2(rc):
 def us2_case(rc, lang, theme, size):
     d = rc.dev('riley', lang, theme, size)
     goto(d, '#/users', 1.8)
+    # the app may still be loading ("Reading the question banks...") on a busy stack: wait for the page in the shell
+    until(d, "document.querySelector('.main #forbidden-h, .main .page-users')", 15.0)
     r = d.js("({hash: location.hash, text: (document.querySelector('.main') || document.body).innerText})")
     want = cat(lang, 'forbidden.users')
     ok = r['hash'] == '#/users' and want and want in r['text']
@@ -1473,6 +1573,10 @@ def g_ch5(rc):
     for size in rc.sizes([(390, 844), (360, 740)], lambda s: s in ((390, 844), (360, 740))):
         rc.guard('W-CH-5', 'ai', ch5_case, rc, rc.langs(['zh'])[0], rc.themes(['light'])[0], size)
 
+
+# the AI Chat page has rendered (its conversation head, and on a phone the drawer button) / the drawer (sidebar) shows rows
+CH5_READY = "document.querySelector('.page-ai .ai-conv-head') && (innerWidth >= 720 || document.getElementById('ai-drawer-btn'))"
+CH5_OPEN = "(() => { const a = document.querySelector('aside.ai-list'); const b = document.getElementById('ai-drawer-btn'); return !!a && a.getClientRects().length > 0 && !!document.querySelector('.ai-chats > li') && (!b || !b.getClientRects().length || b.getAttribute('aria-expanded') === 'true') })()"
 
 CH5_STATE = """(sel => { const r = s => { const e = document.querySelector(s); if (!e || !e.offsetParent) return null;
     const b = e.getBoundingClientRect(); return [Math.round(b.top * 10) / 10, Math.round(b.left * 10) / 10, Math.round(b.height * 10) / 10]; };
@@ -1499,9 +1603,12 @@ CH5_PROBE = """((sel, dy, dx, at) => { const e = document.querySelector(sel); if
 
 def ch5_case(rc, lang, theme, size):
     d = rc.dev('sam', lang, theme, size)
+    rc.chat_id('sam')
     goto(d, '#/ai', 2.0)
     d.js(CHECKS_JS)
+    until(d, CH5_READY, 10)     # a busy machine renders the page later than the fixed settle time
     open_sidebar(d)     # v2.3: the history list is the phone drawer
+    until(d, CH5_OPEN, 5)
     problems = []
     sel = '.ai-list-body'
     if not d.js("(() => { const e = document.querySelector('.ai-list-body'); return !!e && e.offsetParent !== null })()"):
@@ -1512,10 +1619,13 @@ def ch5_case(rc, lang, theme, size):
     for label, n in (('short', 5), ('long', 40)):
         goto(d, '#/ai', 1.5)
         d.js(CHECKS_JS)
+        until(d, CH5_READY, 10)
         open_sidebar(d)
+        until(d, CH5_OPEN, 5)
         d.js_call(tmpl, n)
         if label == 'short':
-            d.js("Array.from(document.querySelectorAll('.ai-list-body > :not(.ai-chats):not(.gh-line)')).forEach(e => { e.style.display = 'none' })")
+            # v2.3: the rows are grouped (Today, Yesterday, ...) inside .ai-chats-wrap: keep the first group's rows and the GitHub line
+            d.js("Array.from(document.querySelectorAll('.ai-list-body > :not(.ai-chats-wrap):not(.gh-line), .ai-chats-wrap > :not(h3:first-child):not(ul.ai-chats:first-of-type)')).forEach(e => { e.style.display = 'none' })")
         time.sleep(0.3)
         if label == 'short':
             over = d.js("(() => { const e = document.querySelector('.ai-list-body'); return [e.scrollHeight - e.clientHeight, !!e.querySelector('.gh-line') && e.querySelector('.gh-line').offsetParent !== null] })()")
@@ -1560,6 +1670,7 @@ def ch5_case(rc, lang, theme, size):
     # the conversation: a drag on its head never moves anything
     goto(d, '#/ai/%d' % rc.chat_id('sam'), 2.2)
     d.js(CHECKS_JS)
+    until(d, "document.querySelector('.page-ai .ai-conv-head') && document.querySelector('.ai-scroll .ai-msg')", 10)
     before = d.js_call(CH5_STATE, '.ai-scroll')
     head = d.rect('.ai-conv-head', 0, scroll=False) or d.rect('.topbar', 0, scroll=False)
     d.swipe(head['cx'], head['cy'], 150)
@@ -1571,7 +1682,8 @@ def ch5_case(rc, lang, theme, size):
            '; '.join(problems) or 'short and long list, conversation head: frame and viewport unchanged, long list scrolled', d if problems else None)
 
 
-# ---- W-CH-4: the memory editor counts tokens (n / 1000, A-OWNER-43b: ASCII 1/4, other characters 3/2 token); over 1000 is refused, 1000 saves
+# ---- W-CH-4: the memory editor counts tokens (n / limit, A-OWNER-43b: ASCII 1/4, other characters 3/2 token); over the limit is
+# refused, the limit saves (the limit is the AI safety setting the service reports, default 200 since v1.3)
 def g_ch4(rc):
     if not rc.want('W-CH-4') or not rc.walk.wants_page('ai'):
         return
@@ -1588,45 +1700,72 @@ def ch4_case(rc, lang, theme, size):
     d = rc.dev('sam', lang, theme, size)
     goto(d, '#/ai', 2.0)
     open_memories(d)    # v2.3: the 记忆 row replaces the Chats / Memory tabs
+    until(d, "document.getElementById('ai-mem-count') && document.getElementById('ai-mem-input')", 10)
     problems = []
+    # v1.3 made the limit a setting (AI safety > Tokens per memory, default 200 since v1.3; 1000 was the v1.2 value): the
+    # counter, the refusal and the longest memory that saves all follow the limit the service reports for this user
+    st = rc.session('sam').call('/api/ai/status')
+    lim = int(st.get('memoryTokens') or st.get('memoryMaxTokens') or 0)
+    if lim <= 0:
+        problems.append('the AI status gives no memory limit (%r)' % {k: st.get(k) for k in ('memoryTokens', 'memoryMaxTokens')})
+        lim = 200
+    # CJK characters count 3/2 token (domain/ai-memory.ts: floor((6n + 3) / 4)): `over` is the fewest that pass the limit,
+    # `fit` the most that still fit it exactly
+    over = -(-(4 * lim + 1) // 6)
+    fit = over - 1
     count = d.js("(document.getElementById('ai-mem-count') || {}).innerText || ''")
-    if digits(count) != '01000':
-        problems.append('counter reads %r (want 0 / 1000)' % count)
-    # 667 CJK characters = 1001 tokens by the estimate: the add is refused with the catalog text (nothing is sent), or the field stops sooner
+    if digits(count) != '0%d' % lim:
+        problems.append('counter reads %r (want 0 / %d)' % (count, lim))
+    # `over` CJK characters = lim + 1 tokens by the estimate: the add is refused with the catalog text (nothing is sent), or the field stops sooner
+    before = len(rc.session('sam').call('/api/ai/memories').get('memories', []))
     d.js("document.getElementById('ai-mem-input').focus()")
-    d.js_call(SET_VALUE, '#ai-mem-input', '记' * 667)
+    d.js_call(SET_VALUE, '#ai-mem-input', '记' * over)
     time.sleep(0.3)
     n = d.js("document.getElementById('ai-mem-input').value.length")
-    if n > 666:
+    if n > fit:
         d.net_clear()
         d.tap_sel('#ai-mem-add')
         time.sleep(0.8)
         posts = [u for m, u in d.net_requests('/api/ai/memories') if m == 'POST']
-        err = fill(cat(lang, 'ai.err.memoryTooLong'), n=1000)
+        err = fill(cat(lang, 'ai.err.memoryTooLong'), n=lim)
         if posts and err not in d.js('document.body.innerText'):
-            problems.append('1001 tokens were sent and no %r shown' % err)
-    before = len(rc.session('sam').call('/api/ai/memories').get('memories', []))
-    text = ('练习记忆' * 200)[:666]
+            problems.append('%d tokens were sent and no %r shown' % (lim + 1, err))
+        if len(rc.session('sam').call('/api/ai/memories').get('memories', [])) != before:
+            problems.append('a memory of %d tokens was saved (limit %d)' % (lim + 1, lim))
+    text = ('练习记忆' * (fit // 4 + 1))[:fit]
     d.js_call(SET_VALUE, '#ai-mem-input', text)
     time.sleep(0.3)
     d.tap_sel('#ai-mem-add')
     time.sleep(1.2)
     mems = rc.session('sam').call('/api/ai/memories').get('memories', [])
     saved = [m for m in mems if m.get('content') == text]
+    fit_tokens = (6 * fit + 3) // 4
     if len(mems) != before + 1 or not saved:
-        problems.append('1000 tokens did not save (%d -> %d memories)' % (before, len(mems)))
-    for m in saved:     # leave the made-up user as it was
-        try:
-            rc.session('sam').call('/api/ai/memories/delete', {'id': m['id']})
-        except Exception:
-            pass
+        problems.append('%d tokens (limit %d) did not save (%d -> %d memories)' % (fit_tokens, lim, before, len(mems)))
+    for m in mems:     # leave the made-up user as it was
+        if m.get('content') in (text, '记' * over):
+            try:
+                rc.session('sam').call('/api/ai/memories/delete', {'id': m['id']})
+            except Exception:
+                pass
     rc.rec('W-CH-4', 'ai', 'memory-length', 'sam', size, lang, theme, not problems,
-           '; '.join(problems) or 'counter 0 / 1000; 1001 tokens refused (field keeps %d); 999 saved' % min(n, 667), d if problems else None)
+           '; '.join(problems) or 'counter 0 / %d; %d tokens refused (field keeps %d); %d saved' % (lim, lim + 1, min(n, over), fit_tokens), d if problems else None)
 
 
 # ---- W-AS-3: the category tabs under the status chips (v1.1: five, the fifth is AI 题库)
 AS3_SIZES = [(320, 640), (360, 740), (390, 844), (768, 1024), (1280, 800)]
 AS3_CONTENT = {'feature': '#ai-limits-save', 'users': '.ais-users', 'usage': '.ais-totals', 'safety': '#ai-limits-save'}
+
+# Resolves when the page has not added or removed nodes for 400 ms (at most 6 s): a tab draws again when its requests come back,
+# and a tap that lands while its button is being replaced is lost, so the walk taps only a settled page
+QUIET_JS = """(async () => { let last = Date.now(); const o = new MutationObserver(() => { last = Date.now() });
+  o.observe(document.body, {subtree: true, childList: true}); const t0 = Date.now();
+  while (Date.now() - last < 400 && Date.now() - t0 < 6000) await new Promise(r => setTimeout(r, 100));
+  o.disconnect(); return Date.now() - t0 })()"""
+
+
+def quiet(d):
+    return d.js(QUIET_JS)
 
 
 def g_as3(rc):
@@ -1639,7 +1778,9 @@ def g_as3(rc):
 
 def as3_case(rc, lang, theme, size):
     d = rc.dev('admin', lang, theme, size)
-    goto(d, '#/ai-settings', 2.5)
+    goto(d, '#/ai-settings', 1.2)
+    until(d, "document.querySelector('.ais-tabs button') && document.getElementById('ais-card')", 10)
+    quiet(d)
     d.js(CHECKS_JS)
     problems = []
     r = d.js("""(() => { const t = [...document.querySelectorAll('.ais-tabs button')];
@@ -1657,8 +1798,11 @@ def as3_case(rc, lang, theme, size):
         if a['small']:
             problems.append('small tabs: ' + '; '.join(a['small']))
     for k in ('users', 'usage', 'safety', 'feature'):
+        quiet(d)
         h0 = d.js('history.length')
-        d.tap_sel('#ais-tab-' + k, wait=1.6)
+        d.tap_sel('#ais-tab-' + k, wait=0.4)
+        until(d, "location.hash.startsWith('#/ai-settings?tab=%s')" % k, 3)
+        quiet(d)
         s = d.js("""((k, sels) => ({hash: location.hash, hl: history.length, chips: %s(document.querySelector('.ais-scard')),
             pressed: (document.querySelector('.ais-tabs [aria-pressed=true]') || {}).id,
             here: Object.fromEntries(Object.entries(sels).map(([n, s]) => [n, !!document.querySelector(s)]))}))""" % VIS
@@ -1677,8 +1821,10 @@ def as3_case(rc, lang, theme, size):
             problems.append('%s: the safety form shows too' % k)
         if W(d, 'overflow')['doc'] > 1:
             problems.append('%s: the page scrolls sideways' % k)
+    quiet(d)
     d.tap_sel('#ais-tab-safety', wait=1.2)
-    d.reload(2.5)
+    d.reload(1.2)
+    until(d, "document.querySelector('.ais-tabs [aria-pressed=true]')", 10)
     kept = d.js("(document.querySelector('.ais-tabs [aria-pressed=true]') || {}).id")
     if kept != 'ais-tab-safety':
         problems.append('a reload shows %s' % kept)
@@ -1695,19 +1841,46 @@ def g_as2(rc):
             rc.guard('W-AS-2', 'ai-settings', as2_case, rc, lang, rc.themes(['light'])[0], size)
 
 
+AS2_SUBS = ['caps', 'chat', 'study', 'summary', 'assess', 'gen', 'import', 'server']
+AS2_JS = """(() => { const g = [...document.querySelectorAll('.ais-limits .ais-subgroup')].map(e => (e.getAttribute('aria-labelledby') || '').replace(/^ais-(g-)?/, '').replace(/-h$/, ''));
+  const v = id => { const e = document.getElementById(id); return e ? e.value : null };
+  const tabs = [...document.querySelectorAll('.ais-subtabs button')];
+  return {subs: tabs.map(b => b.id.replace(/^ais-sub-/, '')), pressed: tabs.filter(b => b.getAttribute('aria-pressed') === 'true').map(b => b.id.replace(/^ais-sub-/, '')),
+          groups: g, reply: v('ai-lim-replyMaxTokens'), mem: v('ai-lim-memoryTokens'), msg: !!document.getElementById('ai-lim-messageChars'),
+          hint: (document.getElementById('ai-lim-replyMaxTokens-hint2') || {}).innerText || '', live: (document.getElementById('ai-lim-replyMaxTokens-live') || {}).innerText || '', hint1: (document.getElementById('ai-lim-replyMaxTokens-hint') || {}).innerText || ''} })()"""
+
+
 def as2_case(rc, lang, theme, size):
+    """The answer length (caps sub-tab) and the memory length (chat sub-tab) are token fields; no per-message character field.
+    v1.9 split the eight safety groups of one page into sub-tabs (v2.5 added the study assessment one): the check opens the
+    first sub-tab by its address and taps the chat one."""
     d = rc.dev('admin', lang, theme, size)
-    goto(d, '#/ai-settings?tab=safety', 2.5)
+    goto(d, '#/ai-settings?tab=safety&sub=caps', 1.2)
+    until(d, "document.getElementById('ai-lim-replyMaxTokens') && document.querySelector('.ais-subtabs button')", 10)
+    quiet(d)
     d.js(CHECKS_JS)
     problems = []
-    r = d.js("""(() => { const g = [...document.querySelectorAll('.ais-limits .ais-subgroup')].map(e => (e.getAttribute('aria-labelledby') || '').replace(/^ais-(g-)?/, '').replace(/-h$/, ''));
-      const v = id => (document.getElementById(id) || {}).value;
-      return {groups: g, reply: v('ai-lim-replyMaxTokens'), mem: v('ai-lim-memoryTokens'), msg: !!document.getElementById('ai-lim-messageChars'),
-              hint: (document.getElementById('ai-lim-replyMaxTokens-hint2') || {}).innerText || '', live: (document.getElementById('ai-lim-replyMaxTokens-live') || {}).innerText || '', hint1: (document.getElementById('ai-lim-replyMaxTokens-hint') || {}).innerText || ''} })()""")
-    if r['groups'] != ['calls', 'chat', 'length', 'study', 'summary', 'gen', 'import', 'server']:
-        problems.append('groups %s' % ','.join(r['groups']))
-    if r['reply'] != '3000' or r['mem'] != '200' or r['msg']:
-        problems.append('fields reply %s, memory %s, per-message field %s' % (r['reply'], r['mem'], r['msg']))
+    r = d.js(AS2_JS)
+    if r['subs'] != AS2_SUBS:
+        problems.append('sub-tabs %s' % ','.join(r['subs']))
+    if r['pressed'] != ['caps']:
+        problems.append('&sub=caps opens %s' % (r['pressed'] or 'no sub-tab'))
+    if r['groups'] != ['calls', 'length']:
+        problems.append('caps groups %s' % ','.join(r['groups']))
+    d.tap_sel('#ais-sub-chat', wait=0.4)
+    until(d, "document.getElementById('ai-lim-memoryTokens')", 5)
+    quiet(d)
+    c = d.js(AS2_JS)
+    if c['pressed'] != ['chat'] or c['groups'] != ['chat']:
+        problems.append('the chat sub-tab shows %s / groups %s' % (c['pressed'], ','.join(c['groups'])))
+    if r['reply'] != '3000' or c['mem'] != '200' or r['msg'] or c['msg']:
+        problems.append('fields reply %s, memory %s, per-message field %s' % (r['reply'], c['mem'], r['msg'] or c['msg']))
+    if W(d, 'overflow')['doc'] > 1:
+        problems.append('chat sub-tab: the page scrolls sideways')
+    d.tap_sel('#ais-sub-caps', wait=0.4)
+    if not until(d, "document.getElementById('ai-lim-replyMaxTokens')", 5):
+        problems.append('the caps sub-tab did not come back')
+    quiet(d)
     if r['hint'] or r['live']:
         problems.append('the character hint / live line is still there (lengths are tokens now): %r %r' % (r['hint'], r['live']))
     if '250000' not in digits(r['hint1']) or '3000' not in digits(r['hint1']):
@@ -1730,7 +1903,7 @@ def as2_case(rc, lang, theme, size):
             problems.append('250000 did not save (stored %s)' % now)
         admin.call('/api/ai/admin/limits', {'replyMaxTokens': 3000, 'memoryTokens': 200})
     rc.rec('W-AS-2', 'ai-settings', 'lengths', 'admin', size, lang, theme, not problems,
-           '; '.join(problems) or 'the 8 safety groups; 3000 / 200 tokens, no character hint%s' % (
+           '; '.join(problems) or 'the 8 safety sub-tabs; 3000 / 200 tokens, no character hint%s' % (
                '; 0 and 250001 refused, 250000 saved' if lang == 'zh' and size == (390, 844) else ''), d if problems else None)
 
 
@@ -1896,6 +2069,10 @@ def sh10_case(rc, page, user, setup, ver, lang, theme, size):
     time.sleep(0.4)
     d.js(CHECKS_JS)
     r = d.js('(%s)(%s)' % (FOOTER_JS % VIS, json.dumps(ver)))
+    if r['n'] == 0 and page == 'ai' and d.js('innerWidth') < 720:
+        # v2.3: on a phone the GitHub line lives at the bottom of the history drawer, not on the chat screen: open the drawer first
+        d.tap_sel('#ai-drawer-btn', wait=0.8)
+        r = d.js('(%s)(%s)' % (FOOTER_JS % VIS, json.dumps(ver)))
     problems = list(r['problems']) if r['n'] == 1 else ['%d visible GitHub lines' % r['n']]
     if r['n'] == 1 and phone(size):
         a = W(d, 'audit', {'touch': True, 'within': '.gh-line'})
@@ -2354,6 +2531,9 @@ def im1_case(rc, lang, theme, size):
     twin and aligned with it"""
     d = rc.dev('sam', lang, theme, size)
     goto(d, '#/banks', 2.0)
+    # the app may still be loading ("Reading the question banks...") on a busy stack: wait for the page and its bank list
+    until(d, "document.querySelector('.main #bk-import')", 15.0)
+    until(d, "document.querySelector('.bk-aicard .bk-droprow')", 5.0)
     r = d.js("""(() => { const card = document.querySelector('.bk-aicard'); if (!card) return null;
       const btn = card.querySelector('.gen-impbtn, button'); const note = card.querySelector('.gen-impnote');
       const lh = note ? parseFloat(getComputedStyle(note).lineHeight) || 20 : 20;
@@ -2388,6 +2568,7 @@ def im1_case(rc, lang, theme, size):
     # a user without AI+ sees no card (A-OWNER-15)
     d2 = rc.dev('riley', lang, theme, size)
     goto(d2, '#/banks', 1.6)
+    until(d2, "document.querySelector('.main #bk-import, .main #forbidden-h')", 15.0)
     if d2.js("!!document.querySelector('.bk-aicard')"):
         rc.rec('W-IM-1', 'banks', 'no-ai', 'riley', size, lang, theme, False, 'a user without the AI+ feature sees the AI card', d2)
 
@@ -2437,6 +2618,9 @@ def bk29_case(rc, lang, theme, size):
     # AI import button is the same box as the Excel button
     d = rc.dev('sam', lang, theme, size)
     goto(d, '#/banks', 2.0)
+    # the app may still be loading ("Reading the question banks...") on a busy stack: wait for the page and its bank list
+    until(d, "document.querySelector('.main #bk-import')", 15.0)
+    until(d, "document.querySelector('.bk-bank .ai-badge')", 3.0)
     if not d.js("!!document.querySelector('.bk-bank .ai-badge')"):
         # the check needs a bank row with the AI+ badge: make one (long name) from Home, once per stack
         goto(d, SETUP, 2.0)
@@ -2447,6 +2631,8 @@ def bk29_case(rc, lang, theme, size):
                 d.js("document.querySelector('dialog[open] .acts .btn.primary').click()")
                 until(d, "document.body.innerText.includes('Bk29 walk sample')", 60.0)
         goto(d, '#/banks', 2.0)
+        until(d, "document.querySelector('.main #bk-import')", 15.0)
+    until(d, "document.querySelector('.bk-selbar')", 5.0)
     r = d.js("""(() => { const out = {narrow: [], rowGen: document.querySelectorAll('.bk-bank .gen-btn, .bk-bank .gen-host').length};
       for (const el of document.querySelectorAll('.bk-bank, .bk-bank *')) {
         if (el.closest('svg') || el.closest('[hidden]') || el.closest('.sr-only')) continue;
@@ -2570,7 +2756,7 @@ UC_TIPS = """(async () => {
     const tip = bars.querySelector('.uc-tip'); res.barTip = tip && !tip.hidden ? tip.textContent : ''; }
   const line = document.querySelector('.uc-line svg');
   if (line) {
-    res.stroke = parseFloat(getComputedStyle(line.querySelector('.uc-stroke')).strokeWidth);
+    res.stroke = parseFloat(getComputedStyle(line.querySelector('.uc-stroke:not(.uc-stroke-in)')).strokeWidth);
     const dots = [...line.querySelectorAll('.uc-dot')]; const dot = dots[dots.length - 1];
     if (dot) { const r = dot.getBoundingClientRect();
       // 10 px beside and 10 px above the point: inside the hit area, outside the point
@@ -2612,12 +2798,20 @@ def uc1_case(rc, lang, theme, size):
         if b['switchBtns'] != 2:
             problems.append('no calls / tokens switch')
     # the switch: tokens on the first chart (stacked bars when anything was counted), the title follows, then back
-    if bars and d.js("(() => { const sw = document.querySelector('.uc-bars').closest('.uc-card').querySelectorAll('.uc-switch'); const b = sw[sw.length - 1].querySelectorAll('.uc-sw-btn')[1]; if (!b) return false; b.click(); return true })()"):
+    # (tokens is the default since v2.2: pick calls first, then tokens, so both states are really asserted)
+    pick = "(() => { const sw = document.querySelector('.uc-bars').closest('.uc-card').querySelectorAll('.uc-switch'); const b = sw[sw.length - 1].querySelectorAll('.uc-sw-btn')[%d]; if (!b) return false; b.click(); return true })()"
+    if bars and d.js(pick % 0):
+        time.sleep(0.4)
+        after = d.js(UC_BARS)
+        if re.search(r'Token|トークン', after[0]['title'], re.I):
+            problems.append('the title did not follow the switch to calls: %s' % after[0]['title'])
+        d.js(pick % 1)
         time.sleep(0.4)
         after = d.js(UC_BARS)
         if not re.search(r'Token|トークン', after[0]['title'], re.I):
-            problems.append('the title did not follow the switch: %s' % after[0]['title'])
-        d.js("(() => { const sw = document.querySelector('.uc-bars').closest('.uc-card').querySelectorAll('.uc-switch'); sw[sw.length - 1].querySelectorAll('.uc-sw-btn')[0].click() })()")
+            problems.append('the title did not follow the switch to tokens: %s' % after[0]['title'])
+        # drop the stored per-chart choices so later checks on this device start from the defaults
+        d.js("Object.keys(localStorage).filter(k => /^xexam\\.uc\\.u\\d+\\./.test(k) && !k.endsWith('.period')).forEach(k => localStorage.removeItem(k))")
         time.sleep(0.3)
     tips = d.js(UC_TIPS) or {}
     if bars and not tips.get('barTip'):
@@ -2646,7 +2840,10 @@ UC2_JS = r"""(async () => {
   const lum = (c) => { const m = px(c); const f = (v) => { v /= 255; return v <= .03928 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4; };
     return .2126 * f(m[0]) + .7152 * f(m[1]) + .0722 * f(m[2]); };
   const cr = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + .05) / (Math.min(x, y) + .05); };
-  const res = {pref: localStorage.getItem('xexam.uc.period'), title0: q('.uc-title').textContent, n: btns.length,
+  // since v2.2 the choice is stored per user (xexam.uc.u<id>.period) and tokens is the default: start by picking calls
+  const PK = Object.keys(localStorage).find(k => /^xexam\.uc\.u\d+\.period$/.test(k));
+  btns[0].click(); await wait(250);
+  const res = {pref: PK ? localStorage.getItem(PK) : null, title0: q('.uc-title').textContent, n: btns.length,
     labels: btns.map(b => b.textContent), pressed0: btns.map(b => b.getAttribute('aria-pressed')),
     swRole: sw.getAttribute('role'), swLabel: sw.getAttribute('aria-label'), btnH: btns.map(b => Math.round(b.getBoundingClientRect().height) + (matchMedia('(pointer: coarse)').matches ? 16 : 0)),
     coarse: matchMedia('(pointer: coarse)').matches, legend0: q('.uc-legend').hidden};
@@ -2716,7 +2913,7 @@ def uc2_case(rc, lang, theme, size):
     4.5:1), token mode shows the input / output areas with a legend that matches them, K/M ticks, the exact tip against the API,
     End / ArrowLeft, the choice is remembered; the switches do not move; no label leaves its card"""
     d = rc.dev('admin', lang, theme, size)
-    d.js("localStorage.removeItem('xexam.uc.period')")
+    d.js("Object.keys(localStorage).filter(k => /^xexam\.uc\.u\d+\.period$/.test(k)).forEach(k => localStorage.removeItem(k))")
     goto(d, '#/ai-settings?tab=usage', 3.0)
     r = d.js(UC2_JS)
     if not r or r.get('none'):
@@ -2773,15 +2970,20 @@ def uc2_case(rc, lang, theme, size):
     if not all(mv):
         p.append('a switch moved when tapped %r' % mv)
     # the choice is remembered per browser (re-query: the click replaced the chart)
-    d.js("document.querySelector('.uc-line').closest('.uc-card').querySelectorAll('.uc-sw-btn')[1].click()")
+    # tokens is the default, so remember the NON-default (calls): only a real read of the stored value shows it after the reload
+    d.js("document.querySelector('.uc-line').closest('.uc-card').querySelectorAll('.uc-sw-btn')[0].click()")
     goto(d, '#/ai-settings?tab=usage', 3.0)
-    rem = d.js("(() => { const c = document.querySelector('.uc-line').closest('.uc-card'); return [localStorage.getItem('xexam.uc.period'), c.querySelector('.uc-title').textContent, [...c.querySelectorAll('.uc-sw-btn')].map(b => b.getAttribute('aria-pressed'))] })()")
-    if not rem or rem[0] != 'tokens' or rem[1] != T[1] or rem[2] != ['false', 'true']:
-        p.append('not remembered after a reload: %r' % (rem,))
+    rem = d.js("(() => { const c = document.querySelector('.uc-line').closest('.uc-card'); const pk = Object.keys(localStorage).find(k => /^xexam\.uc\.u\d+\.period$/.test(k)); return [pk ? localStorage.getItem(pk) : null, c.querySelector('.uc-title').textContent, [...c.querySelectorAll('.uc-sw-btn')].map(b => b.getAttribute('aria-pressed'))] })()")
+    if not rem or rem[0] != 'calls' or rem[1] != T[0] or rem[2] != ['true', 'false']:
+        p.append('calls not remembered after a reload: %r' % (rem,))
+    # the input-line hit test needs the token mode (the default): switch back, then test
+    d.js("document.querySelector('.uc-line').closest('.uc-card').querySelectorAll('.uc-sw-btn')[1].click()")
+    time.sleep(0.3)
     hit = d.js(UC2_HIT) or {}
     if hit.get('gap') and not hit.get('tipOnInputLine'):
         p.append('no tip on the input line')
-    d.js("document.querySelector('.uc-line').closest('.uc-card').querySelectorAll('.uc-sw-btn')[0].click(); localStorage.setItem('xexam.uc.period', 'calls')")
+    # reset to the default (tokens): remove the stored choice
+    d.js("Object.keys(localStorage).filter(k => /^xexam\\.uc\\.u\\d+\\.period$/.test(k)).forEach(k => localStorage.removeItem(k))")
     rc.rec('W-UC-2', 'ai-settings', 'by-time', 'admin', size, lang, theme, not p,
            '; '.join(p[:3]) or 'switch, areas, legend, K/M ticks, exact tip, keys and the remembered choice are right', d if p else None)
 
@@ -3073,8 +3275,9 @@ def pt_case(rc, gid, tab, id_, row, lang, theme, size):
     d.type('zzzz-none')
     time.sleep(0.4)
     s6 = pt(d, id_, row)
-    want = {'zh': '没有找到匹配的用户', 'en': 'No matching users found', 'ja': '一致するユーザーが見つかりません'}[lang]
-    if s6['none'] != want or not s6['tableHidden'] or s6['rowN'] != 0:
+    # v2.2 (consistency pass) ended the sentence with a full stop: compare with the catalog text, still per language
+    want = cat(lang, 'ai.set.tbl.none')
+    if not want or s6['none'].strip() != want or not s6['tableHidden'] or s6['rowN'] != 0:
         problems.append('empty search: text "%s", table hidden=%s' % (s6['none'], s6['tableHidden']))
     if s6['cur'] != '1' or not (s6['prevOff'] and s6['nextOff']):
         problems.append('empty search pager is not 1 / 1')
@@ -3087,9 +3290,14 @@ def jc1_case(rc, lang, theme, size):
     """A-OWNER-51: the AI bank jobs are cards of short lines up to 900 px (a chip, no sideways scroll), the table when wider"""
     d = rc.dev('admin', lang, theme, size)
     goto(d, '#/ai-settings?tab=gen', 2.5)
-    r = d.js("""(() => { const t = document.querySelector('.ais-genjobs'); if (!t) return null; const rows = [...t.querySelectorAll('tbody tr')];
-      if (!rows.length) return {n: 0}; const row = rows[0]; const chip = row.querySelector('.ais-jchip');
-      const lines = new Set([...row.children].filter(e => getComputedStyle(e).display !== 'none' && getComputedStyle(e).display !== 'contents').map(e => Math.round(e.getBoundingClientRect().top / 4))).size;
+    # v2.2: every job is a tr.ais-genjob followed by its hidden detail row (tr.ais-genfull, opened by the chevron) and, on wide
+    # screens, a note row; only the job rows are cards. A card line holds items of different heights (the 32 px chevron next to
+    # the figures, centred), so lines are counted by item centres (a new line when a centre is more than 6 px lower)
+    r = d.js("""(() => { const t = document.querySelector('.ais-genjobs'); if (!t) return null; const rows = [...t.querySelectorAll('tbody tr.ais-genjob')];
+      if (!rows.length) return {n: 0}; const row = rows[0]; const chip = row.querySelector('.ais-jchip'); t.scrollIntoView({block: 'start'});
+      const mids = [...row.children].filter(e => getComputedStyle(e).display !== 'none' && getComputedStyle(e).display !== 'contents')
+        .map(e => { const b = e.getBoundingClientRect(); return (b.top + b.bottom) / 2 }).sort((a, b) => a - b);
+      const lines = mids.filter((m, i) => i === 0 || m - mids[i - 1] > 6).length;
       return {n: rows.length, grid: getComputedStyle(row).display === 'grid', chip: !!chip && chip.getBoundingClientRect().width > 0,
         theadHidden: getComputedStyle(t.querySelector('thead')).position === 'absolute', lines, text: row.innerText.slice(0, 120),
         side: document.documentElement.scrollWidth <= innerWidth + 1, over: [...row.querySelectorAll('*')].some(e => e.getBoundingClientRect().right > innerWidth + 1)} })()""")
@@ -3109,7 +3317,7 @@ def jc1_case(rc, lang, theme, size):
             problems.append('%d lines in the card' % r['lines'])
     # A-OWNER-55 / 59: "YYYY-MM-DD HH:MM", one grid (times, names and chips each in one column), the tip and names on the figures,
     # no box glyph, K / M (never 万) in the figures
-    f = d.js("""(() => { const rows = [...document.querySelectorAll('.ais-genjobs tbody tr')];
+    f = d.js("""(() => { const rows = [...document.querySelectorAll('.ais-genjobs tbody tr.ais-genjob')];
       const col = (sel, key) => [...new Set(rows.map(r => { const e = r.querySelector(sel); return e && e.getBoundingClientRect().width ? Math.round(e.getBoundingClientRect()[key]) : null }).filter(x => x != null))];
       const st = rows[0].querySelector('.ais-stats');
       return {times: rows.map(r => (r.querySelector('.ais-when') || {}).textContent), lefts: col('.ais-when', 'left'), names: col('.ais-uname', 'left'),
@@ -3123,6 +3331,26 @@ def jc1_case(rc, lang, theme, size):
         problems.append('the figures have no tip target / screen-reader names (%s)' % f['sr'])
     if '万' in f['text'] or '□' in f['text'] or '�' in f['text']:
         problems.append('the job list holds 万 or a box glyph')
+    # v2.2: the chevron of the first job opens its detail block right under it (inside the screen) and closes it again
+    tog = '.ais-genjobs tbody tr.ais-genjob .ais-genmore-b'
+    full_js = """(() => { const b = document.querySelector(%s); let tr = b.closest('tr').nextElementSibling;
+      while (tr && !tr.classList.contains('ais-genfull') && !tr.classList.contains('ais-genjob')) tr = tr.nextElementSibling;
+      const r = tr && tr.classList.contains('ais-genfull') ? tr.getBoundingClientRect() : null;
+      return {exp: b.getAttribute('aria-expanded'), shown: !!r && r.height > 0, fits: !!r && r.left >= -0.5 && r.right <= innerWidth + 0.5,
+        items: tr ? tr.querySelectorAll('.ais-gendl-r').length : 0, side: document.documentElement.scrollWidth <= innerWidth + 1} })()""" % json.dumps(tog)
+    if d.js('!!document.querySelector(%s)' % json.dumps(tog)):
+        d.tap_sel(tog)
+        o = d.js(full_js)
+        if o['exp'] != 'true' or not o['shown'] or not o['items']:
+            problems.append('the details toggle did not open the detail block (%s)' % o)
+        elif not o['fits'] or not o['side']:
+            problems.append('the open detail block sticks out of the screen')
+        d.tap_sel(tog)
+        c = d.js(full_js)
+        if c['exp'] != 'false' or c['shown']:
+            problems.append('the details toggle did not close the detail block')
+    else:
+        problems.append('no details toggle on the job')
     rc.rec('W-JC-1', 'ai-settings', state, 'admin', size, lang, theme, not problems,
            '; '.join(problems) or 'job card: %d lines, chip, no sideways scroll (%s)' % (r['lines'], r['text'].replace('\n', ' | ')[:60]), d if problems else None)
 
@@ -3267,9 +3495,19 @@ def l60_case(rc, lang, theme, size):
             if not r['sub']:
                 problems.append('no finish pill')
             else:
-                phone_bar = 36 + r['safeTop'] if size[0] > size[1] else 44 + r['safeTop']
-                if r['bar']['h'] > phone_bar + 1.5:
-                    problems.append('bar %d px (max %d)' % (r['bar']['h'], phone_bar + 1))
+                if d.js("matchMedia('(max-width: 600px), (orientation: landscape) and (max-height: 500px)').matches"):
+                    phone_bar = 36 + r['safeTop'] if size[0] > size[1] else 44 + r['safeTop']
+                    if r['bar']['h'] > phone_bar + 1.5:
+                        problems.append('bar %d px (max %d)' % (r['bar']['h'], phone_bar + 1))
+                else:
+                    # 601-880 px (tablet) has its own bar: one row of up to 44 px plus the 6 px meter edge under it (no fixed
+                    # phone height); the pill must not make it taller than it is without the pill
+                    bare = d.js("(() => { const s = document.querySelector('.qbar .qsubmit'); const q = document.querySelector('.qbar'); s.style.display = 'none';"
+                                " const h = q.getBoundingClientRect().height; s.style.display = ''; return h })()")
+                    if r['bar']['h'] > bare + 0.5:
+                        problems.append('the pill makes the bar taller (%d px, %d px without it)' % (r['bar']['h'], bare))
+                    if r['bar']['h'] > 50.5 + r['safeTop']:
+                        problems.append('bar %d px (max %d: a 44 px row + the 6 px meter edge)' % (r['bar']['h'], 50 + r['safeTop']))
                 if r['sub']['h'] > 32.5:
                     problems.append('the pill is %d px tall' % r['sub']['h'])
                 if r['sub']['y'] < r['bar']['y'] - 0.5 or r['sub']['bt'] > r['bar']['bt'] + 0.5:
@@ -3370,9 +3608,13 @@ def l59_case(rc, lang, theme, size):
     time.sleep(2.5)
     r = d.js("""(() => { const root = document.querySelector('.ptb-mini'); if (!root) return null; const q = (s) => [...root.querySelectorAll(s)];
       const vis = (e) => { const c = getComputedStyle(e), b = e.getBoundingClientRect(); return c.display !== 'none' && c.visibility !== 'hidden' && b.width > 0 && b.height > 0 };
-      const wrap = root.querySelector('.ais-tablewrap'); const first = root.querySelector('tbody th');
-      const cells = q('tbody td.ais-c').filter(vis).map(e => e.innerText.trim()).filter(x => !x.includes('/'));
-      return {head: q('thead th').filter(vis).length, heads: q('thead .ptb-sort').map(e => Math.round(e.getBoundingClientRect().height)), sel: q('.ptb-sortsel').some(vis),
+      const wrap = root.querySelector('.ais-tablewrap'); const first = root.querySelector('tbody th'); wrap.scrollIntoView({block: 'center'});
+      // v1.4: a token cell shows the compact figure and carries the exact one for screen readers (.sr-only) and in its title;
+      // only the shown text counts here, the exact copy is checked on its own
+      const shown = (e) => { const c = e.cloneNode(true); c.querySelectorAll('.sr-only').forEach(x => x.remove()); return c.textContent.trim() };
+      const cells = q('tbody td.ais-c').filter(vis).map(shown).filter(x => !x.includes('/'));
+      const exact = q('tbody td.ais-c .ais-tok').map(e => [(e.querySelector('.sr-only') || {}).textContent || '', e.title || '']);
+      return {exact, head: q('thead th').filter(vis).length, heads: q('thead .ptb-sort').map(e => Math.round(e.getBoundingClientRect().height)), sel: q('.ptb-sortsel').some(vis),
         cardRows: q('tbody tr').some(e => getComputedStyle(e).display === 'grid'), rows: q('tbody tr').length, cells, sticky: first ? getComputedStyle(first).position : '',
         own: wrap.scrollWidth, ownW: wrap.clientWidth, page: document.documentElement.scrollWidth <= innerWidth + 1,
         tops: [...document.querySelectorAll('.ais-total dd')].map(e => e.textContent.trim()), body: document.querySelector('.ais-sec, .panel').innerText} })()""")
@@ -3403,14 +3645,16 @@ def l59_case(rc, lang, theme, size):
         # ja (A-OWNER-77 short headers, Token in English) fits 360 px without scrolling: nothing to prove there
         if r['own'] <= r['ownW'] and size[0] <= 360 and lang != 'ja':
             problems.append('the table does not scroll inside its own box (%d / %d)' % (r['own'], r['ownW']))
-        wrong = [x for x in r['cells'] if not re.fullmatch(r'\d+(\.\d)?[KM]?', x)]
-        if wrong:
-            problems.append('cells are not compact K / M figures: %s' % wrong[:3])
-        elif not any(re.search(r'[KM]$', x) for x in r['cells']):
-            problems.append('no K / M figure among the cells %s' % r['cells'][:6])
-    else:
-        if any(re.search(r'[KM]$', x) for x in r['cells']):
-            problems.append('the wide table shows compact figures')
+    # v1.4: every token count in the app is compact (wide tables too; only the totals at the top are exact), the exact figure
+    # with separators is in the tip and for screen readers
+    wrong = [x for x in r['cells'] if not re.fullmatch(r'\d+(\.\d)?[KMBT]?', x)]
+    if wrong:
+        problems.append('cells are not compact K / M figures: %s' % wrong[:3])
+    elif not any(re.search(r'[KM]$', x) for x in r['cells']):
+        problems.append('no K / M figure among the cells %s' % r['cells'][:6])
+    bad_exact = [e for e in r['exact'] if not (re.fullmatch(r'\d{1,3}(,\d{3})*', e[0].strip()) and e[1].strip() == e[0].strip())]
+    if not r['exact'] or bad_exact:
+        problems.append('token cells without the exact figure for screen readers / in the tip: %s' % (bad_exact[:2] or 'no token cells'))
     rc.rec('W-L59', 'ai-settings', 'mini-table', 'admin', size, lang, theme, not problems,
            '; '.join(problems) or 'mini table: header, %d rows, K / M figures, top %s' % (r['rows'], r['tops'][:3]), d if problems else None)
 

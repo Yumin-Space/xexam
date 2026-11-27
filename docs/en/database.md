@@ -169,6 +169,21 @@ erDiagram
     attempts ||--o{ attempt_items : "attempt_id"
     users ||--o{ user_stats : "user_stats.user_id"
     users ||--o{ user_settings : "user_settings.user_id"
+    system_settings {
+        TEXT key PK "Site switch name"
+        TEXT value
+        TEXT updated_at
+        INTEGER updated_by "audit only, no foreign key"
+    }
+    activity_log {
+        INTEGER id PK
+        INTEGER ts "unix seconds"
+        TEXT actor "user · anon · system"
+        INTEGER user_id "snapshot, no foreign key"
+        TEXT action
+        TEXT result "ok · fail"
+        TEXT source "backend · ai"
+    }
 ```
 
 Thirteen tables. Since schema 11 (v2.0) nine of them are declared with **foreign keys**, all written out as `ON DELETE NO ACTION` (a delete that would leave a child row behind fails; the code deletes child rows first, in the same transaction, as it always did): `sessions.user_id`, `user_stats.user_id`, `user_settings.user_id`, `user_banks.user_id`, `attempts.user_id` (nullable) and `banks.owner_id` (nullable) to `users(id)`; `attempt_items.attempt_id` to `attempts(id)`; `questions.bank_id` (nullable), `imports.bank_id` (nullable) and `user_banks.bank_id` to `banks(id)`. Deliberately **not** linked, and commented so in the table definitions: `attempt_items.question_id` and `user_stats.question_id` (a record outlives a deleted question, and banks from before v0.5 use unscoped ids), `activity_log.user_id` (the log is an audit snapshot) and `system_settings.updated_by` (a write-only audit field: a link would block deleting an administrator who once changed a site switch). The legacy tables `stats` (the per-question statistics of v0.5 and older) and `settings` (the settings of v0.5) are gone since schema 11; their rows were copied to the first administrator (`user_stats`, `user_settings`) at the v3 migration. The nine rebuilt tables are stored as `CREATE TABLE "banks" (…)` with the name in quotes, which is how SQLite records a renamed table.
@@ -490,7 +505,7 @@ docker compose start
 
 > ⚠️ When upgrading from v0.1: the database file name changed, and the new version only reads `xexam.db`. If the data directory has another `.db` file but no `xexam.db`, the startup log will warn you; rename that file to `xexam.db` and start again (the old file is neither deleted nor read).
 
-## 8. The AI database (`xexam-ai.db`, v0.8; schema 10 since v2.0)
+## 8. The AI database (`xexam-ai.db`, v0.8; schema 11 since v2.1)
 
 ai-service keeps everything of AI in its **own** SQLite database, which only it opens and migrates; the backend never reads it, and ai-service never opens `xexam.db` (the data boundary, section 5 of [architecture.md](architecture.md)).
 
@@ -503,7 +518,7 @@ ai-service keeps everything of AI in its **own** SQLite database, which only it 
 
 Like the main database: `busy_timeout` 5000 ms, `foreign_keys=ON` (here the schema does use foreign keys, see below), `synchronous=FULL`, WAL mode (`XEXAM_AI_SQLITE_JOURNAL=delete` keeps the rollback journal, with the same rules as 2.1), and in addition **`secure_delete=ON`**. One connection behind a mutex, every write in `BEGIN IMMEDIATE … COMMIT`, the lock never held across an `.await`. The start-up log says `AI database: /data/xexam-ai.db (journal: wal)`.
 
-### 8.2 Tables (as of schema 10)
+### 8.2 Core tables (the v0.8 set; the full schema 11 map is in section 9.2)
 
 ```mermaid
 erDiagram
@@ -979,6 +994,7 @@ Solid lines are declared foreign keys; dotted lines are relations kept without a
 ```mermaid
 erDiagram
   users ||--o{ chats : "CASCADE"
+  users ||--o| assess_latest : "CASCADE"
   users ||--o{ memories : "CASCADE"
   users |o--o{ tasks : "CASCADE"
   users |o--o{ usage : "SET NULL"
@@ -1157,6 +1173,18 @@ erDiagram
     text effort
     int updated_at
     text updated_by
+  }
+  assess_latest {
+    int user_id PK
+    text content
+    text lang
+    text model
+    text latest_at
+    int records
+    int answered
+    text day
+    int created_at
+    int runs
   }
   study_shared {
     int id PK

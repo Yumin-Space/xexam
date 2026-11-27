@@ -445,21 +445,23 @@
 .pverdict svg { width: 20px; height: 20px; flex: none; stroke: currentColor; }
 /* Hand-written mode: the red pen mark would vanish on the solid green / orange verdict key, so it sits on a small white disc */
 html[data-hand] .pverdict svg { background: #fff; border-radius: 50%; padding: 2px; box-sizing: content-box; }
-.pverdict.ok { background: var(--answer-right-solid); }
-.pverdict.ng { background: var(--answer-wrong-solid); }
+.pverdict.ok { background: var(--ans-r-bg, var(--answer-right-solid)); color: var(--ans-ink, var(--on-answer-solid)); box-shadow: inset 0 0 0 1px var(--ans-r-bd, transparent); }
+.pverdict.ng { background: var(--ans-w-bg, var(--answer-wrong-solid)); color: var(--ans-ink, var(--on-answer-solid)); box-shadow: inset 0 0 0 1px var(--ans-w-bd, transparent); }
+.pverdict.ok svg { stroke: var(--ans-r-ac, currentColor); }
+.pverdict.ng svg { stroke: var(--ans-w-ac, currentColor); }
 .pverdict:focus { outline: none; }
 .pfeed .verdict { margin-top: 8px; }
 
 /* Answer sheet in a practice: checked questions filled right / wrong (the legend and the tile names say which), in the same
    solid green / orange as the graded options and the verdict (v0.7), white numbers, both themes */
-.tiles .tile.ok { background: var(--answer-right-solid); border-color: var(--answer-right-solid); color: var(--on-answer-solid); }
-.tiles .tile.ng { background: var(--answer-wrong-solid); border-color: var(--answer-wrong-solid); color: var(--on-answer-solid); }
-.legend i.ok { background: var(--answer-right-solid); border-color: var(--answer-right-solid); }
-.legend i.ng { background: var(--answer-wrong-solid); border-color: var(--answer-wrong-solid); }
+.tiles .tile.ok { background: var(--ans-r-bg, var(--answer-right-solid)); border-color: var(--ans-r-bd, var(--answer-right-solid)); color: var(--ans-ink, var(--on-answer-solid)); }
+.tiles .tile.ng { background: var(--ans-w-bg, var(--answer-wrong-solid)); border-color: var(--ans-w-bd, var(--answer-wrong-solid)); color: var(--ans-ink, var(--on-answer-solid)); }
+.legend i.ok { background: var(--ans-r-bg, var(--answer-right-solid)); border-color: var(--ans-r-bd, var(--answer-right-solid)); }
+.legend i.ng { background: var(--ans-w-bg, var(--answer-wrong-solid)); border-color: var(--ans-w-bd, var(--answer-wrong-solid)); }
 /* keep the fill under the pointer (the plain tile hover would paint over it) */
 @media (hover: hover) {
-  .tiles .tile.ok:not(.done):hover { background: var(--answer-right-solid); }
-  .tiles .tile.ng:not(.done):hover { background: var(--answer-wrong-solid); }
+  .tiles .tile.ok:not(.done):hover { background: var(--ans-r-bg, var(--answer-right-solid)); }
+  .tiles .tile.ng:not(.done):hover { background: var(--ans-w-bg, var(--answer-wrong-solid)); }
 }
 
 /* v2.6 preview, blackboard mode (html[data-hand], the "Aa" switch in the bar): the question itself is hand-written (stem,

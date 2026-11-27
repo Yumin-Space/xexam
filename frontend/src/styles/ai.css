@@ -607,8 +607,12 @@ html.no-doc-scroll .ai-memwrap > .ai-notice-flow { padding-bottom: calc(6px + en
 }
 .ai-ver-n { min-width: 0; padding: 0 1px; text-align: center; font-size: 12.5px; font-variant-numeric: tabular-nums; color: var(--ink2); }
 @media (pointer: coarse) {
-  /* The arrows hug the count; each one's tap area is 36 x 40 (it reaches over the count and the gap beside it) */
-  .ai-meta .ai-ver-btn::after { content: ""; position: absolute; inset: -6px -8px; }
+  /* v2.8: each arrow is 44 px wide like the icons beside it (no gap), its glyph next to the count, and the 8 px margin above
+     and below makes it 44 x 44 to tap. Before, a 20 px arrow with a 36 x 40 margin reached 8 px over Regenerate, which
+     left that button 36 px wide to tap */
+  .ai-meta .ai-ver-btn { display: inline-flex; align-items: center; justify-content: flex-end; width: 44px; padding: 0 4px; }
+  .ai-meta .ai-ver-btn:last-child { justify-content: flex-start; }
+  .ai-meta .ai-ver-btn::after { content: ""; position: absolute; inset: -8px 0; }
 }
 /* The question being edited is outlined; the banner above the input says what Send does and has Cancel */
 .ai-msg.editing .ai-bubble { outline: 2px solid var(--primary); outline-offset: 2px; }
@@ -669,10 +673,15 @@ html.no-doc-scroll .ai-memwrap > .ai-notice-flow { padding-bottom: calc(6px + en
   html.no-doc-scroll .ai-conv:has(.ai-greeting) .ai-form { padding: 0; }
   html.no-doc-scroll .ai-conv:has(.ai-greeting) .ai-greeting { padding: 0 4px; }
   html.no-doc-scroll .ai-conv:has(.ai-greeting) .ai-notice-btn { padding-inline: 0; }
+  /* v2.8: pages/ai.ts placeGreetPops measures the room between the chat head and the box (--pop-room) and, when the popover
+     does not fit there but fits below, opens it below the box (.pop-down); when it fits on neither side, it starts under the
+     head and covers part of the box (.pop-over, --pop-top is negative). It never covers the chat head. */
   html.no-doc-scroll .ai-conv:has(.ai-greeting) .ai-model-pop {
     position: absolute; left: 0; right: auto; bottom: calc(100% + 6px); width: min(340px, 100%);
-    max-height: min(420px, calc(var(--vvh, 100dvh) * .4));
+    max-height: min(420px, var(--pop-room, calc(var(--vvh, 100dvh) * .4)));
   }
+  html.no-doc-scroll .ai-conv:has(.ai-greeting) .ai-model-pop.pop-down { top: calc(100% + 6px); bottom: auto; }
+  html.no-doc-scroll .ai-conv:has(.ai-greeting) .ai-model-pop.pop-over { top: var(--pop-top, 0px); bottom: auto; }
   html.no-doc-scroll .ai-conv:has(.ai-greeting) .ai-model-pop.ai-effort-pop { width: min(300px, 100%); }
 }
 /* A short visible area (a phone turned sideways, or the keyboard open on a small phone): only the composer is kept */

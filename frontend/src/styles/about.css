@@ -5,6 +5,9 @@
 /* The facts: the shared property list (.props); only the version is set in a heavier weight */
 .ab-facts { margin: 16px 0 0; }
 .ab-facts dd:first-of-type { font-weight: 600; }
+/* Touch: the font-credit link gets an invisible 44 px tap area without making the row taller */
+.ab-link { position: relative; }
+@media (pointer: coarse) { .ab-link::after { content: ""; position: absolute; inset: -14px -6px; } }
 .ab-lead { margin: -10px 0 16px; font-size: 14px; }
 
 .ab-entry h3, .ab-entry summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; font-size: 16px; font-weight: 600; }

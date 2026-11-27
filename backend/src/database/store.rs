@@ -717,6 +717,11 @@ impl Store {
         Self::open_with(path, Arc::new(SystemClock), JournalMode::Wal)
     }
 
+    /// The current time as Unix seconds from this store's clock (the request path uses it, so a pinned test clock pins it).
+    pub fn unix_now(&self) -> i64 {
+        self.clock.unix()
+    }
+
     /// Same as [`Store::open`], but the time is supplied by the caller (for tests).
     pub fn open_with_clock(path: &Path, clock: Arc<dyn Clock>) -> Result<Store, DbError> {
         Self::open_with(path, clock, JournalMode::Wal)
@@ -1214,7 +1219,30 @@ impl Store {
                     &started.to_string(),
                     attempt.kind.as_str(),
                 )? {
-                    return Ok((Vec::new(), id, true));
+                    // Work out which sent questions the stored record left out, so a retry keeps the same `notCounted`
+                    let stored: std::collections::HashSet<String> = c
+                        .prepare("SELECT question_id FROM attempt_items WHERE attempt_id=?1")?
+                        .query_map(params![id], |row| row.get::<_, String>(0))?
+                        .collect::<Result<_, _>>()?;
+                    // Only when more results were sent than the record's total did the first save leave some out; a missing
+                    // row can also come from a bank deleted later with its records (the total stays), which is not "not counted"
+                    let total: i64 = c.query_row(
+                        "SELECT total FROM attempts WHERE id=?1",
+                        params![id],
+                        |row| row.get(0),
+                    )?;
+                    let missing = attempt
+                        .results
+                        .len()
+                        .saturating_sub(usize::try_from(total).unwrap_or(0));
+                    let gone: Vec<String> = attempt
+                        .results
+                        .iter()
+                        .filter(|r| !stored.contains(&r.id))
+                        .map(|r| r.id.clone())
+                        .take(missing)
+                        .collect();
+                    return Ok((gone, id, true));
                 }
             }
             // Split the results into the questions that still exist and those that are gone (checked inside the transaction,

@@ -213,6 +213,17 @@
     --answer-wrong-solid: #BD561D;
     --answer-wrong-solid-hover: #9B4215;
     --answer-wrong-solid-active: #762D0A;
+    --ans-r-bg: #252922;
+    --ans-r-bd: #678254;
+    --ans-r-ac: #93BD75;
+    --ans-w-bg: #422B26;
+    --ans-w-bd: #E7735A;
+    --ans-w-ac: #E7735A;
+    --ans-ink: #F1F1F1;
+    --ans-r-tag: transparent;
+    --ans-w-tag: transparent;
+    --ans-w-tx: #EC8169;
+    --ans-ring: 1px;
     --danger: #F85149;
     --danger-hover: #FF7B72;
     --danger-soft: #2C2027;
@@ -286,6 +297,17 @@
   --answer-wrong-solid: #BD561D;
   --answer-wrong-solid-hover: #9B4215;
   --answer-wrong-solid-active: #762D0A;
+  --ans-r-bg: #252922;
+  --ans-r-bd: #678254;
+  --ans-r-ac: #93BD75;
+  --ans-w-bg: #422B26;
+  --ans-w-bd: #E7735A;
+  --ans-w-ac: #E7735A;
+  --ans-ink: #F1F1F1;
+  --ans-r-tag: transparent;
+  --ans-w-tag: transparent;
+  --ans-w-tx: #EC8169;
+  --ans-ring: 1px;
   --danger: #F85149;
   --danger-hover: #FF7B72;
   --danger-soft: #2C2027;
@@ -849,21 +871,30 @@ legend { padding: 0; margin-bottom: 8px; font-weight: 600; }
 @media (hover: hover) { .opt.review:not(.is-ans):not(.is-bad):hover { background-color: var(--card); border-color: var(--line-soft); } }
 /* A graded option is a solid key (v0.7): green when it is a correct answer, orange when it was chosen but is wrong. White
    text, and the letter bubble white-on-colour with a white ring, so it still reads as the answer-sheet bubble. The tags
-   ("Correct answer", "Your answer") stay as white chips, so colour is never the only cue. */
-.opt.is-ans, .opt.is-bad { color: var(--on-answer-solid); }
-.opt.is-ans { border-color: var(--answer-right-solid); background: var(--answer-right-solid); }
-.opt.is-bad { border-color: var(--answer-wrong-solid); background: var(--answer-wrong-solid); }
-.opt.is-ans .bubble, .opt.is-bad .bubble { background: transparent; border-color: var(--on-answer-solid); color: var(--on-answer-solid); }
-/* (keep the solid fill under the pointer: these are not buttons, the plain option hover must not paint over them) */
+   ("Correct answer", "Your choice") stay as white chips, so colour is never the only cue. */
+/* Dark theme (v2.8, owner): a graded option is a tinted card instead of a solid key. The --ans-* tokens exist only in the
+   two dark blocks, so every var() below falls back to the solid light-theme look. The 1 px line gets a 1 px inset ring
+   (--ans-ring, 2 px in total) without moving the layout. Contrast: text #F1F1F1 on #252922 13.10:1, on #422B26 11.58:1;
+   accent #93BD75 on #252922 6.89:1, #E7735A on #422B26 4.36:1 (enough for borders / rings, which need 3:1; the wrong option's letter and "Your choice" label use the slightly lighter #EC8169, 4.93:1). Correct option: the
+   bubble letter and the "Correct answer" tag use #93BD75 (the labels have no chip in dark, as in the owner's reference: 6.89:1); "Your choice" stays ink; borders #678254 3.45:1 on its card, 4.90:1 on the black page, #E7735A 4.36:1 / 7.00:1. */
+.opt.is-ans, .opt.is-bad { color: var(--ans-ink, var(--on-answer-solid)); }
+.opt.is-ans { border-color: var(--ans-r-bd, var(--answer-right-solid)); background: var(--ans-r-bg, var(--answer-right-solid)); box-shadow: inset 0 0 0 var(--ans-ring, 0px) var(--ans-r-bd, transparent); }
+.opt.is-bad { border-color: var(--ans-w-bd, var(--answer-wrong-solid)); background: var(--ans-w-bg, var(--answer-wrong-solid)); box-shadow: inset 0 0 0 var(--ans-ring, 0px) var(--ans-w-bd, transparent); }
+.opt.is-ans .bubble, .opt.is-bad .bubble { background: transparent; border-color: var(--ans-ink, var(--on-answer-solid)); color: var(--ans-ink, var(--on-answer-solid)); }
+.opt.is-ans .bubble { border-color: var(--ans-r-ac, var(--on-answer-solid)); color: var(--ans-r-ac, var(--on-answer-solid)); }
+.opt.is-bad .bubble { border-color: var(--ans-w-ac, var(--on-answer-solid)); color: var(--ans-w-tx, var(--on-answer-solid)); }
+/* (keep the fill under the pointer: these are not buttons, the plain option hover must not paint over them) */
 @media (hover: hover) {
-  .opt.is-ans:hover { background-color: var(--answer-right-solid); border-color: var(--answer-right-solid); }
-  .opt.is-bad:hover { background-color: var(--answer-wrong-solid); border-color: var(--answer-wrong-solid); }
+  .opt.is-ans:hover { background-color: var(--ans-r-bg, var(--answer-right-solid)); border-color: var(--ans-r-bd, var(--answer-right-solid)); }
+  .opt.is-bad:hover { background-color: var(--ans-w-bg, var(--answer-wrong-solid)); border-color: var(--ans-w-bd, var(--answer-wrong-solid)); }
 }
 .opt.review .body { display: grid; gap: 4px; min-width: 0; }
 /* Tags on a solid option: a white chip with the key's own colour as text (green 4.52:1; orange 5.03:1 light, 4.65:1 dark) */
-.opt.is-ans .tag, .opt.is-bad .tag { background: var(--on-answer-solid); }
-.opt.is-ans .tag.g, .opt.is-ans .tag.k { color: var(--answer-right-solid); }
-.opt.is-bad .tag.ng { color: var(--answer-wrong-solid); }
+.opt.is-ans .tag { background: var(--ans-r-tag, var(--on-answer-solid)); }
+.opt.is-bad .tag { background: var(--ans-w-tag, var(--on-answer-solid)); }
+.opt.is-ans .tag.g, .opt.is-ans .tag.k { color: var(--ans-ink, var(--answer-right-solid)); }
+.opt.is-ans .tag.g { color: var(--ans-r-ac, var(--answer-right-solid)); }
+.opt.is-bad .tag.ng { color: var(--ans-w-tx, var(--answer-wrong-solid)); }
 /* v2.2 (owner): on phones the letter does not take a column of its own: it starts the first line and the text runs on
    after it, wrapping back to the left edge, so a long option uses the full width and a short one stays one line. The
    bubble (26 px) sits inside the first 28 px text line; review options keep their tags beside it. */
@@ -885,8 +916,9 @@ legend { padding: 0; margin-bottom: 8px; font-weight: 600; }
 /* The choices of a hotspot statement in a review (v0.7): the correct choice is a small solid green key, a wrong choice the
    user made a solid orange one (white text, both themes); "You chose" / "Correct answer" in front of them stay as the labels */
 .hsa b.g, .hsa b.r { display: inline-block; padding: 0 8px; border-radius: 6px; font-weight: 600; line-height: 1.75; color: var(--on-answer-solid); }
-.hsa b.g { background: var(--answer-right-solid); }
-.hsa b.r { background: var(--answer-wrong-solid); }
+.hsa b.g, .hsa b.r { color: var(--ans-ink, var(--on-answer-solid)); }
+.hsa b.g { background: var(--ans-r-bg, var(--answer-right-solid)); box-shadow: inset 0 0 0 1px var(--ans-r-bd, transparent); }
+.hsa b.r { background: var(--ans-w-bg, var(--answer-wrong-solid)); box-shadow: inset 0 0 0 1px var(--ans-w-bd, transparent); }
 .hsa b.none { font-weight: 600; color: var(--ink2); }
 /* Tags on a statement block sit on a card-coloured chip, so they keep their shape and contrast on the fill */
 .hs-item.rv-ok .hsa .tag, .hs-item.rv-ng .hsa .tag { background: var(--card); }

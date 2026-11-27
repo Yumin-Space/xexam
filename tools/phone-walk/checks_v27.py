@@ -245,7 +245,8 @@ def qd_case(rc, lang, theme, size):
 QT_JS = """
 const pos = document.getElementById('qz-pos'); const w = document.querySelector('.qbar .qcount-w'); const s = document.querySelector('.qbar .qcount-s');
 const ok = (e) => !!e && vis(e) && box(e).w > 0 && box(e).h > 0 && box(e).l >= -0.5 && box(e).r <= innerWidth + 0.5;
-return {pos: ok(pos), word: ok(w), nums: ok(s), posX: pos && vis(pos) ? box(pos).l : null, countX: w && vis(w) ? box(w).l : null,
+const full = document.querySelector('.qbar .qcount-l'); const cnt = document.querySelector('.qbar .qcount');
+return {pos: ok(pos), word: ok(w), nums: ok(s), cnt: ok(cnt), cntText: cnt ? cnt.textContent.trim() : '', posX: pos && vis(pos) ? box(pos).l : null, countX: w && vis(w) ? box(w).l : null,
   sideways: document.documentElement.scrollWidth - innerWidth};"""
 
 
@@ -259,22 +260,40 @@ def qt_row(rc, d, kind, tag, lang, theme, size):
 def qt_case(rc, lang, theme, size):
     p = []
     rows = {}
+    phone = size[0] <= 600 or size[1] <= 500   # the PHONE media query: up to 600 px wide, or a short landscape screen
     for kind, user in (('practice', 'sam'), ('exam', 'riley')):
         d = rc.dev(user, lang, theme, size)
         r = qt_row(rc, d, kind, user, lang, theme, size)
         rows[kind] = r
-        if size[0] >= 360:
+        if not phone and size[0] > 880:
+            # Desktop: the sheet and its count are the rail beside the card; the top row has neither (v2.7)
+            if r['pos']:
+                p.append('%s: the answer-sheet button shows on a desktop screen (the sheet is beside the card there)' % kind)
+        elif not phone:
+            # Tablet 601-880 px: the sheet stays in the page, so no sheet button; the count is the one-line sentence
+            if r['pos']:
+                p.append('%s: the answer-sheet button shows on a screen over 600 px (the sheet is in the page there)' % kind)
+            if not r['cnt'] or len(r['cntText']) < 8:
+                p.append('%s: the one-line count sentence is not visible inside the width ("%s")' % (kind, r['cntText']))
+        elif size[0] >= 360:
             if not r['pos']:
                 p.append('%s: the answer-sheet button is not visible inside the width' % kind)
-            if not r['word']:
-                p.append('%s: the count word (line 1) is not visible' % kind)
-            if not r['nums']:
-                p.append('%s: the count numbers (line 2) are not visible' % kind)
+            # Only at 360 px wide in en / ja may the count drop out (v2.7: the narrowest phones; the meter shows the
+            # progress), but then in both modes alike, never one line cut off; everywhere else it must show
+            if not (size[0] <= 360 and lang in ('en', 'ja')) or (r['word'] or r['nums']):
+                if not r['word']:
+                    p.append('%s: the count word (line 1) is not visible' % kind)
+                if not r['nums']:
+                    p.append('%s: the count numbers (line 2) are not visible' % kind)
         if r['sideways'] > 1:
             p.append('%s: sideways scroll %d px' % (kind, r['sideways']))
     a, b = rows['practice'], rows['exam']
-    if size[0] >= 360:
+    if phone and size[0] >= 360:
+        if (a['word'] and a['nums']) != (b['word'] and b['nums']):
+            p.append('the two-line count shows in one mode only (practice %s / exam %s)' % (a['word'], b['word']))
         for key, what in (('posX', 'answer-sheet button'), ('countX', 'count')):
+            if key == 'countX' and a[key] is None and b[key] is None:
+                continue
             if a[key] is None or b[key] is None or abs(a[key] - b[key]) > 1:
                 p.append('%s x differs, practice %s / exam %s' % (what, a[key], b[key]))
     verdict(rc, 'W-V27-QT', 'quiz', 'top-row', 'sam+riley', lang, theme, size, d, p,

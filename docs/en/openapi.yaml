@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Xexam API
-  version: "2.7"
+  version: "2.8"
   description: |
     The REST API of Xexam. The endpoints that existed in the legacy Python implementation behave as it did, and the Rust
     backend stays consistent with it (172 golden responses compared item by item, see tests/baseline/). The intentional
@@ -3200,6 +3200,464 @@ paths:
         "200": { description: "`{ok: true, user, banks, total, next, strata, previous, items}` or `{ok: false, reason}`" }
         "400": { description: "Malformed body" }
         "404": { description: "Missing or wrong token" }
+  /api/ai/admin/features:
+    post:
+      tags: [ai-admin]
+      summary: "(v1.1, v2.6) Set the AI+ feature permissions of one user (audited)"
+      x-access: AiAdmin
+      description: |
+        The body is exactly `{"userId", "features"}`; `features` must hold exactly the seven booleans `chat`, `hint`, `explain`,
+        `summary`, `assess`, `generate`, `import` (six until v2.5, `assess` since v2.6), else 400 `ai.badRequest`. `true` means the
+        user may use that feature. `hint` and `explain` change together for a user (they stay one per-user switch). An
+        administrator is never limited by per-user features: 409 `ai.adminAlways`. The user is looked up through the backend
+        (503 `ai.backendDown`; 404 `ai.notFound` for an unknown user). Activity event `ai.users.features` (object: the user name;
+        detail `{"on": [...], "off": [...]}` with the keys that changed); a changed value also writes one audit line to the System
+        log. The global switches are `/api/ai/admin/feature-switches`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [userId, features]
+              additionalProperties: false
+              properties:
+                userId: { type: integer, minimum: 1 }
+                features:
+                  type: object
+                  required: [chat, hint, explain, summary, assess, generate, import]
+                  additionalProperties: false
+                  properties:
+                    chat: { type: boolean }
+                    hint: { type: boolean }
+                    explain: { type: boolean }
+                    summary: { type: boolean }
+                    assess: { type: boolean }
+                    generate: { type: boolean }
+                    import: { type: boolean }
+      responses:
+        "200": { $ref: "#/components/responses/AiUserRowAnswer" }
+        "400": { $ref: "#/components/responses/AiError" }
+        "401": { $ref: "#/components/responses/AiSignIn" }
+        "403": { $ref: "#/components/responses/AiForbidden" }
+        "404": { $ref: "#/components/responses/AiNotFound" }
+        "409": { $ref: "#/components/responses/AiError" }
+        "503": { $ref: "#/components/responses/AiBackendDown" }
+  /internal/ai/assess:
+    post:
+      tags: [internal]
+      x-internal: true
+      summary: "(v2.5, internal) The counts behind the caller's AI study assessment (last 30 days)"
+      x-access: InternalToken
+      security: [{ internalToken: [] }]
+      description: |
+        Called by ai-service for /api/ai/assess/ask. Read only. The body is exactly `{sid, id}`; `sid` must be a live session of
+        the user `id` that is not waiting for a password change or a username, and the user needs the AI+ feature
+        (administrators always have it). Refusals are HTTP 200 `{"ok": false, "reason"}`: `session`, `notAllowed`, or `few`
+        (fewer than 3 saved records). Counts and averages only are sent; never sheet lists, banks, question ids or texts, or user names.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sid, id]
+              additionalProperties: false
+              properties:
+                sid: { type: string, pattern: "^[0-9a-f]{64}$" }
+                id: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: "`ok: true` with the numbers, or `ok: false` with a `reason`"
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: object
+                    required: [ok, uiLang, today, latestAt, basis]
+                    properties:
+                      ok: { type: boolean, enum: [true] }
+                      uiLang: { type: string, enum: [en, zh-CN, ja] }
+                      today: { type: string, description: "YYYY-MM-DD" }
+                      latestAt: { type: string, description: "YYYY-MM-DD HH:MM" }
+                      basis:
+                        type: object
+                        description: "A projection of the caller's own records of the last 30 days"
+                        properties:
+                          days: { type: integer }
+                          records: { type: integer }
+                          practice: { type: integer }
+                          exams: { type: integer }
+                          answered: { type: integer }
+                          correct: { type: integer }
+                          unanswered: { type: integer }
+                          activeDays: { type: integer }
+                          daysSinceLast: { type: integer }
+                          longestGapDays: { type: integer }
+                          avgSecPerItem: { type: number }
+                          medianMinutes: { type: number }
+                          examAvgPercent: { type: number, nullable: true }
+                          timedExams: { type: integer }
+                          timeUps: { type: integer }
+                          weekdays: { type: array, minItems: 7, maxItems: 7, items: { type: integer }, description: "Counts Monday to Sunday" }
+                          dayparts: { type: array, minItems: 4, maxItems: 4, items: { type: integer }, description: "Counts for 0-5, 6-11, 12-17, 18-23 h" }
+                          weeks:
+                            type: array
+                            description: "Four weeks, oldest first"
+                            items:
+                              type: object
+                              properties:
+                                answered: { type: integer }
+                                correct: { type: integer }
+                          modes: { type: object, additionalProperties: { type: integer } }
+                          allTime:
+                            type: object
+                            properties:
+                              records: { type: integer }
+                              seen: { type: integer }
+                              answers: { type: integer }
+                              correct: { type: integer }
+                              notebookOpen: { type: integer }
+                              mastered: { type: integer }
+                  - type: object
+                    required: [ok, reason]
+                    properties:
+                      ok: { type: boolean, enum: [false] }
+                      reason: { type: string, enum: [session, notAllowed, few] }
+        "400": { description: "Malformed body: `请求的格式不对。`" }
+        "404": { description: "Missing or wrong token (answered like an unknown path: text/plain `not found`)" }
+        "413": { description: Body too large }
+        "415": { description: Content-Type is not application/json }
+  /internal/ai/gen/source:
+    post:
+      tags: [internal]
+      x-internal: true
+      summary: "(v1.1, internal) A sample of the questions of a generation source with strata and earlier AI banks"
+      x-access: InternalToken
+      security: [{ internalToken: [] }]
+      description: |
+        Kept for compatibility; ai-service has used /internal/ai/gen/corpus since v1.3. Read only. The key set depends on `source`:
+        `bank` needs `bank`; `scope` and `wrong` need `sheets` (1 to 200 objects `{bank, sheet}`, sheet 1 to 80 characters). `file` is not
+        a source here. `min` is the fewest eligible questions (1 to 2000), `max` the most questions returned (1 to 2000, sampled).
+        The session must be a live one of a user who is an administrator or has the AI+ feature and may manage banks. Refusals are
+        HTTP 200 `{"ok": false, "reason"}`: `session`, `notAllowed`, `notFound` (no such or invisible bank or sheet),
+        `aiSource` (bank mode on an AI bank) and `tooFew` (with `have`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sid, source, min, max]
+              properties:
+                sid: { type: string, pattern: "^[0-9a-f]{64}$" }
+                source: { type: string, enum: [bank, scope, wrong] }
+                bank: { type: integer, minimum: 1, description: "Only with source bank" }
+                sheets:
+                  type: array
+                  minItems: 1
+                  maxItems: 200
+                  description: "Only with source scope or wrong"
+                  items:
+                    type: object
+                    required: [bank, sheet]
+                    additionalProperties: false
+                    properties:
+                      bank: { type: integer, minimum: 1 }
+                      sheet: { type: string, minLength: 1, maxLength: 80 }
+                min: { type: integer, minimum: 1, maximum: 2000 }
+                max: { type: integer, minimum: 1, maximum: 2000 }
+      responses:
+        "200":
+          description: "`ok: true` with the source, or `ok: false` with a `reason`"
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: object
+                    required: [ok, user, total, banks, strata, items, previous]
+                    properties:
+                      ok: { type: boolean, enum: [true] }
+                      user:
+                        type: object
+                        properties:
+                          id: { type: integer }
+                          username: { type: string }
+                          role: { type: string, enum: [admin, user] }
+                      total: { type: integer, description: "Every eligible source question before the sampling" }
+                      banks:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id: { type: integer }
+                            name: { type: string }
+                      strata:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            bank: { type: integer }
+                            sheet: { type: string }
+                            n: { type: integer }
+                            multi: { type: integer }
+                      items:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id: { type: string }
+                            s: { type: integer, description: "Index into strata" }
+                            kind: { type: string, enum: [single, multi] }
+                            opts: { type: integer, description: "Number of options" }
+                            right: { type: integer, description: "Number of correct options" }
+                            diff: { type: string, nullable: true, enum: [easy, mid, hard], description: "null below five attempts" }
+                            stem: { $ref: "#/components/schemas/InternalGenTri" }
+                      previous:
+                        type: array
+                        description: "Stems of earlier AI banks made from the same source banks"
+                        items:
+                          type: object
+                          properties:
+                            en: { type: string }
+                            zh: { type: string }
+                  - { $ref: "#/components/schemas/InternalGenRefusal" }
+        "400": { description: "Malformed body: `请求的格式不对。`" }
+        "404": { description: "Missing or wrong token (answered like an unknown path: text/plain `not found`)" }
+        "413": { description: Body too large }
+        "415": { description: Content-Type is not application/json }
+  /internal/ai/gen/seeds:
+    post:
+      tags: [internal]
+      x-internal: true
+      summary: "(v1.1, internal) The capped full texts of chosen source questions in three languages"
+      x-access: InternalToken
+      security: [{ internalToken: [] }]
+      description: |
+        Kept for compatibility, unused since v1.3. Read only. The body is exactly `{sid, ids}` with 1 to 100 question ids
+        (`^[0-9A-Za-z_-]{1,64}$`). Answer items come in request order; an id that is not active, not a single or multiple-choice
+        question, in an AI bank or not visible to the caller is left out. Refusals are HTTP 200: `session`, `notAllowed`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sid, ids]
+              additionalProperties: false
+              properties:
+                sid: { type: string, pattern: "^[0-9a-f]{64}$" }
+                ids:
+                  type: array
+                  minItems: 1
+                  maxItems: 100
+                  items: { type: string, pattern: "^[0-9A-Za-z_-]{1,64}$" }
+      responses:
+        "200":
+          description: "`ok: true` with the items, or `ok: false` with a `reason`"
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: object
+                    required: [ok, items]
+                    properties:
+                      ok: { type: boolean, enum: [true] }
+                      items:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id: { type: string }
+                            kind: { type: string, enum: [single, multi] }
+                            sheet: { type: string }
+                            diff: { type: string, nullable: true, enum: [easy, mid, hard] }
+                            stem: { $ref: "#/components/schemas/InternalGenTri" }
+                            options:
+                              type: array
+                              items:
+                                type: object
+                                properties:
+                                  key: { type: string }
+                                  en: { type: string }
+                                  zh: { type: string }
+                                  ja: { type: string }
+                            answer: { type: array, items: { type: string }, description: "Letters" }
+                            explanation: { $ref: "#/components/schemas/InternalGenTri" }
+                  - { $ref: "#/components/schemas/InternalGenRefusal" }
+        "400": { description: "Malformed body: `请求的格式不对。`" }
+        "404": { description: "Missing or wrong token (answered like an unknown path: text/plain `not found`)" }
+        "413": { description: Body too large }
+        "415": { description: Content-Type is not application/json }
+  /internal/ai/gen/create:
+    post:
+      tags: [internal]
+      x-internal: true
+      summary: "(v1.1, v1.2, internal) Create the AI bank of a finished job, once per job key"
+      x-access: InternalToken
+      security: [{ internalToken: [] }]
+      description: |
+        The only internal route that accepts a large body (10 MiB; the others 64 KiB). It has no session, because the job may outlive
+        it: ai-service names the user and the identity stamp, and the backend re-checks both and the account's rights; a user paused
+        in the last heartbeat is refused. Exactly these keys: `job`, `user`, `stamp`, `name`, `source`, `from`, `goal`, `at`, `sheet`,
+        `questions`, and for `source: "file"` also `file` and `mode` (`questions`: the file's questions converted, plus `skipped`;
+        `material`: new questions written from study material). `questions` holds exactly `goal` questions (for `mode: "questions"`
+        the converted ones plus the skipped numbers make `goal`, and at least one is converted). Text limits per language: stem 800,
+        option 300, explanation 1200 characters (file questions: 2000, 400, 1500); 3 to 6 options (file questions 2 to 8); `answer` is
+        sorted distinct letters among the options. One bank per `job`: a repeated call returns the existing bank with `created:
+        false`. Refusals are HTTP 200 `{"ok": false, "reason"}`: `user` (unknown user or wrong stamp), `notAllowed`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [job, user, stamp, name, source, from, goal, at, sheet, questions]
+              properties:
+                job: { type: string, pattern: "^[0-9a-f]{32}$" }
+                user: { type: integer, minimum: 1 }
+                stamp: { type: string, pattern: "^[0-9a-f]{32}$" }
+                name: { type: string, minLength: 1, maxLength: 120 }
+                source: { type: string, enum: [bank, scope, wrong, file] }
+                from: { type: array, maxItems: 200, items: { type: integer, minimum: 1 }, description: "Source bank ids, distinct; empty for a file" }
+                goal: { type: integer, minimum: 1, maximum: 300 }
+                at: { type: string, description: "YYYY-MM-DD HH:MM:SS" }
+                sheet: { type: string, minLength: 1, maxLength: 60 }
+                file:
+                  type: object
+                  description: "Only with source file"
+                  required: [name, type]
+                  additionalProperties: false
+                  properties:
+                    name: { type: string, minLength: 1, maxLength: 200 }
+                    type: { type: string, enum: [pdf, docx, xlsx, pptx, md, txt, csv] }
+                mode: { type: string, enum: [questions, material], description: "Only with source file" }
+                skipped: { type: array, items: { type: integer, minimum: 1 }, description: "Only with mode questions: sorted distinct question numbers that could not be converted" }
+                questions:
+                  type: array
+                  items:
+                    type: object
+                    required: [kind, stem, options, answer, explanation]
+                    additionalProperties: false
+                    properties:
+                      kind: { type: string, enum: [single, multi] }
+                      stem: { $ref: "#/components/schemas/InternalGenTri" }
+                      options: { type: array, items: { $ref: "#/components/schemas/InternalGenTri" } }
+                      answer: { type: array, items: { type: string }, description: "Sorted distinct letters A, B, ..." }
+                      explanation: { $ref: "#/components/schemas/InternalGenTri" }
+      responses:
+        "200":
+          description: "`ok: true` with the bank, or `ok: false` with a `reason`"
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: object
+                    required: [ok, bankId, name, created]
+                    properties:
+                      ok: { type: boolean, enum: [true] }
+                      bankId: { type: integer }
+                      name: { type: string }
+                      created: { type: boolean, description: "false when the job key already had a bank" }
+                  - type: object
+                    required: [ok, reason]
+                    properties:
+                      ok: { type: boolean, enum: [false] }
+                      reason: { type: string, enum: [user, notAllowed] }
+        "400": { description: "Malformed body: `请求的格式不对。`" }
+        "404": { description: "Missing or wrong token (answered like an unknown path: text/plain `not found`)" }
+        "413": { description: Body too large }
+        "415": { description: Content-Type is not application/json }
+  /internal/ai/gen/lookup:
+    post:
+      tags: [internal]
+      x-internal: true
+      summary: "(v1.1, internal) The AI bank of a job key, if any"
+      x-access: InternalToken
+      security: [{ internalToken: [] }]
+      description: |
+        Called by ai-service to find out whether a job already made its bank (after a lost answer). Read only. The body is exactly `{job}`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [job]
+              additionalProperties: false
+              properties:
+                job: { type: string, pattern: "^[0-9a-f]{32}$" }
+      responses:
+        "200":
+          description: "`{\"ok\": true, \"bank\": {id, name, made, goal}}`, or `bank: null` when the job has no bank"
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, bank]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+                  bank:
+                    type: object
+                    nullable: true
+                    properties:
+                      id: { type: integer }
+                      name: { type: string }
+                      made: { type: integer }
+                      goal: { type: integer }
+        "400": { description: "Malformed body: `请求的格式不对。`" }
+        "404": { description: "Missing or wrong token (answered like an unknown path: text/plain `not found`)" }
+        "413": { description: Body too large }
+        "415": { description: Content-Type is not application/json }
+  /internal/ai/import/check:
+    post:
+      tags: [internal]
+      x-internal: true
+      summary: "(v1.2, internal) May the signed-in user import a file as an AI bank, and is the bank name taken"
+      x-access: InternalToken
+      security: [{ internalToken: [] }]
+      description: |
+        Called by ai-service for /api/ai/import/upload and /api/ai/import/confirm. Read only. The body is `{sid}` and optionally `name`
+        (the bank name typed at the confirm step, trimmed). The session must be live and not waiting for a password change or a
+        username. Refusals are HTTP 200 `{"ok": false, "reason": "session" | "notAllowed"}`; `nameTaken` is present only when a name was sent.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sid]
+              additionalProperties: false
+              properties:
+                sid: { type: string, pattern: "^[0-9a-f]{64}$" }
+                name: { type: string }
+      responses:
+        "200":
+          description: "`ok: true` with the user, or `ok: false` with a `reason`"
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: object
+                    required: [ok, user]
+                    properties:
+                      ok: { type: boolean, enum: [true] }
+                      user:
+                        type: object
+                        properties:
+                          id: { type: integer }
+                          username: { type: string }
+                          role: { type: string, enum: [admin, user] }
+                      nameTaken: { type: boolean }
+                  - type: object
+                    required: [ok, reason]
+                    properties:
+                      ok: { type: boolean, enum: [false] }
+                      reason: { type: string, enum: [session, notAllowed] }
+        "400": { description: "Malformed body: `请求的格式不对。`" }
+        "404": { description: "Missing or wrong token (answered like an unknown path: text/plain `not found`)" }
+        "413": { description: Body too large }
+        "415": { description: Content-Type is not application/json }
 
 components:
   securitySchemes:
@@ -4535,6 +4993,22 @@ components:
       properties:
         ok: { type: boolean, enum: [false] }
         reason: { type: string, enum: [session, notAllowed, notFound], description: "notAllowed only on question and record; notFound is one answer for missing, foreign and out-of-scope" }
+    InternalGenTri:
+      type: object
+      description: "(v1.1, internal) A text in the three languages"
+      required: [en, zh, ja]
+      properties:
+        en: { type: string }
+        zh: { type: string }
+        ja: { type: string }
+    InternalGenRefusal:
+      type: object
+      description: "(v1.1, internal) A refusal of a generation data route (HTTP 200)"
+      required: [ok, reason]
+      properties:
+        ok: { type: boolean, enum: [false] }
+        reason: { type: string, enum: [session, notAllowed, notFound, aiSource, tooFew] }
+        have: { type: integer, description: "With tooFew: how many eligible questions there are" }
     InternalStudyQuestion:
       type: object
       description: "(v0.9, internal) A question without its answer key or explanation"

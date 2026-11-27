@@ -508,8 +508,10 @@ td.ais-usum { display: none; }
   /* A-OWNER-77: the ja short labels (ユーザー, セキュリティ) are wider than zh / en; the icons give way, the labels stay */
   html:lang(ja) .ais-tabs .ais-tab-ic { display: none; }
 }
-/* A-OWNER-87: at 320 px the English labels (Function, Users, Usage, Safety, Banks) need the icons' room too */
-@media (max-width: 340px) { html:lang(en) .ais-tabs .ais-tab-ic { display: none; } }
+/* A-OWNER-87: at 320 px the English labels (Function, Users, Usage, Safety, Banks) need the icons' room too. Since v1.3 the
+   first label is the longer "Connections": with the icons the English row needs about 357 px and clipped "Banks" on screens
+   up to about 384 px wide (360, 375), so there the icons give way below 390 px (v2.8) */
+@media (max-width: 389px) { html:lang(en) .ais-tabs .ais-tab-ic { display: none; } }
 
 .ais-genjobs .ais-skipn { color: var(--ink3); }
 

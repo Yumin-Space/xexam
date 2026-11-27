@@ -480,12 +480,14 @@ function bankChecklist(o: ChecklistOptions): Checklist {
     h('div', { class: 'us-banktools' },
       manageWrap,
       downloadWrap,
-      withTip(holdOnTouch(h('label', { class: 'us-tool', for: all.id }, all, miniIcon('checkAll'),
-        h('span', null, shortLabel('users.banks.selectAll', 'users.tools.allShort'))), t('users.tip.selectAll')),
-      tipEl(`${id}-tip-all`, t('users.tip.selectAll')), 'us-tool-end'),
-      withTip(holdOnTouch(h('label', { class: 'us-tool', for: none.id }, none, miniIcon('squareMinus'),
-        h('span', null, shortLabel('users.banks.deselectAll', 'users.tools.noneShort'))), t('users.tip.deselectAll')),
-      tipEl(`${id}-tip-none`, t('users.tip.deselectAll')))),
+      // Select all / Deselect all are one pair: they stay together at the right end, and wrap to the next line together
+      h('span', { class: 'us-tool-end' },
+        withTip(holdOnTouch(h('label', { class: 'us-tool', for: all.id }, all, miniIcon('checkAll'),
+          h('span', null, shortLabel('users.banks.selectAll', 'users.tools.allShort'))), t('users.tip.selectAll')),
+        tipEl(`${id}-tip-all`, t('users.tip.selectAll'))),
+        withTip(holdOnTouch(h('label', { class: 'us-tool', for: none.id }, none, miniIcon('squareMinus'),
+          h('span', null, shortLabel('users.banks.deselectAll', 'users.tools.noneShort'))), t('users.tip.deselectAll')),
+        tipEl(`${id}-tip-none`, t('users.tip.deselectAll'))))),
     h('ul', { class: 'us-banklist', id: listId },
       // Always the first entry, also when there are no banks yet
       h('li', { class: 'us-later-row' }, withTip(
@@ -1453,26 +1455,27 @@ function act(id: string, ic: MiniIcon, aria: string, blocked: boolean, reason: s
 }
 
 /**
- * The row's line about question banks, only for a plain user (an administrator sees every bank: no sentence, US-2): one 44 px
- * tappable row (the chosen banks counted and named, a chevron) that opens the bank dialog (US-4); its accessible name says what
- * it changes. v0.6.5: the names are written out so they can be read on a phone; v0.7: whether the banks imported later are
- * added, plus a bank manager's own uploads.
+ * The row's question-bank control (v2.8, owner: a small database icon in the icon group like the other actions, no full-width
+ * row): its tip and accessible name say whose banks it changes plus the summary the old row showed (the chosen banks counted
+ * and named, whether later imports are added, a bank manager's own uploads), so no information is lost; the same summary stays
+ * in a visually hidden #us-access-<id>. It opens the bank dialog (US-4). An administrator sees every bank: the icon is greyed
+ * with the reason as its tip.
  */
-function bankLine(u: UserRow, blocked: boolean): HTMLElement | null {
+function bankIcon(u: UserRow, blocked: boolean): HTMLElement[] {
+  if (u.role !== 'user') {
+    return [act(`us-banks-${u.id}`, 'database', t('users.act.banksAria', { name: u.username }), blocked, t('users.tip.adminBanks'), () => undefined)];
+  }
   const v = accessView(u, S.banks);
-  if (u.role !== 'user' || v.kind === 'admin') return null;
+  if (v.kind === 'admin') return [];
   const sep = t('common.listSep');
   const main = v.kind === 'all' ? t('users.banks.all')
     : v.kind === 'some' ? t(v.later ? 'users.banks.someLater' : 'users.banks.some', { n: v.names.length, names: v.names.join(sep) })
       : t(v.later ? 'users.banks.noneLater' : 'users.banks.none');
-  const none = v.kind === 'none' && !v.later && !v.own.length;
-  return h('button', {
-    class: 'us-bankrow' + (none ? ' none' : ''), id: `us-banks-${u.id}`, type: 'button', disabled: blocked,
-    'aria-label': t('users.act.banksAria', { name: u.username }), onclick: () => void chooseBanks(u),
-  },
-  h('span', { class: 'us-bank-sum', id: `us-access-${u.id}` }, main,
-    v.own.length ? h('span', { class: 'us-banks-own' }, t('users.banks.own', { names: v.own.join(sep) })) : null),
-  miniIcon('fwd', 'us-mi us-bank-go'));
+  const summary = v.own.length ? main + (uiLang() === 'en' ? '. ' : '。') + t('users.banks.own', { names: v.own.join(sep) }) : main;
+  return [
+    act(`us-banks-${u.id}`, 'database', t('users.act.banksTip', { name: u.username, summary }), blocked, null, () => void chooseBanks(u)),
+    h('span', { class: 'sr-only', id: `us-access-${u.id}`, 'aria-hidden': 'true' }, summary),
+  ];
 }
 
 /**
@@ -1610,14 +1613,14 @@ function userRow(u: UserRow, list: readonly UserRow[]): HTMLElement {
       h('span', { class: 'us-tags' }, tags)),
     // v2.6: the display name the user chose, as a muted second line (the login above stays what the person signs in with)
     u.displayName ? h('p', { class: 'us-disp', title: u.displayName }, u.displayName) : h('p', { class: 'us-disp none' }, t('users.display.unset')),
-    factLines(u),
-    bankLine(u, blocked)),
+    factLines(u)),
   h('div', { class: 'us-acts' },
     aiSwitch(u, blocked),
     h('div', { class: 'us-icons' },
       busy ? h('span', { class: 'us-busy', role: 'status' }, t('users.act.busy')) : null,
       act(`us-records-${u.id}`, 'book', t('users.act.recordsAria', { name: u.username }), blocked, u.records === 0 ? t('users.act.recordsNone') : null,
         () => navigate({ name: 'userRecords', user: u.id })),
+      ...bankIcon(u, blocked),
       act(`us-edit-${u.id}`, 'pencil', t('users.act.editAria', { name: u.username }), blocked, null, () => void editUser(u, lim)),
       act(`us-reset-${u.id}`, 'keyRound', t('users.act.resetAria', { name: u.username }), blocked, lim.self ? lim.why : null, () => void resetPassword(u)),
       u.disabled

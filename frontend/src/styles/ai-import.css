@@ -9,8 +9,9 @@
 .bk-aicard .err { margin-top: 10px; }
 .bk-aicard .err[hidden] { display: none; }
 /* A-OWNER-29b: the solid twin of the green Excel button (.btn.bk-choose): same box, AI+ orange (no shine), white bold text; both
-   share one min-width, and the two cards have the same layout so the buttons share one left edge */
-.btn.bk-choose, .gen-impbtn.ibtn { min-width: 13em; }
+   share one min-width, and the two cards have the same layout so the buttons share one left edge. 14em (v2.8): the longest
+   label with its icon (ja, the AI button) fits inside it, so the two stay the same width in every language */
+.btn.bk-choose, .gen-impbtn.ibtn { min-width: 14em; }
 .gen-impbtn { flex: none; }
 .gen-impwrap { flex: none; display: inline-flex; max-width: 100%; }
 /* the AI+ fill, the focus ring and the greyed look of .gen-impbtn.ibtn come from styles/ai-gen.css (shared with the generation buttons, A-OWNER-65) */

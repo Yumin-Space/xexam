@@ -168,6 +168,21 @@ erDiagram
     attempts ||--o{ attempt_items : "attempt_id"
     users ||--o{ user_stats : "user_stats.user_id"
     users ||--o{ user_settings : "user_settings.user_id"
+    system_settings {
+        TEXT key PK "站点开关名"
+        TEXT value
+        TEXT updated_at
+        INTEGER updated_by "仅用于审计，无外键"
+    }
+    activity_log {
+        INTEGER id PK
+        INTEGER ts "unix 秒"
+        TEXT actor "user · anon · system"
+        INTEGER user_id "快照，无外键"
+        TEXT action
+        TEXT result "ok · fail"
+        TEXT source "backend · ai"
+    }
 ```
 
 十三张表。从 schema 11（v2.0）起其中九张声明了**外键**，全部明确写成 `ON DELETE NO ACTION`（会留下子行的删除会失败；代码照旧先在同一个事务里删子行）：`sessions.user_id`、`user_stats.user_id`、`user_settings.user_id`、`user_banks.user_id`、`attempts.user_id`（可为空）和 `banks.owner_id`（可为空）→ `users(id)`；`attempt_items.attempt_id` → `attempts(id)`；`questions.bank_id`（可为空）、`imports.bank_id`（可为空）和 `user_banks.bank_id` → `banks(id)`。特意**不加**外键的（建表语句里也有注释）：`attempt_items.question_id` 和 `user_stats.question_id`（记录比被删的题目活得久，v0.5 之前的题库用的是不分题库的 id）、`activity_log.user_id`（日志是审计快照）和 `system_settings.updated_by`（只写不读的审计字段：加了外键，就删不掉曾经改过站点开关的管理员）。旧表 `stats`（v0.5 及更早版本的每道题统计）和 `settings`（v0.5 的设置）从 schema 11 起不再存在；它们的行在 v3 迁移时已经复制给第一个管理员（`user_stats`、`user_settings`）。重建的九张表以带引号的名字存成 `CREATE TABLE "banks" (…)`，这是 SQLite 记录改过名的表的方式。
@@ -491,7 +506,7 @@ docker compose start
 
 > ⚠️ 从 v0.1 升级时：数据库的文件名改了，新版本只读取 `xexam.db`。如果数据目录里有别的 `.db` 文件、却没有 `xexam.db`，启动日志会提醒你；把那个文件改名为 `xexam.db` 再启动（旧文件既不会被删除，也不会被读取）。
 
-## 8. AI 数据库（`xexam-ai.db`，v0.8；从 v2.0 起 schema 10）
+## 8. AI 数据库（`xexam-ai.db`，v0.8；从 v2.1 起 schema 11）
 
 ai-service 把 AI 的一切都放在它**自己的** SQLite 数据库里，只有它打开和迁移这个数据库；后端从不读取它，ai-service 也从不打开 `xexam.db`（数据边界，见 [architecture.md](architecture.md) 第 5 节）。
 
@@ -504,7 +519,7 @@ ai-service 把 AI 的一切都放在它**自己的** SQLite 数据库里，只�
 
 和主数据库一样：`busy_timeout` 5000 ms、`foreign_keys=ON`（这里的 schema 确实用了外键，见下文）、`synchronous=FULL`、WAL 模式（`XEXAM_AI_SQLITE_JOURNAL=delete` 保留回滚日志，规则和 2.1 一样），另外还有 **`secure_delete=ON`**。一个连接放在互斥锁后面，每次写入都在 `BEGIN IMMEDIATE … COMMIT` 里，锁从不跨 `.await` 持有。启动日志里会写 `AI database: /data/xexam-ai.db (journal: wal)`。
 
-### 8.2 表（schema 10 时的样子）
+### 8.2 核心表（v0.8 的那一组；schema 11 的完整图见 9.2 节）
 
 ```mermaid
 erDiagram
@@ -980,6 +995,7 @@ erDiagram
 ```mermaid
 erDiagram
   users ||--o{ chats : "CASCADE"
+  users ||--o| assess_latest : "CASCADE"
   users ||--o{ memories : "CASCADE"
   users |o--o{ tasks : "CASCADE"
   users |o--o{ usage : "SET NULL"
@@ -1158,6 +1174,18 @@ erDiagram
     text effort
     int updated_at
     text updated_by
+  }
+  assess_latest {
+    int user_id PK
+    text content
+    text lang
+    text model
+    text latest_at
+    int records
+    int answered
+    text day
+    int created_at
+    int runs
   }
   study_shared {
     int id PK

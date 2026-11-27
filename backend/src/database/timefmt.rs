@@ -7,6 +7,23 @@ use jiff::{Timestamp, Zoned};
 /// Time source. `Store` calls `now()` once before each database write.
 pub trait Clock: Send + Sync + 'static {
     fn now(&self) -> String;
+
+    /// The same instant as Unix seconds, for the request path (session gates). The real clock reads the system time; a
+    /// pinned test clock derives it from its own string (read as UTC), so no real minute boundary can reach the tests.
+    fn unix(&self) -> i64 {
+        crate::auth::unix_now()
+    }
+}
+
+/// `YYYY-MM-DD HH:MM` (or with seconds) read as UTC Unix seconds; `None` when it does not parse.
+fn unix_of_minute(s: &str) -> Option<i64> {
+    let fmt = if s.len() > 16 {
+        "%Y-%m-%d %H:%M:%S"
+    } else {
+        "%Y-%m-%d %H:%M"
+    };
+    let dt = jiff::civil::DateTime::strptime(fmt, s).ok()?;
+    Some(dt.to_zoned(TimeZone::UTC).ok()?.timestamp().as_second())
 }
 
 /// The real local time.
@@ -27,6 +44,10 @@ impl Clock for FixedClock {
     fn now(&self) -> String {
         self.0.clone()
     }
+
+    fn unix(&self) -> i64 {
+        unix_of_minute(&self.0).unwrap_or_else(crate::auth::unix_now)
+    }
 }
 
 /// A clock backed by a function / closure.
@@ -38,6 +59,10 @@ where
 {
     fn now(&self) -> String {
         (self.0)()
+    }
+
+    fn unix(&self) -> i64 {
+        unix_of_minute(&(self.0)()).unwrap_or_else(crate::auth::unix_now)
     }
 }
 

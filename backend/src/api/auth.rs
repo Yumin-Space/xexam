@@ -489,7 +489,7 @@ async fn session(
     let force_secure = st.0.cfg.cookie_secure;
     let may_resend = force_secure || origin.is_some();
     let secure = auth::cookie_secure(force_secure, origin);
-    let now = auth::unix_now();
+    let now = st.0.store.unix_now();
     let token_hash = auth::token_hash(&token);
     let client = ClientInfo::from_headers(headers);
     let looked = session_lookup(

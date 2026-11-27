@@ -6,7 +6,7 @@ import { MINI, MINI_NAMES, type Shape } from './mini-icon-shapes.ts';
 /** The mini icons of the inventory in spec 4.2 (the two 24 px shell icons `gear` and `aiSliders` live in shell.ts) */
 const INVENTORY = [
   'back', 'fwd', 'chevDown', 'up', 'down', 'flag', 'exit', 'clock', 'grid', 'bulb', 'book', 'sparkle', 'copy', 'check',
-  'xCircle', 'x', 'refresh', 'retake', 'stop', 'send', 'brain', 'chat', 'memory', 'more', 'plus', 'pencil', 'keyRound', 'pauseCircle',
+  'xCircle', 'x', 'refresh', 'retake', 'stop', 'send', 'brain', 'chat', 'memory', 'more', 'plus', 'pencil', 'keyRound', 'database', 'pauseCircle',
   'playCircle', 'userOff', 'userOn', 'unlock', 'eye', 'eyeOff', 'trash', 'upload', 'warn', 'search', 'pause', 'play', 'sun', 'moon',
   'auto', 'filter', 'list', 'home', 'study', 'info', 'key', 'plug', 'users', 'chart', 'shield', 'hourglass', 'aiGen', 'aiImport', 'submit',
 ];

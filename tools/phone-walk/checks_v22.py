@@ -252,10 +252,14 @@ def cs_case(rc, lang, theme, size):
     s.call('/api/ai/free', {'free': True})
     try:
         goto(d, '#/ai', 2.2)
+        until(d, "document.querySelector('#ai-composer .ai-box')", 10)
         d.js("(() => { const b = document.querySelector('.ai-new, #ai-new'); if (b) b.click(); return 1 })()")
         time.sleep(1.2)
-        if phone(size):
-            # owner (v2.3): in the compact one-row box the strength is the last section of the brain picker; there is no button
+        until(d, "(() => { const b = document.getElementById('ai-model-btn'); return !!b && b.getClientRects().length > 0 })()", 8)
+        if size[0] < 720:
+            # owner (v2.3): in the compact one-row box the strength is the last section of the brain picker; there is no button.
+            # Only under 720 px (pages/ai.ts inlineStrength): a phone held sideways (740 / 844 px wide) has the room for the
+            # separate strength button like wider screens (changelog v2.3); the composer part below checks it there
             c0 = js(d, COMPOSER_JS)
             if not c0:
                 skip(rc, 'W-V22-CS', 'ai', 'composer', 'admin', size, lang, theme, 'no composer on the AI Chat page')
@@ -321,8 +325,11 @@ def cs_case(rc, lang, theme, size):
             p.append('composer overflow (bar %d, box %d, page %d px)' % (c['barScroll'], c['boxScroll'], c['sideways']))
         if phone(size) and c['effortH'] < 36:
             p.append('the strength button is %d px high' % c['effortH'])
-        if phone(size) and c['compact'] and (c['effortH'] < 43.5 or c['effortW'] < 43.5 or c['effortW'] > 60):
-            p.append('the icon-only strength button of the compact row is %dx%d px (want 44x44)' % (c['effortW'], c['effortH']))
+        # v2.3 shipped no icon-only strength button: under 720 px the compact row has none (the brain picker has the strength,
+        # checked above); from 720 px (a phone held sideways) the compact row shows the labelled button. On touch it is as tall as
+        # the brain button (44 px, ai.css) and keeps its 112 px cap, in the compact row and the expanded box alike
+        if phone(size) and (c['effortH'] < 43.5 or c['effortW'] < 43.5 or c['effortW'] > 112.5):
+            p.append('the strength button is %dx%d px (want 44 px high, 44 to 112 px wide)' % (c['effortW'], c['effortH']))
         if not c['label'] or not c['text']:
             p.append('the strength button has no text or no name (%r / %r)' % (c['text'], c['label']))
         p += ['measure ' + x for x in common(d, size)]

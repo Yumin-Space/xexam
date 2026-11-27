@@ -1072,6 +1072,27 @@ Cloudflare の所在地ヘッダーに代わる任意の手段です（[deployme
 **送信されないもの**：IPv4 では `0.0.0.0/8`、`10/8`、`100.64/10`、`127/8`、`169.254/16`、`172.16/12`、`192.0.0/24`、`192.0.2/24`、`192.168/16`、`198.18/15`、`198.51.100/24`、`203.0.113/24`、マルチキャスト、`240/4`（およびその `::ffff:` 形式）。IPv6 では `2000::/3` の外すべてと、`2001::/23`、`2001:db8::/32`、`2002::/16`、`3fff::/20`（コード `refused`）。
 
 
+### 5.10 思考の強さ、構造化された回答、ログ行の場所 *(v1.6)*
+
+**`POST /api/ai/admin/models/effort`**（管理者）`{"slot": "default" | "chat" | "hint" | "explain" | "summary" | "generate" | "import", "effort": null | {"family", "level"}}`。これ以外は受け付けません（400 `ai.badRequest`）。`null` は **既定** で、パラメーターを送りません。`family` は `anthropic`、`openai`、`google`、`responses` のいずれか（小文字。`gemma` は v1.9 で削除され、400 になります）。`level` はその family のレベルのいずれかでなければなりません（大文字小文字を区別し、送信される表記のまま）。
+
+| `family` | リクエストのパラメーター | `level` |
+|---|---|---|
+| `anthropic` | `output_config.effort` | `low`、`medium`、`high`、`xhigh`、`max` |
+| `openai` | `reasoning_effort` | `low`、`medium`、`high`、`xhigh`、`max` |
+| `google` | `extra_body.google.thinking_config.thinking_level` | `MINIMAL`、`LOW`、`MEDIUM`、`HIGH`、`XHIGH` |
+| `responses` | `reasoning.effort`（入れ子：`"reasoning": {"effort": …}`） | `none`、`minimal`、`low`、`medium`、`high`、`xhigh`、`max` |
+
+この選択は接続の形式とは照合されません。そのスロットの呼び出しのリクエスト本文に入れるパラメーターを決めるだけです。既定のモデルに従うスロットは、既定のモデルをそのスロット自身の強さで使います。応答：`{"settings": Settings}`。アクティビティのイベント `ai.settings.effort`（対象：スロット、詳細 `{"family": "<family>" | "default", "level": "<level>" | null}`）。
+
+`GET /api/ai/admin/settings` は、`modelId` と `using` の隣に `slots.<slot>.effort`（`null` または `{"family", "level"}`）を持ち、トップレベルに `effortLevels`（`{"anthropic": [...], "openai": [...], "google": [...], "responses": [...]}`。上の表のリストで、画面の描画用）を持ちます。
+
+**プロバイダーが拒否したとき。** パラメーター付きのリクエストが HTTP 400 または 422 で返された場合、パラメーターなしでもう一度送ります。その接続は非対応として記憶され（メモリ上、ai-service の再起動または強さの変更まで）、応答は **既定** を選んだ場合と同じように使われます。ユーザーにエラーは届きません。
+
+**構造化された回答。** 問題の形の回答（生成とインポート）は構造化出力を要求します。Anthropic の接続は JSON スキーマ付きの `output_config.format` を、OpenAI 互換の接続は `strict: true` の `json_schema` 型の `response_format` を、Responses の接続は `text.format`（`{"type":"json_schema","name":"answer","strict":true,"schema":...}`）を送ります。拒否したプロバイダーには通常のリクエストを送り、接続ごとにメモリ上で記憶します。スキーマは問題ごとに 1 つの `answer` フィールド（正しい選択肢の文字）を求め、ai-service がそこから選択肢のフラグを設定します。旧形式（すべての選択肢に真偽値の `correct`）も引き続き読み取られ、別の選択肢が真のときに `correct` のない選択肢は偽とみなされます。計画の呼び出しのトークン予算は `min(22 000, 6 200 + 90 × 問題数)`（20 問：8 000）、全体の計画は 8 000 です。*(v2.4)* OpenAI 互換の接続では、これらの呼び出しは `"stream": false` を送り、回答を一度にすべて読みます。そのような呼び出しがタイムアウトするか HTTP 504 / 524 を受けた場合、その接続とモデルのバックグラウンドジョブは、ai-service が再起動するまで再びストリームします（メモリのみ）。AI チャットと学習の質問は常にストリームです。選択肢を文字で指す表現（「Option B」「选项B」「C项」「AとB」）は、問題を拒否する代わりに、同じ言語の引用された選択肢の文面に書き換えます。「A项目」のような普通の語はそのままです。`A.` や `(B)` のような選択肢のラベルは、すべての選択肢が順に自分の文字で始まるときだけ取り除きます。問題のインポートでは、AI が 4 つの選択肢を作る問題の解説だけを修復し、ファイルの選択肢を保つ問題には手を加えません。
+
+**ログ行の場所。** Cloudflare モードでは、`POST /internal/ai/activity` のイベントに任意の `country`、`region`、`city` が付くことがあります（リクエストの `X-Geo-*` ヘッダーから得た場所で、Nginx は信頼できるプロキシからのものだけを ai-service に渡します）。バックエンドはヘッダーと同じ規則で整えます（国は 2 文字で `XX` や `T1` は不可、地域と都市は制御文字を除いて 64 文字で切り、文字列でない値は 400）。保存は、サインイン情報の目が開いている間だけ、アドレスと一緒に行います。API モードでは無視され、アドレスのキャッシュ済みの照会結果が使われます。
+
 ### 5.11 接続のスイッチ、機能ごとのスイッチ、安全上限のグループ、送信間隔 *(v1.9)*
 
 - **`POST /api/ai/admin/connections/enabled`**（管理者）。ボディは正確に `{"id": <正の整数>, "enabled": <真偽値>}`。キーが欠けている、型が違う、余分なキーがある場合は 400 `ai.badRequest`、存在しない id は 404 `ai.notFound`。200 で `{"settings": Settings}` を返し、変更がなかったときも同じです。オフにしても、接続のすべての設定・キー・プールのモデルは残りますが、すべての選択肢とルーティングから外れます。接続の `rev` は増えず、実行中の呼び出しは取り消されず、ハートビートがすぐに送られます。アクティビティのイベントは `ai.settings.connectionOn` または `ai.settings.connectionOff`（対象：接続名、詳細 `{"provider", "host"}`）。オフの接続でも `connections/test` は使えます。

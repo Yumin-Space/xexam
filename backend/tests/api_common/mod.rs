@@ -278,7 +278,7 @@ pub fn test_session(store: &Store, username: &str) -> String {
                 &u.password_hash,
                 &u.password_hash,
                 &auth::token_hash(&auth::new_session_token()),
-                auth::unix_now(),
+                store.unix_now(),
             )
             .expect("clear the flag");
     }
@@ -294,7 +294,7 @@ pub fn test_session(store: &Store, username: &str) -> String {
             u.id,
             &auth::token_hash(&token),
             &u.password_hash,
-            auth::unix_now(),
+            store.unix_now(),
         )
         .expect("start session")
         .expect("user enabled");

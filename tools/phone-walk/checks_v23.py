@@ -33,7 +33,7 @@ page always opens a new chat). Every case takes screenshots into the output fold
              rounded rectangle) with the focus kept; many lines grow the input up to 8 lines / 40 % of the visible height and
              then it scrolls inside; clearing the text returns to the compact row
   W-V23-NT   the administrator notice is under the composer (and in the memory view) but not in the drawer, and it fits ONE line at
-             375 / 393 / 430 px
+             375 / 393 / 430 px; over 900 px it is the one line under the page title instead (never both)
 
 Made-up accounts and data only; the screenshots stay in the output folder. Registered in checks.py (GROUPS_V23); run alone with
 --only 'W-V23-*'.
@@ -251,7 +251,10 @@ MEM_BAR_JS = """const bar = document.querySelector('.ai-mem-bar-t'); const n = d
 def mem_case(rc, lang, theme, size):
     d = rc.dev('sam', lang, theme, size)
     goto(d, '#/ai', 2.4)
+    # a fresh device can still be booting ("loading the banks") after the fixed settle: wait for the AI Chat page first
+    until(d, "document.getElementById('ai-input')", 10)
     open_sidebar(d)
+    until(d, "(() => { const e = document.getElementById('ai-mem-open'); return !!e && e.getClientRects().length > 0 })()", 6)
     if not jv(d, "return !!document.getElementById('ai-mem-open') && vis(document.getElementById('ai-mem-open'));"):
         rc.rec('W-V23-MEM', 'ai', 'memories', 'sam', size, lang, theme, False, 'no memory row (#ai-mem-open) in the sidebar', d)
         return
@@ -409,6 +412,8 @@ def sb_case(rc, lang, theme, size):
     d = rc.dev('sam', lang, theme, size)
     rc.chat_id('sam')
     goto(d, '#/ai', 2.4)
+    # the history arrives after the page ("Loading..." in the sidebar): wait for the rows before measuring
+    until(d, "document.querySelector('aside.ai-list .ai-chat-open')", 10)
     s = jv(d, SB_JS)
     if not s:
         rc.rec('W-V23-SB', 'ai', 'sidebar', 'sam', size, lang, theme, False, 'no sidebar on screen', d)
@@ -463,6 +468,10 @@ def chat_ids(rc, user):
 
 def dl_case(rc, lang, theme, size):
     user = 'lee'
+    if size[0] >= 720:
+        # --full runs every size: from 720 px the history is the always-visible sidebar (v2.3), there is no drawer to test
+        skip(rc, 'W-V23-DL', 'ai', 'delete-open-chat', user, size, lang, theme, 'no drawer at %dx%d (sidebar mode)' % tuple(size))
+        return
     d = rc.dev(user, lang, theme, size)
     p = []
     a = mk_chat(rc, user, 'Walk delete test A: one tip about knives, please.')
@@ -592,6 +601,10 @@ def ro_case(rc, lang, theme, size):
 
 # ------------------------------------------------------------------------------------------------ W-V23-FW
 def fw_case(rc, lang, theme, size):
+    if size[0] >= 720:
+        # --full runs every size: from 720 px the history is the always-visible sidebar (v2.3), there is no drawer to close
+        skip(rc, 'W-V23-FW', 'ai', 'forward', 'sam', size, lang, theme, 'no drawer at %dx%d (sidebar mode)' % tuple(size))
+        return
     d = rc.dev('sam', lang, theme, size)
     goto(d, '#/', 1.6)
     d.js("location.hash = '#/ai'; 1")
@@ -621,6 +634,10 @@ def fw_case(rc, lang, theme, size):
 
 # ------------------------------------------------------------------------------------------------ W-V23-KB
 def kb_case(rc, lang, theme, size):
+    if size[0] >= 720:
+        # --full runs every size: from 720 px the history is the always-visible sidebar (v2.3), there is no drawer to lift
+        skip(rc, 'W-V23-KB', 'ai', 'drawer-keyboard', 'sam', size, lang, theme, 'no drawer at %dx%d (sidebar mode)' % tuple(size))
+        return
     d = rc.dev('sam', lang, theme, size)
     rc.chat_id('sam')
     goto(d, '#/ai', 2.4)
@@ -643,15 +660,21 @@ def ls_case(rc, lang, theme, size):
     if not jv(d, "return !!drawerBtn() && vis(drawerBtn());"):
         skip(rc, 'W-V23-LS', 'ai', 'drawer-landscape', 'sam', size, lang, theme, 'no menu button at this size')
         return
+    until(d, "document.querySelector('aside.ai-list .ai-chat-open')", 10)
     tap(d, '#ai-drawer-btn', 0.9)
+    # short (<= 500 px high, ai.css): the whole drawer is the one scroller; a taller phone (--full also runs portrait sizes) keeps
+    # the v2.3 layout: the drawer is fixed and the list body (rows, Delete all, the GitHub line) is the scroller under the head
+    short = size[1] <= 500
     r = jv(d, """const s = sidebar(); const body = document.getElementById('ai-list-body'); const cs = getComputedStyle(s); const bs = getComputedStyle(body);
-      s.scrollTop = s.scrollHeight; const del = document.getElementById('ai-delall'); const gh = s.querySelector('.gh-line');
+      const sc = SHORT ? s : body; sc.scrollTop = sc.scrollHeight; const del = document.getElementById('ai-delall'); const gh = s.querySelector('.gh-line');
       const out = {sideY: cs.overflowY, bodyY: bs.overflowY, delIn: del ? inView(box(del)) : null,
         noticeIn: gh && vis(gh) ? inView(box(gh)) : null, notice: !!s.querySelector('.ai-notice-btn')};
-      s.scrollTop = 0; const row = s.querySelector('.ai-chat-open'); out.rowIn = row ? inView(box(row)) : null; return out;""")
+      sc.scrollTop = 0; const row = s.querySelector('.ai-chat-open'); out.rowIn = row ? inView(box(row)) : null; return out;""".replace('SHORT', 'true' if short else 'false'))
     p = []
-    if r['sideY'] not in ('auto', 'scroll') or r['bodyY'] in ('auto', 'scroll'):
+    if short and (r['sideY'] not in ('auto', 'scroll') or r['bodyY'] in ('auto', 'scroll')):
         p.append('the drawer is not one scroller (drawer %s, list %s)' % (r['sideY'], r['bodyY']))
+    if not short and (r['bodyY'] not in ('auto', 'scroll') or r['sideY'] in ('auto', 'scroll')):
+        p.append('the list body is not the one scroller of the tall drawer (drawer %s, list %s)' % (r['sideY'], r['bodyY']))
     if r['delIn'] is False:
         p.append('Delete all chats cannot be scrolled into view')
     if r['noticeIn'] is False:
@@ -660,24 +683,51 @@ def ls_case(rc, lang, theme, size):
         p.append('the administrator notice is in the drawer')
     if r['rowIn'] is False:
         p.append('the first history row is not reachable at the top')
-    verdict(rc, 'W-V23-LS', 'ai', 'drawer-landscape', 'sam', size, lang, theme, d, p, 'the drawer scrolls as one; foot and GitHub line reachable')
+    verdict(rc, 'W-V23-LS', 'ai', 'drawer-landscape', 'sam', size, lang, theme, d, p,
+            ('the drawer scrolls as one' if short else 'the list scrolls inside the fixed drawer') + '; foot and GitHub line reachable')
 
 
 # ------------------------------------------------------------------------------------------------ W-V23-NT
 NT_JS = """const s = document.querySelector('.ai-composer .ai-notice-btn span'); const side = sidebar();
   let lines = 0; if (s && vis(s)) { const rg = document.createRange(); rg.selectNodeContents(s); lines = new Set([...rg.getClientRects()].map((r) => Math.round(r.top))).size; }
-  return {shown: !!s && vis(s), lines, inDrawer: !!side && !!side.querySelector('.ai-notice-btn')};"""
+  const top = document.querySelector('.page-ai .ai-notice-top span'); let topLines = 0;
+  if (top && vis(top)) { const rg = document.createRange(); rg.selectNodeContents(top); topLines = new Set([...rg.getClientRects()].map((r) => Math.round(r.top))).size; }
+  const tb = top && vis(top) ? box(top) : null; const h1 = document.querySelector('.page-ai .ai-head h1');
+  return {shown: !!s && vis(s), lines, inDrawer: !!side && !!side.querySelector('.ai-notice-btn'), top: !!tb, topLines,
+    topIn: !!tb && inView(tb), underTitle: !!tb && !!h1 && vis(h1) && tb.t >= box(h1).b - 1,
+    docScroll: !document.documentElement.classList.contains('no-doc-scroll')};"""
 
 
 def nt_case(rc, lang, theme, size):
     d = rc.dev('sam', lang, theme, size)
     goto(d, '#/ai', 2.4)
+    until(d, "document.getElementById('ai-input')", 10)
     r = jv(d, NT_JS)
     p = []
+    if r['docScroll']:
+        # over 900 px (not a short sideways phone) the page scrolls as a whole and the notice is the line under the page
+        # title (.ai-notice-top, the design since v1.1); under the composer it shows only on the full-height chat (<= 900 px)
+        if not r['top']:
+            p.append('no administrator notice under the page title')
+        else:
+            if r['topLines'] != 1:
+                p.append('the notice under the title wraps to %d lines at %d px (want one line)' % (r['topLines'], size[0]))
+            if not r['underTitle']:
+                p.append('the notice is not under the page title')
+            if not r['topIn']:
+                p.append('the notice under the title is outside the screen')
+        if r['shown']:
+            p.append('the notice is shown twice (under the title and under the composer)')
+        if r['inDrawer']:
+            p.append('the administrator notice is in the sidebar')
+        verdict(rc, 'W-V23-NT', 'ai', 'notice', 'sam', size, lang, theme, d, p, 'notice under the page title on %d line(s), not under the composer, none in the sidebar' % r['topLines'])
+        return
     if not r['shown']:
         p.append('no administrator notice under the composer')
     elif r['lines'] != 1 and size[0] >= 375:
         p.append('the notice wraps to %d lines at %d px (want one line)' % (r['lines'], size[0]))
+    if r['top']:
+        p.append('the notice is shown twice (under the composer and under the page title)')
     if r['inDrawer']:
         p.append('the administrator notice is in the drawer')
     verdict(rc, 'W-V23-NT', 'ai', 'notice', 'sam', size, lang, theme, d, p, 'notice under the composer on %d line(s), none in the drawer' % r['lines'])
@@ -879,6 +929,11 @@ def g_v23(rc):
     go(rc, 'W-V23-FW', 'ai', fw_case, PHONES[:1])
     go(rc, 'W-V23-KB', 'ai', kb_case, PHONES[:1])
     go(rc, 'W-V23-LS', 'ai', ls_case, LANDS)
+    if rc.args.full and not rc.args.widths and rc.want('W-V23-LS') and rc.walk.wants_page('ai'):
+        # --full swaps the sizes for MATRIX, which has no phone under 720 x 500: the short sideways phones run as well
+        for lang in rc.langs([]):
+            for size in LANDS:
+                rc.guard('W-V23-LS', 'ai', ls_case, rc, lang, rc.themes(['light'])[0], size)
     go(rc, 'W-V23-LT', 'ai', lt_case, [(393, 852), (360, 740)])
     go(rc, 'W-V23-CTR', 'ai', ctr_case, PHONES + LANDS[1:] + [TABLET, DESKTOP])
     go(rc, 'W-V23-CMP', 'ai', cmp_case, PHONES[:1] + PHONES[2:] + [DESKTOP])

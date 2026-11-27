@@ -76,6 +76,8 @@ export const MINI = {
   sideLines: [{ d: 'M2.5 5h11' }, { d: 'M2.5 11h6.5' }],
   /** Three dots: more actions */
   more: [{ d: 'M3.5 8h.01' }, { d: 'M8 8h.01' }, { d: 'M12.5 8h.01' }],
+  /** A database cylinder (ellipse top, two bands): a user's question-bank access */
+  database: [{ d: 'M2.8 3.8C2.8 2.6 5.1 1.8 8 1.8s5.2.8 5.2 2v8.4c0 1.2-2.3 2-5.2 2s-5.2-.8-5.2-2Z' }, { d: 'M2.8 3.8c0 1.2 2.3 2 5.2 2s5.2-.8 5.2-2' }, { d: 'M2.8 8c0 1.2 2.3 2 5.2 2s5.2-.8 5.2-2' }],
   /** A key with a circular arrow: reset a password */
   keyRound: [{ cx: 5.5, cy: 10.5, r: 2.5 }, { d: 'M7.4 8.6 12.5 3.5' }, { d: 'M10.6 5.4l1.6 1.6' }, { d: 'M2.2 7A5.6 5.6 0 0 1 6.6 2.4' }, { d: 'M6.6 2.4v2' }],
   /** Pause in a circle */

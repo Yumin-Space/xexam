@@ -389,7 +389,9 @@ fn history_shows_sixty_while_the_database_keeps_more_and_ids_keep_growing() {
 // ---------------------------------------------------------------- (5) schema equality
 
 fn sqlite_master(path: &Path) -> Vec<Value> {
-    let c = Connection::open(path).expect("open");
+    // Read-only: the shared baseline fixture is also copied by other tests running in parallel, so no test may open it for writing.
+    let c = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .expect("open");
     let mut st = c
         .prepare("SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY rowid")
         .expect("prepare");

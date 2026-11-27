@@ -3064,6 +3064,120 @@ async fn guesses_from_elsewhere_escalate_without_locking_the_known_browser() {
     assert_eq!(login(&a, "admin", ADMIN_PW).await.status, 200);
 }
 
+/// v2.7 review: round 1 counts failures in a sliding 15-minute window; old failures stop counting.
+#[tokio::test]
+async fn round_one_counts_failures_in_a_sliding_window() {
+    let (a, clock) = app_with_moving_clock();
+    let c = admin(&a).await;
+    user(&a, &c, "eve", "user").await;
+    for _ in 0..4 {
+        assert_eq!(login(&a, "eve", "not-her-pass").await.status, 401);
+    }
+    // the four failures leave the window: four more are still only failures
+    advance(&clock, 15 * 60);
+    for _ in 0..4 {
+        assert_eq!(login(&a, "eve", "not-her-pass").await.status, 401);
+    }
+    assert_eq!(lock_of(&a, &c, "eve").await, Value::Null);
+    // the fifth within the window starts the 1-minute lock
+    assert_eq!(login(&a, "eve", "not-her-pass").await.status, 401);
+    assert_wait(&login(&a, "eve", "eve-own-pass").await, 60);
+}
+
+/// v2.7 review: a name without an account follows the same rounds with the same answers, and its state touches nobody else.
+#[tokio::test]
+async fn an_unknown_name_is_locked_exactly_like_an_account() {
+    let (a, clock) = app_with_moving_clock();
+    let c = admin(&a).await;
+    user(&a, &c, "fay", "user").await;
+    for _ in 0..5 {
+        assert_eq!(login(&a, "nobody-here", "whatever-pass").await.status, 401);
+    }
+    assert_wait(&login(&a, "nobody-here", "whatever-pass").await, 60);
+    assert_wait(&login(&a, "NOBODY-HERE", "whatever-pass").await, 60);
+    // an existing account answers the same way after the same failures
+    for _ in 0..5 {
+        assert_eq!(login(&a, "fay", "whatever-pass").await.status, 401);
+    }
+    assert_wait(&login(&a, "fay", "whatever-pass").await, 60);
+    // round 2 for the unknown name: three tries, then 5 minutes
+    advance(&clock, 60);
+    for _ in 0..3 {
+        assert_eq!(login(&a, "nobody-here", "whatever-pass").await.status, 401);
+    }
+    assert_wait(&login(&a, "nobody-here", "whatever-pass").await, 300);
+    // the account is in round 2 on its own count
+    assert_eq!(lock_of(&a, &c, "fay").await["round"], 2);
+}
+
+/// v2.7 review: a disabled account is throttled like any other (the right password counts as a failure), and Unlock works.
+#[tokio::test]
+async fn a_disabled_account_is_throttled_like_the_others() {
+    let (a, _clock) = app_with_moving_clock();
+    let c = admin(&a).await;
+    let (gus, _) = user(&a, &c, "gus", "user").await;
+    let r = post(
+        &a,
+        "/api/users/update",
+        Some(&c),
+        &json!({"id": gus, "disabled": true}).to_string(),
+    )
+    .await;
+    assert_eq!(r.status, 200, "{}", r.text());
+    for _ in 0..5 {
+        assert_eq!(login(&a, "gus", "gus-own-pass").await.status, 401);
+    }
+    assert_wait(&login(&a, "gus", "gus-own-pass").await, 60);
+    assert_eq!(lock_of(&a, &c, "gus").await["retryAfter"], 60);
+    let r = post(
+        &a,
+        "/api/users/unlock",
+        Some(&c),
+        &json!({"id": gus}).to_string(),
+    )
+    .await;
+    assert_eq!(r.status, 200, "{}", r.text());
+    assert_eq!(lock_of(&a, &c, "gus").await, Value::Null);
+    assert_eq!(login(&a, "gus", "gus-own-pass").await.status, 401);
+}
+
+/// v2.7 review: a locked account refuses a password change with the right current password too, and a correct current
+/// password (after earlier wrong ones) starts the account over.
+#[tokio::test]
+async fn the_password_change_shares_the_lock_and_a_success_starts_over() {
+    let (a, clock) = app_with_moving_clock();
+    let c = admin(&a).await;
+    let (_, hc) = user(&a, &c, "hal", "user").await;
+    let wrong = json!({"current": "wrong-pass-1", "password": "something-new"}).to_string();
+    let right = json!({"current": "hal-own-pass", "password": "something-new"}).to_string();
+    for _ in 0..5 {
+        assert_eq!(
+            post(&a, "/api/auth/password", Some(&hc), &wrong)
+                .await
+                .status,
+            403
+        );
+    }
+    assert_wait(&post(&a, "/api/auth/password", Some(&hc), &right).await, 60);
+    advance(&clock, 60);
+    // round 2: two wrong tries, then the right one succeeds and the account starts over at round 1
+    for _ in 0..2 {
+        assert_eq!(
+            post(&a, "/api/auth/password", Some(&hc), &wrong)
+                .await
+                .status,
+            403
+        );
+    }
+    let r = post(&a, "/api/auth/password", Some(&hc), &right).await;
+    assert_eq!(r.status, 200, "{}", r.text());
+    assert_eq!(lock_of(&a, &c, "hal").await, Value::Null);
+    for _ in 0..4 {
+        assert_eq!(login(&a, "hal", "not-her-pass").await.status, 401);
+    }
+    assert_eq!(login(&a, "hal", "something-new").await.status, 200);
+}
+
 // ---------------------------------------------------------------- v0.6.5 fixes
 
 const MSG_EXAM_QUESTIONS_GONE: &str = "这场考试的题目已经被删除，成绩没有保存。";

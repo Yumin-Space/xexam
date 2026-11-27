@@ -70,12 +70,25 @@ def touch_swipe(d, x, y, dx, dy, steps=8):
     time.sleep(0.45)
 
 
+# The AI Chat page has rendered (a busy machine needs longer than the fixed settle time) / the drawer is open and shows rows
+READY = "document.querySelector('.page-ai .ai-conv-head') && (innerWidth >= 720 || document.getElementById('ai-drawer-btn'))"
+OPEN = """(() => { const a = document.querySelector('aside.ai-list'); const b = document.getElementById('ai-drawer-btn');
+  return !!a && a.getClientRects().length > 0 && !!document.querySelector('.ai-chats > li') && (!b || !b.getClientRects().length || b.getAttribute('aria-expanded') === 'true') })()"""
+
+
+def open_list(d, settle):
+    """#/ai with the history list open (the phone drawer), waiting for the page instead of trusting a fixed delay."""
+    goto(d, '#/ai', settle)
+    until(d, READY, 10)
+    open_sidebar(d)
+    until(d, OPEN, 5)
+
+
 def fixed_case(rc, lang, theme, size):
     d = rc.dev('sam', lang, theme, size)
     rc.chat_id('sam')
     problems = []
-    goto(d, '#/ai', 2.0)
-    open_sidebar(d)     # v2.3: the history list is the phone drawer
+    open_list(d, 2.0)     # v2.3: the history list is the phone drawer
     phone_drawer = d.js("!!document.getElementById('ai-drawer-btn') && document.getElementById('ai-drawer-btn').getClientRects().length > 0")
     if d.js_call(ROWS, 5) != 5:
         rc.rec('W-CH-82', 'ai', 'fixed-frame', 'sam', size, lang, theme, False, 'no history list on screen', d)
@@ -114,8 +127,7 @@ def fixed_case(rc, lang, theme, size):
         if d.js("document.getElementById('ai-drawer-btn').getAttribute('aria-expanded')") != 'false':
             problems.append('a left swipe did not close the drawer')
     # A long list scrolls up / down, never sideways
-    goto(d, '#/ai', 1.5)
-    open_sidebar(d)
+    open_list(d, 1.5)
     d.js_call(ROWS, 40)
     time.sleep(0.3)
     d.js("document.querySelector('.ai-list-body').scrollTop = 40")
@@ -137,7 +149,9 @@ def fixed_case(rc, lang, theme, size):
         problems.append('long list swipes moved the frame or went sideways')
     # Memory: a fixed frame too
     goto(d, '#/ai', 1.5)
+    until(d, READY, 10)
     open_memories(d, 0.6)
+    until(d, "document.querySelector('.ai-mem')", 5)
     for sel, at, name in (('.ai-mem', 'mid', 'memory pane'), ('.ai-head', 'top', 'memory title row')):
         for dn, dx, dy in DIRS:
             res = d.js_call(DRAG, sel, at, dx, dy)
@@ -151,6 +165,7 @@ def fixed_case(rc, lang, theme, size):
                 problems.append('%s: %s drag not cancelled' % (name, dn))
     # The conversation: the v1.1 rule, unchanged (A-OWNER-82 constraint)
     goto(d, '#/ai/%d' % rc.chat_id('sam'), 2.2)
+    until(d, "document.querySelector('.page-ai .ai-conv-head') && document.querySelector('.ai-scroll .ai-msg')", 10)
     for dn, dx, dy, want in (('up', 0, -20, True), ('down', 0, 20, True), ('left', -20, 0, False), ('right', 20, 0, False)):
         if d.js_call(DRAG, '.ai-conv-head', 'top', dx, dy) is not want:
             problems.append('conversation head: %s drag %s (v1.1: %s)' % (dn, 'cancelled' if not want else 'left alone', 'left alone' if not want else 'cancelled'))
@@ -192,6 +207,8 @@ def head_case(rc, lang, theme, size, user, free):
     rc.chat_id(user)
     d = rc.dev(user, lang, theme, size)
     goto(d, '#/ai', 2.0)
+    # a busy machine can still show "Loading..." after the fixed settle time: wait for the header row itself
+    until(d, "document.querySelector('.page-ai .ai-conv-head, .page-ai .ai-head') && document.querySelector('.topbar')", 10)
     bad = []
     seen = set()
     for zoom in (1, 1.25, 1.5):

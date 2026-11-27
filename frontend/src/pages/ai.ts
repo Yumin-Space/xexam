@@ -63,7 +63,7 @@ import { forgetStudyChats as forgetPanelChats } from '../components/ai-panel.ts'
 import { forgetStudyChats as forgetSummaryChats } from '../components/ai-summary.ts';
 import { copyText } from '../utils/clipboard.ts';
 import { ask } from '../utils/dialog.ts';
-import { h, keepFocus, undoViewportPan, type Child } from '../utils/dom.ts';
+import { h, keepFocus, undoViewportPan, VIEWPORT_EVENT, type Child } from '../utils/dom.ts';
 import { liftToastAbove, toast } from '../utils/toast.ts';
 
 // v2.6 (owner): the hand-drawn welcome picture steps aside while the composer is being typed in on a touch screen. The state
@@ -530,6 +530,18 @@ function installOnce(): void {
     closeRowMenu(false);
   });
   window.addEventListener('resize', () => closeRowMenu(false));
+  // v2.8: an open popover of the empty chat's box is placed again when the screen turns or the keyboard comes or goes
+  // (only after dom.ts has applied --vvh / --kb / kb-open: it fires VIEWPORT_EVENT after each update; without a
+  // visualViewport the placement follows the window resize after two frames and once more after the settle time.
+  // placeGreetPops does nothing off the AI page, so these page-wide listeners need no removal on leave.)
+  if (window.visualViewport) {
+    window.addEventListener(VIEWPORT_EVENT, placeGreetPops);
+  } else {
+    window.addEventListener('resize', () => {
+      window.requestAnimationFrame(() => window.requestAnimationFrame(placeGreetPops));
+      window.setTimeout(placeGreetPops, 400);
+    });
+  }
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape' || !rowMenu || !onPage()) return;
     // The Esc that closes the menu is not the drawer's (the drawer's handler runs after this one)
@@ -2925,10 +2937,58 @@ function syncModels(c: Composer): void {
   const inEffort = c.effortHost.contains(document.activeElement);
   syncEffort(c, show, dotRef, busy);
   if (inEffort && effortPop) (document.querySelector('#ai-effort-pop [aria-checked="true"]') as HTMLElement | null)?.focus();
-  if (!show || !modelPop) return;
+  if (!show || !modelPop) {
+    placeGreetPops();
+    return;
+  }
   c.models.append(modelPopover(c, menu, def, shown, busy));
+  placeGreetPops();
   // A redraw (the list arrived, the language changed) keeps the focus where it was in the popover
   if (inPop) document.getElementById(inPop)?.focus();
+}
+
+/**
+ * v2.8: in an EMPTY chat on a phone or tablet the box is centred under the chat head and its popovers (the model picker, the
+ * strength menu) opened above it at up to 40 % of the screen, so on a small phone a tall one reached into the chat head and
+ * cut its title and buttons in half. Each drawn popover is measured: it opens above the box when it fits between the head and
+ * the box, else below it when it fits there (down to the admin notice or the visible bottom). When it fits on neither side
+ * (a small phone with the strength field in the picker, a phone turned sideways), it starts under the head and covers part
+ * of the box instead (.pop-over; tapping outside or ✕ closes it), so no field is cut in half. It is never taller than its
+ * room (--pop-room; it scrolls inside). A popover fixed to the screen (the strength menu in a short window) is left alone.
+ */
+function placeGreetPops(): void {
+  const conv = document.querySelector<HTMLElement>('.page-ai .ai-conv');
+  if (!conv) return;
+  const lock = document.documentElement.classList.contains('no-doc-scroll');
+  const greet = !!conv.querySelector('.ai-greeting');
+  for (const p of conv.querySelectorAll<HTMLElement>('.ai-model-pop')) {
+    p.classList.remove('pop-down', 'pop-over');
+    p.style.removeProperty('--pop-room');
+    p.style.removeProperty('--pop-top');
+    const box = p.offsetParent;
+    if (!lock || !greet || !box || getComputedStyle(p).position !== 'absolute') continue;
+    const b = box.getBoundingClientRect();
+    const top = (conv.querySelector('.ai-conv-head')?.getBoundingClientRect().bottom ?? 0) + 8;
+    const notice = conv.querySelector<HTMLElement>('.ai-notice-btn');
+    const view = (window.visualViewport?.height ?? window.innerHeight) - 8;
+    const bottom = notice && notice.offsetParent !== null ? Math.min(notice.getBoundingClientRect().top - 8, view) : view;
+    const up = b.top - 6 - top;
+    const down = bottom - b.bottom - 6;
+    // the full height of the content (the popover's 1 px border is not part of scrollHeight)
+    const need = p.scrollHeight + 2;
+    let room = up;
+    if (need > up && need <= down) {
+      p.classList.add('pop-down');
+      room = down;
+    } else if (need > up) {
+      // it ends just above the box when the screen allows, so it covers as little of the box as it can
+      const at = Math.max(top, b.top - 6 - need);
+      p.classList.add('pop-over');
+      p.style.setProperty('--pop-top', `${Math.round(at - b.top)}px`);
+      room = view - at;
+    }
+    p.style.setProperty('--pop-room', `${Math.max(96, Math.floor(room))}px`);
+  }
 }
 
 /** The banner above the input while a question is edited: what it means and Cancel */

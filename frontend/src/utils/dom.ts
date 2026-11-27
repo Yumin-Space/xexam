@@ -177,6 +177,9 @@ export function scrollToY(y: number, smooth: boolean): void {
 
 let vvInstalled = false;
 
+/** Fired on window after every update of --vvh / --kb / html.kb-open (only where there is a visualViewport) */
+export const VIEWPORT_EVENT = 'xexam:viewport';
+
 /**
  * Keeps `--vvh` (the visual viewport height in px) and `--kb` (the part of the layout viewport the keyboard covers, px)
  * on :root, and `html.kb-open` while `--kb` > 0, from one rAF-throttled visualViewport listener. Nothing is set where
@@ -195,6 +198,8 @@ export function installViewportVars(): void {
     root.style.setProperty('--vvh', `${vv.height}px`);
     root.style.setProperty('--kb', `${kb}px`);
     root.classList.toggle('kb-open', kb > 0);
+    // Tell the page the variables are applied (also after the 350 ms settle pass), so measuring code never reads stale values
+    window.dispatchEvent(new Event(VIEWPORT_EVENT));
   };
   const queue = (): void => {
     if (!frame) frame = window.requestAnimationFrame(update);

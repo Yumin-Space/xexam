@@ -1,6 +1,6 @@
 /* User management (v1.0, phones first): compact like the home and banks pages. One block with one row per user: an icon, the name
-   with the tags of what differs from the usual, one line of facts, the bank line as one tappable row, and the action row (the AI+
-   switch at its left, icon buttons for edit / reset password / disable / unlock / delete). The "Add user" form opens as a soft
+   with the tags of what differs from the usual, one line of facts, and the action row (the AI+
+   switch at its left, icon buttons for records / banks (database) / edit / reset password / disable / unlock (only when locked) / delete). The "Add user" form opens as a soft
    tinted block at the top of the list. Colours come only from the tokens in main.css, so the page follows the light and dark
    themes. PHONE = (max-width: 600px), (orientation: landscape) and (max-height: 500px), as in every stylesheet. */
 
@@ -51,23 +51,10 @@
 .us-ua dd { margin: 0; overflow-wrap: anywhere; word-break: break-word; }
 @media (max-width: 600px) { .us-ua { grid-template-columns: minmax(0, 1fr); } }
 
-/* The bank line (plain users): one tappable row, the summary and a chevron (US-4). Names are written out, so they can be read on a phone. */
-.us-bankrow {
-  display: flex; align-items: center; gap: 8px; width: calc(100% + 16px); min-height: 40px; margin: 2px -8px 0; padding: 4px 8px;
-  border: 0; border-radius: 8px; background: transparent; color: var(--ink2); font: inherit; font-size: 13px; line-height: 1.55;
-  text-align: left; cursor: pointer; -webkit-tap-highlight-color: transparent;
-}
-@media (hover: hover) { .us-bankrow:hover:not(:disabled) { background: var(--hover); } }
-.us-bankrow:disabled { cursor: default; opacity: .6; }
-.us-bankrow.none { color: var(--ink3); }
-.us-bank-sum { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-.us-bank-go { flex: none; width: 16px; height: 16px; color: var(--ink3); }
-.us-banks-own { display: block; color: var(--ink3); }
-
 /* The action row: the AI+ switch at the left, then the icon buttons; one line while it fits, never one under the other, so no
    two tap areas share ground (US-3) */
 .us-acts { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px 14px; min-height: 40px; }
-.us-icons { display: inline-flex; align-items: center; gap: 4px; }
+.us-icons { display: inline-flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 4px; max-width: 100%; }
 .us-busy { margin-right: 6px; font-size: 12.5px; color: var(--ink3); }
 /* AI+ of a row (v0.8): a small switch for a plain user (administrators always have AI while it is enabled: no line) */
 .us-ailine { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; line-height: 1.5; color: var(--ink2); }
@@ -109,8 +96,9 @@
   border: 1px solid var(--line-soft); border-bottom: 0; border-radius: 8px 8px 0 0; background: var(--card);
 }
 .us-banktools > .has-tip[hidden] { display: none; }
-/* v1.6: Select all / Deselect all sit at the right end of the row (they wrap to a second line on narrow phones) */
-.us-banktools .us-tool-end { margin-left: auto; }
+/* v1.6: Select all / Deselect all sit at the right end of the row (they wrap to a second line on narrow phones);
+   v2.8: as one pair, so a narrow phone never leaves Deselect all alone on the second line */
+.us-banktools .us-tool-end { margin-left: auto; display: inline-flex; flex-wrap: nowrap; align-items: center; gap: inherit; }
 .us-tool {
   position: relative; display: inline-flex; align-items: center; gap: 6px; min-height: 28px; font-size: 13.5px; line-height: 1.4; color: var(--ink2);
   cursor: pointer; white-space: nowrap; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none;
@@ -185,7 +173,7 @@ dialog .us-banklist { max-height: none; overflow: visible; }
 }
 
 @media (max-width: 400px) {
-  /* The short switch label and tighter gaps keep the AI+ switch and five icons on one row at 360 px */
+  /* The short switch label and tighter gaps keep the switch line compact; on phones the switch and the icon group sit on separate 44 px lines */
   .us-ai-l .l-full { display: none; }
   .us-ai-l .l-short { display: inline; }
   .us-acts { column-gap: 8px; }
@@ -206,16 +194,22 @@ dialog .us-banklist { max-height: none; overflow: visible; }
   .us-tool .l-full { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 }
 
-/* 320 px: five 44 px icons with a gap overflow the list panel; with no gap the 44 px boxes touch and fit */
-@media (max-width: 340px) {
+/* Up to 400 px: with a gap, seven 44 px icons overflow the list panel; with no gap the boxes touch and 7 x 44 = 308 px fit from
+   360 px up. At 320 px (about 270 px available) a group of seven icons (a locked user: Unlock) is laid out as 4 + 3, so the
+   trash icon is never alone on a line; groups of six (264 px) stay one flex line */
+@media (max-width: 400px) {
   .us-icons { gap: 0; }
 }
+@media (max-width: 340px) {
+  .us-icons:has(> :nth-child(7)) { display: grid; grid-template-columns: repeat(4, 44px); justify-content: end; }
+}
 
-/* Touch screens: the bank row and the options are 44 px to tap; the icon buttons bring their own 44 px hit area */
+/* Touch screens: the options are 44 px to tap; the icon buttons bring their own 44 px hit area */
 @media (pointer: coarse), (max-width: 480px) {
-  .us-bankrow { min-height: 44px; }
+  /* a wrapped sort / add line starts below the lead tip's 12 px tap overhang */
+  .us-head { row-gap: 14px; }
   /* Every line of the action row is 44 px tall, also when it wraps, so the tap areas of the switch and of the icons never reach
-     each other or the bank row above (US-3) */
+     each other or the facts above (US-3) */
   .us-acts { min-height: 44px; }
   .us-ailine, .us-icons { min-height: 44px; }
   .us-seg-o { min-height: 44px; }
