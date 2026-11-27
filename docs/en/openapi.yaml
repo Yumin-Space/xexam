@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Xexam API
-  version: "2.9"
+  version: "3.0"
   description: |
     The REST API of Xexam. The endpoints that existed in the legacy Python implementation behave as it did, and the Rust
     backend stays consistent with it (172 golden responses compared item by item, see tests/baseline/). The intentional
@@ -687,7 +687,7 @@ paths:
   /api/settings/reset:
     post:
       tags: [settings]
-      summary: "(v0.5) Restore theme, uiLang and autoAdvance to their defaults (questionLang is kept)"
+      summary: "(v0.5) Restore theme, uiLang, autoAdvance and answerFx to their defaults (questionLang is kept)"
       x-access: SignedIn
       requestBody:
         required: false
@@ -4340,12 +4340,13 @@ components:
     Settings:
       type: object
       description: "(v0.5) Key order as listed."
-      required: [theme, uiLang, autoAdvance, questionLang]
+      required: [theme, uiLang, autoAdvance, questionLang, answerFx]
       properties:
         theme: { type: string, enum: [system, light, dark], default: system }
         uiLang: { type: string, enum: [en, zh, ja], default: en }
         autoAdvance: { type: boolean, default: false, description: "Go to the next question automatically after a single-choice pick (or the last hotspot choice); never in practice" }
         questionLang: { type: string, enum: [ja, zh, en], default: en, description: "The default question language (every exam or practice starts in it); default en since v2.6 (ja before)" }
+        answerFx: { type: boolean, default: true, description: "(v3.0) Practice only: confetti for a right answer and claw marks for a wrong one when an answer is checked" }
     SettingsPatch:
       type: object
       description: "(v0.5) Any subset of Settings; unknown keys are ignored"
@@ -4354,6 +4355,7 @@ components:
         uiLang: { type: string, enum: [en, zh, ja] }
         autoAdvance: { type: boolean }
         questionLang: { type: string, enum: [ja, zh, en] }
+        answerFx: { type: boolean }
     ImportRecord:
       type: object
       required: [id, at, filename, added, updated, removed, restored, skipped, total]

@@ -394,6 +394,8 @@ export interface Settings {
   autoAdvance: boolean;
   /** Language the question text is shown in (Japanese is the original) */
   questionLang: QuestionLang;
+  /** Practice: confetti for a right answer, claw marks for a wrong one, when an answer is checked (default on) */
+  answerFx: boolean;
 }
 
 // ---------------------------------------------------------------- v0.6: users and sign-in

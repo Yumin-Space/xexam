@@ -77,7 +77,7 @@ export async function updateSettings(patch: Partial<Settings>, rerender: () => v
   rerender();
 }
 
-/** Restores theme, UI language and auto-advance to their defaults (the question language is kept). */
+/** Restores theme, UI language, auto-advance and answer effects to their defaults (the question language is kept). */
 export async function resetSettings(rerender: () => void): Promise<void> {
   adopt(await apiResetSettings());
   rerender();

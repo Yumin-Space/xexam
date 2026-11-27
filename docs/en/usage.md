@@ -169,6 +169,7 @@ A practice uses the same page as the exam, but checks every answer right away. S
   - your answer and the correct answer;
   - the explanation and the memory aid, in the language of the page's **English** / **中文** / **日本語** switch.
 - Auto-advance never applies in a practice: you move on with **Next**.
+- **Effects** (v3.0, if **Answer effects** is on in Settings, [section 9](#9-settings)): checking a right answer throws confetti from the bottom corners with a soft chime; checking a wrong one draws two claw marks across the screen with a short red flash, a shake of the question card and a low buzzer. Taps go through to the page and do not end it; it fades out by itself (the confetti after about 7 seconds, the claw marks after about 3) or ends when you move to another question. They never appear in an exam.
 - The answer sheet fills checked questions green (correct) or orange (wrong), and says, for example, **Checked 4 of 12 · 3 correct**.
 - **Finish practice** (below the answer sheet on a wide screen, in the top row in a narrow window or on a phone, and on the last question) asks only when some questions are not checked yet. Those count as not answered (wrong), even when an answer is chosen.
 - **Save and exit** works as in an exam; Exam & practice then shows **Unfinished practice** with how many questions are checked.
@@ -283,8 +284,9 @@ Since v2.6 your account, your username and **Change password** are on the [Profi
   - **Default question language** (v2.6): **English**, **中文** or **日本語**, the language the questions start in each time you begin an exam or a practice, and the language of the answers and explanations on the result page and in the records, and of the question under Home's Most missed board. The default is **English**; a user who never chose a question language before v2.6 now starts in English too, and a choice made earlier is kept. The switch on the exam page still changes the language, for that exam or practice only ([section 4](#4-the-exam-page)).
 - **Text** (v2.6): **Normal text** or **Hand-written text** (the default), the same choice as the **Aa** button of the top bar ([section 2.2](#22-hand-written-mode-v26)). It is kept in this browser only.
 - **Answering** → **Auto-advance to the next question** (off by default, exams only): after you answer a single-choice question, or every item of a hotspot question, the next question opens by itself. Multiple-choice questions never move on by themselves. While it is on, the exam page shows **Auto-advance on** at the top.
+- **Answering** → **Answer effects** (on by default, practice only): when you check an answer, a right one throws confetti and a wrong one draws two claw marks across the screen. Taps go through and do not end it, moving to another question does; nothing is shown when your device asks for reduced motion.
 - **Free mode** of AI Chat (administrators only) is not in Settings: it is a switch on each administrator's row in **AI settings** → **AI+ users** ([section 17](#17-ai-settings)).
-- **Reset to defaults**: theme, interface language and auto-advance go back to their defaults. The default question language is kept, and so is the text style.
+- **Reset to defaults**: theme, interface language, auto-advance and answer effects go back to their defaults. The default question language is kept, and so is the text style.
 
 Settings belong to your account and are saved on the Xexam server, the default question language included. So they survive restarts and image updates, clearing the browser cache, and switching to another browser or device; every user has their own. Only an unfinished exam or practice and the text style (**Text**) stay in the current browser.
 

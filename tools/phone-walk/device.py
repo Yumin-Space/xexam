@@ -197,7 +197,8 @@ class Device:
         self.nav(SETUP)
 
     def save_settings(self, **kw):
-        body = {'uiLang': self.lang, 'questionLang': self.lang, 'theme': self.theme, 'autoAdvance': False}
+        body = {'uiLang': self.lang, 'questionLang': self.lang, 'theme': self.theme, 'autoAdvance': False,
+                'answerFx': False}   # v3.0: off for the walk; only the W-FX checks turn the effects on
         body.update(kw)
         return self.js("(async () => { const r = await fetch('/api/settings', {method: 'POST', headers: "
                        "{'Content-Type': 'application/json'}, body: %s}); localStorage.removeItem('xexam.settings.v1'); "

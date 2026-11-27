@@ -6,6 +6,15 @@ The changes in each version of Xexam, newest first. The **About Xexam** page of 
 
 <!-- Every update adds one entry at the very top of all three changelogs (docs/en, docs/ja and docs/zh-CN): ### vX.Y — date, with the version equal to CODE_VERSION in VERSION and the same headings in all three (CI checks this). The About page shows the entries and the GitHub Release notes come from the English one, so keep to simple Markdown: paragraphs, "- " bullets, nested "  - " bullets, **bold** and `code`. Links are relative to this folder. -->
 
+### v3.0 — 2026-11-28
+
+**Practice answer effects: confetti for a right answer, two claw marks for a wrong one, with a switch in Settings. No database or variable change (main schema 12, AI schema 11). Upgrading: pull the images; rolling back to v2.9 needs no restore.**
+
+- **Effects when you check an answer in a practice**: a right answer blows small flat confetti pieces (dots, squares, triangles and hexagons in green and amber) up from both bottom corners with a soft pop and a short chime; they fall calmly, spinning flat, and fade out after 7 seconds. A wrong answer draws two dry-brush claw swipes across the screen (top right to bottom left, then top left to bottom right), each with a tearing sound, a low growl and a thud, a short red flash, a jolt of the claw marks and the question card, then a shake of the card, a buzz on Android phones, and a low buzzer at the end. Taps go through to the page as usual and do not end it; the confetti fades out by itself after 7 seconds, the claw marks after 3, and moving to another question ends either at once. Only one effect runs at a time.
+- **The switch**: **Answer effects** in Settings, next to **Auto-advance to the next question**, on by default, saved with your account and reset by **Reset to defaults**. Effects appear in practice only, never in an exam or on a result or record page, and nothing is shown or played when the device asks for reduced motion.
+- **Under the hood**:
+  - No pictures or sounds are downloaded: confetti pieces, claw marks and sounds are generated in code. The pictures are drawn once in idle time when a practice opens, and nothing runs when the switch is off or with reduced motion. The new setting `answerFx` is part of `GET` / `POST /api/settings` (key order: `theme`, `uiLang`, `autoAdvance`, `questionLang`, `answerFx`), stored in the existing settings table, so there is no schema change.
+
 ### v2.9 — 2026-11-27
 
 **The dark theme's answer cards use the theme's own green and orange, and the full phone walk now runs on GitHub for every push to `dev`. No database, variable or `docker-compose.yml` change (main schema 12, AI schema 11). Upgrading: pull the images; rolling back to v2.8 needs no restore.**

@@ -11,6 +11,7 @@ export const DEFAULT_SETTINGS: Readonly<Settings> = Object.freeze({
   uiLang: 'en',
   autoAdvance: false,
   questionLang: 'en',
+  answerFx: true,
 });
 
 const isTheme = (v: unknown): v is Theme => v === 'system' || v === 'light' || v === 'dark';
@@ -24,6 +25,7 @@ export function normalizeSettings(raw: unknown): Settings {
     uiLang: isUiLang(o.uiLang) ? o.uiLang : DEFAULT_SETTINGS.uiLang,
     autoAdvance: typeof o.autoAdvance === 'boolean' ? o.autoAdvance : DEFAULT_SETTINGS.autoAdvance,
     questionLang: isQuestionLang(o.questionLang) ? o.questionLang : DEFAULT_SETTINGS.questionLang,
+    answerFx: typeof o.answerFx === 'boolean' ? o.answerFx : DEFAULT_SETTINGS.answerFx,
   };
 }
 

@@ -446,7 +446,7 @@ flowchart LR
 登录。设置按用户保存在数据库里（重启和更新容器、清除浏览器缓存、换浏览器之后都还在）：
 
 ```json
-{"theme": "system", "uiLang": "en", "autoAdvance": false, "questionLang": "en"}
+{"theme": "system", "uiLang": "en", "autoAdvance": false, "questionLang": "en", "answerFx": true}
 ```
 
 | 键 | 取值 | 默认 |
@@ -455,10 +455,11 @@ flowchart LR
 | `uiLang` | `en` · `zh` · `ja` | `en` |
 | `autoAdvance` | `true` · `false` | `false` |
 | `questionLang` | `ja` · `zh` · `en` | `en`（*v2.6*；以前是 `ja`） |
+| `answerFx` | `true` · `false` | `true`（*v3.0*） |
 
 *(v2.6)* `questionLang` 是**题目默认语言**：每次考试或练习都从它开始，答题页上的语言切换只改变那一次（和保存在浏览器里的这次答题一起保存，从不发到这里）。从没保存过 `questionLang` 的用户得到新的默认值 `en`；已保存的值保持不变。
 
-`GET` 返回默认值合并上保存的值（保存的值无效时忽略它）。`POST /api/settings` 接受这些键的任意子集，返回完整的设置；未知的键忽略；已知的键取值无效 → **400** `设置的值不对。`，什么都不写入。`POST /api/settings/reset`（请求体 `{}` 或空）把 `theme`、`uiLang` 和 `autoAdvance` 恢复成默认值，保留 `questionLang`，返回完整的设置。
+`GET` 返回默认值合并上保存的值（保存的值无效时忽略它）。`POST /api/settings` 接受这些键的任意子集，返回完整的设置；未知的键忽略；已知的键取值无效 → **400** `设置的值不对。`，什么都不写入。`POST /api/settings/reset`（请求体 `{}` 或空）把 `theme`、`uiLang`、`autoAdvance` 和 `answerFx` 恢复成默认值，保留 `questionLang`，返回完整的设置。
 
 ### `GET /api/logs` *(v0.7)*
 管理员。**系统日志** 页面显示的日志：后端启动以来记录的最近 2000 行，只保存在内存里（重启后又是空的；什么都不写进数据库）。它们就是 `docker compose logs backend` 显示的那些行（经过同样的 `XEXAM_LOG` 过滤），再加上启动和关闭时的状态行，*(v0.8)* 再加上 ai-service 发来的行（`target` 是 `xexam_ai_service`，消息以 `AI: ` 开头；它们不在 `docker compose logs backend` 里）。日志行用用户名指代用户（`user "admin" updated user "alex"`），从不用 id，也从不写没有账户的、输入的名字；日志行从不包含密码、令牌、Cookie 的值或题目文字。

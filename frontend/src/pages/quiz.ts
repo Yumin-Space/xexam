@@ -31,6 +31,7 @@ import { h, paras, svgMark } from '../utils/dom.ts';
 import { fmtTime } from '../utils/format.ts';
 import { BAR_MQ, PHONE_MQ, matches } from '../utils/media.ts';
 import { liftToastAbove } from '../utils/toast.ts';
+import { answerFx, prewarmAnswerFx, stopAnswerFx } from '../components/answer-fx.ts';
 
 /** Answer state of a question in an exam (stateOf: 0 = open, 1 = hotspot partly answered, 2 = answered) */
 const TILE_STATE: readonly MsgKey[] = ['quiz.tile.open', 'quiz.tile.part', 'quiz.tile.done'];
@@ -71,6 +72,9 @@ function freshlyChecked(se: Session, id: string): boolean {
   return true;
 }
 
+/** v3.0: the question the answer effects belong to; another question (Next, the arrow keys, the answer sheet) ends an effect */
+let fxQuestion: unknown = null;
+
 /** Where the AI hint / explanation of a practice question belongs: this session's chat (v0.9) */
 function practiceTarget(se: Session, q: Question): StudyTarget {
   const target: StudyTarget = {
@@ -92,7 +96,13 @@ export function renderQuiz(): HTMLElement {
   const practice = se.kind === 'practice';
   const checked = practice && se.checked.has(q.id);
   const fresh = practice && freshlyChecked(se, q.id);
+  if (q.id !== fxQuestion) {
+    fxQuestion = q.id;
+    stopAnswerFx();
+  }
   const keep = focusedKey();
+  // v3.0: the effects' pictures are made in idle time (a no-op once they are ready for this screen size)
+  if (practice && S.settings.answerFx) prewarmAnswerFx();
   resetRefreshers();
 
   const answerOf = (id: string): Answer => se.answers[id];
@@ -134,10 +144,12 @@ export function renderQuiz(): HTMLElement {
   let body: HTMLElement;
   let feedback: HTMLElement | null = null;
   let verdictEl: HTMLElement | null = null;
+  let verdictOk = false;
   if (checked) {
     // Practice, checked: the options marked right / wrong (like the review cards), then the verdict and the explanation
     const ans = answerOf(q.id);
     const ok = grade(q, ans);
+    verdictOk = ok;
     const parts = answerReview(q, view, ans, ok);
     body = parts.body;
     verdictEl = h('p', { class: 'pverdict ' + (ok ? 'ok' : 'ng'), tabindex: '-1' }, svgMark(ok), ok ? t('quiz.practice.right') : t('quiz.practice.wrong'));
@@ -424,6 +436,11 @@ export function renderQuiz(): HTMLElement {
   applySheet(root);
   if (fresh && verdictEl) {
     const v = verdictEl;
+    // v3.0: the effect once, when a practice verdict first appears (never in an exam: `fresh` is practice only)
+    if (S.settings.answerFx) {
+      const ok = verdictOk;
+      window.requestAnimationFrame(() => { if (v.isConnected) answerFx(ok, { card: paper, key: se.key }); });
+    }
     queueMicrotask(() => {
       if (v.isConnected) v.focus({ preventScroll: true });
     });

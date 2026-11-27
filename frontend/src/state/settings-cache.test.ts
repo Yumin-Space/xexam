@@ -2,7 +2,7 @@
 // across the reload that follows a sign-in after someone else's sign-out.
 import assert from 'node:assert/strict';
 import { beforeEach, test } from 'node:test';
-import { cacheSettings, cachedSettings, carryLanguage, firstPaintSettings, rememberUser } from './settings-cache.ts';
+import { DEFAULT_SETTINGS, cacheSettings, cachedSettings, carryLanguage, firstPaintSettings, normalizeSettings, rememberUser } from './settings-cache.ts';
 import { setStorageOwner } from './storage-keys.ts';
 
 function memStorage(): { store: Storage; mem: Map<string, string> } {
@@ -25,8 +25,8 @@ const session = memStorage();
 // A Japanese browser
 Object.defineProperty(globalThis, 'navigator', { value: { language: 'ja-JP', languages: ['ja-JP', 'en'] }, configurable: true });
 
-const ZH = { theme: 'dark', uiLang: 'zh', autoAdvance: true, questionLang: 'zh' } as const;
-const EN = { theme: 'light', uiLang: 'en', autoAdvance: false, questionLang: 'ja' } as const;
+const ZH = { theme: 'dark', uiLang: 'zh', autoAdvance: true, questionLang: 'zh', answerFx: false } as const;
+const EN = { theme: 'light', uiLang: 'en', autoAdvance: false, questionLang: 'ja', answerFx: true } as const;
 
 beforeEach(() => {
   local.mem.clear();
@@ -35,7 +35,7 @@ beforeEach(() => {
 });
 
 test('nobody signed in on this browser yet: the browser language', () => {
-  assert.deepEqual(firstPaintSettings(), { theme: 'system', uiLang: 'ja', autoAdvance: false, questionLang: 'en' });
+  assert.deepEqual(firstPaintSettings(), { theme: 'system', uiLang: 'ja', autoAdvance: false, questionLang: 'en', answerFx: true });
 });
 
 test('the cache of the user who signed in last paints the page', () => {
@@ -87,4 +87,11 @@ test('the cache of the version before users is read only until the first sign-in
   assert.deepEqual(firstPaintSettings(), ZH);
   rememberUser(4);
   assert.equal(local.mem.has('xexam.settings.v1'), false);
+});
+
+test('answer effects are on by default and a missing or odd value falls back to on', () => {
+  assert.equal(DEFAULT_SETTINGS.answerFx, true);
+  assert.equal(normalizeSettings({}).answerFx, true);
+  assert.equal(normalizeSettings({ answerFx: 'no' }).answerFx, true);
+  assert.equal(normalizeSettings({ answerFx: false }).answerFx, false);
 });

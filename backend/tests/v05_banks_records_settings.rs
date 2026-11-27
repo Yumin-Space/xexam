@@ -1150,17 +1150,36 @@ fn attempt_snapshot_names_the_banks_in_order_of_first_appearance() {
 // ---------------------------------------------------------------- settings
 
 #[test]
+fn settings_answer_fx_default_set_reset_and_validation() {
+    let dir = tmp();
+    let db = dir.path().join("x.db");
+    let s = open_fixed(&db);
+    assert_eq!(s.settings(ADMIN).expect("s")["answerFx"], true);
+    let got = s
+        .update_settings(ADMIN, &[("answerFx".into(), json!(false))])
+        .expect("update");
+    assert_eq!(got["answerFx"], false);
+    assert_eq!(s.settings(ADMIN).expect("s")["answerFx"], false);
+    for bad in [json!("true"), json!(1), json!(null)] {
+        assert!(s
+            .update_settings(ADMIN, &[("answerFx".into(), bad)])
+            .is_err());
+    }
+    assert_eq!(s.settings(ADMIN).expect("s")["answerFx"], false);
+    assert_eq!(s.reset_settings(ADMIN).expect("reset")["answerFx"], true);
+}
+
+#[test]
 fn settings_defaults_update_invalid_and_reset() {
     let dir = tmp();
     let db = dir.path().join("x.db");
     let s = open_fixed(&db);
-    let defaults =
-        json!({"theme": "system", "uiLang": "en", "autoAdvance": false, "questionLang": "en"});
+    let defaults = json!({"theme": "system", "uiLang": "en", "autoAdvance": false, "questionLang": "en", "answerFx": true});
     let got = s.settings(ADMIN).expect("settings");
     assert_eq!(got, defaults);
     assert_eq!(
         keys(&got),
-        ["theme", "uiLang", "autoAdvance", "questionLang"]
+        ["theme", "uiLang", "autoAdvance", "questionLang", "answerFx"]
     );
     let got = s
         .update_settings(
@@ -1175,11 +1194,11 @@ fn settings_defaults_update_invalid_and_reset() {
         .expect("update");
     assert_eq!(
         keys(&got),
-        ["theme", "uiLang", "autoAdvance", "questionLang"]
+        ["theme", "uiLang", "autoAdvance", "questionLang", "answerFx"]
     );
     assert_eq!(
         got,
-        json!({"theme": "dark", "uiLang": "ja", "autoAdvance": true, "questionLang": "zh"})
+        json!({"theme": "dark", "uiLang": "ja", "autoAdvance": true, "questionLang": "zh", "answerFx": true})
     );
     // one invalid pair: nothing written (v0.6: settings are per user, in user_settings)
     let before = rows(&raw(&db), "SELECT * FROM user_settings ORDER BY key");
@@ -1212,7 +1231,7 @@ fn settings_defaults_update_invalid_and_reset() {
     // reset keeps questionLang
     assert_eq!(
         s.reset_settings(ADMIN).expect("reset"),
-        json!({"theme": "system", "uiLang": "en", "autoAdvance": false, "questionLang": "zh"})
+        json!({"theme": "system", "uiLang": "en", "autoAdvance": false, "questionLang": "zh", "answerFx": true})
     );
     assert_eq!(
         rows(&raw(&db), "SELECT key, value FROM user_settings"),
@@ -1805,14 +1824,13 @@ async fn api_settings_roundtrip_validation_reset_and_restart() {
     let dir = tmp();
     let db = dir.path().join("xexam.db");
     let a = real_app_at(&db);
-    let defaults =
-        r#"{"theme": "system", "uiLang": "en", "autoAdvance": false, "questionLang": "en"}"#;
+    let defaults = r#"{"theme": "system", "uiLang": "en", "autoAdvance": false, "questionLang": "en", "answerFx": true}"#;
     let r = get(&a.app, "/api/settings").await;
     assert_eq!((r.status, r.text().as_str()), (StatusCode::OK, defaults));
     let r = post_json(&a.app, "/api/settings", r#"{"theme": "dark"}"#).await;
     assert_eq!(
         r.text(),
-        r#"{"theme": "dark", "uiLang": "en", "autoAdvance": false, "questionLang": "en"}"#
+        r#"{"theme": "dark", "uiLang": "en", "autoAdvance": false, "questionLang": "en", "answerFx": true}"#
     );
     let r = post_json(
         &a.app,
@@ -1822,7 +1840,7 @@ async fn api_settings_roundtrip_validation_reset_and_restart() {
     .await;
     assert_eq!(
         r.text(),
-        r#"{"theme": "dark", "uiLang": "zh", "autoAdvance": true, "questionLang": "en"}"#
+        r#"{"theme": "dark", "uiLang": "zh", "autoAdvance": true, "questionLang": "en", "answerFx": true}"#
     );
     let r = post_json(&a.app, "/api/settings", "{}").await;
     assert_eq!(r.status, 200, "an empty update just answers the settings");
@@ -1835,6 +1853,9 @@ async fn api_settings_roundtrip_validation_reset_and_restart() {
         r#"{"uiLang": ["en"]}"#,
         r#"{"autoAdvance": "true"}"#,
         r#"{"autoAdvance": 1}"#,
+        r#"{"answerFx": "true"}"#,
+        r#"{"answerFx": 0}"#,
+        r#"{"answerFx": null}"#,
         r#"{"questionLang": 1}"#,
         r#"{"theme": "light", "uiLang": "xx"}"#,
     ] {
@@ -1851,7 +1872,7 @@ async fn api_settings_roundtrip_validation_reset_and_restart() {
     let a = real_app_at(&db);
     assert_eq!(
         get(&a.app, "/api/settings").await.text(),
-        r#"{"theme": "dark", "uiLang": "zh", "autoAdvance": true, "questionLang": "en"}"#
+        r#"{"theme": "dark", "uiLang": "zh", "autoAdvance": true, "questionLang": "en", "answerFx": true}"#
     );
     let r = post_raw(
         &a.app,
@@ -1864,7 +1885,7 @@ async fn api_settings_roundtrip_validation_reset_and_restart() {
         (r.status, r.text().as_str()),
         (
             StatusCode::OK,
-            r#"{"theme": "system", "uiLang": "en", "autoAdvance": false, "questionLang": "en"}"#
+            r#"{"theme": "system", "uiLang": "en", "autoAdvance": false, "questionLang": "en", "answerFx": true}"#
         )
     );
     let r = post_json(&a.app, "/api/settings/reset", "{}").await;

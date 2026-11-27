@@ -4,6 +4,7 @@
 
 > This document covers every upgrade path, newest first:
 >
+> - **v2.9 → v3.0** (section 00000000000000000): nothing to do besides `docker compose pull` and `docker compose up -d`. No database change (main schema 12, AI schema 11), no new variable, no `docker-compose.yml` or Nginx change. Rolling back to v2.9 needs no restore.
 > - **v2.8 → v2.9** (section 0000000000000000): nothing to do besides `docker compose pull` and `docker compose up -d`. No database change (main schema 12, AI schema 11), no new variable, no `docker-compose.yml` or Nginx change. Rolling back to v2.8 needs no restore.
 > - **v2.7 → v2.8** (section 000000000000000): nothing to do besides `docker compose pull` and `docker compose up -d`. No database change (main schema 12, AI schema 11), no new variable, no `docker-compose.yml` or Nginx change. Rolling back to v2.7 needs no restore.
 > - **v2.6 → v2.7** (section 00000000000000): nothing to do besides `docker compose pull` and `docker compose up -d`. No database change (main schema 12, AI schema 11), no new variable, no `docker-compose.yml` or Nginx change. Rolling back to v2.6 needs no restore.
@@ -33,6 +34,27 @@
 > **Going straight to v1.0 from an older version** applies every step of the sections below in one go with the current images: one backup named after the schema the database had, then the migration to the current schema (6 for the main database, 4 for the AI database). The sections below are written for the version they lead to, so where one says schema 5, v1.0 ends at schema 6, the log says `Upgraded the database to schema 6`, `/api/info` shows `1.0` and ai-service creates its database at schema 4.
 >
 > **Every upgrade from v0.6 or older retires all your questions.** Since v0.7 only the six-column Excel layout can be imported, and every start retires the questions that were imported from the three- and four-column layouts of earlier versions; every question of v0.6 and older is in one of those. The banks, the study records and the statistics stay. Prepare a six-column version of each workbook before you upgrade (section 12 of [usage.md](usage.md)), and update each bank with it afterwards (section 2.4).
+
+## 00000000000000000. Upgrading from v2.9 to v3.0
+
+This section is numbered 00000000000000000 because it is the newest one. The older sections keep their numbers.
+
+### 00000000000000000.1 What changes
+
+- **Nothing in the data or the servers.** Neither database changes (the main database stays at schema 12, the AI database at schema 11), there is no new variable, and neither `docker-compose.yml` nor the Nginx configuration needs an edit.
+- **Practice answer effects**: confetti for a right answer and two claw marks for a wrong one, with a new per-user switch **Answer effects** in Settings (on by default). It is stored in the existing settings table.
+
+### 00000000000000000.2 Upgrade
+
+`docker compose pull`, then `docker compose up -d`. The data volumes stay as they are.
+
+### 00000000000000000.3 Check
+
+The app menu shows **Xexam v3.0**. Settings has **Answer effects** next to the auto-advance switch; in a practice, **Check answer** on a right answer throws confetti.
+
+### 00000000000000000.4 Going back to v2.9
+
+Change `:latest` to `:v2.9` for the three images and run `docker compose up -d`. No restore is needed: the extra setting row stays in the table and is ignored.
 
 ## 0000000000000000. Upgrading from v2.8 to v2.9
 

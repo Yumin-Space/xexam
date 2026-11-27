@@ -25,6 +25,7 @@ import { t, tn } from '../i18n/index.ts';
 import { errorText } from '../i18n/errors.ts';
 import { parseHash, routeHash, sameRoute, type Route } from '../router.ts';
 import type { AttemptKind, AttemptRequest, AttemptResponse, AuthUser, BankDeleted, Mode, Question, QuestionLang, RecordDetail, RecordsDeleted, UiLang } from '../types/api.ts';
+import { releaseAnswerFx } from '../components/answer-fx.ts';
 import { dropAiSummary } from '../components/ai-summary.ts';
 import { ask, closeAllDialogs } from '../utils/dialog.ts';
 import { toast } from '../utils/toast.ts';
@@ -162,6 +163,7 @@ function noteVisit(from: string | null, to: string): void {
 
 function switchTo(next: Route): void {
   const from = S.route;
+  if (from.name === 'quiz' && next.name !== 'quiz') releaseAnswerFx();
   if (from.name === 'quiz' && next.name !== 'quiz' && S.session) {
     // Leaving the quiz in any way (back button, link): keep the answers
     persistSession();

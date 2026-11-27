@@ -383,14 +383,21 @@ pub const SETTING_THEME: &str = "theme";
 pub const SETTING_UI_LANG: &str = "uiLang";
 pub const SETTING_AUTO_ADVANCE: &str = "autoAdvance";
 pub const SETTING_QUESTION_LANG: &str = "questionLang";
-pub const SETTING_KEYS: [&str; 4] = [
+pub const SETTING_ANSWER_FX: &str = "answerFx";
+pub const SETTING_KEYS: [&str; 5] = [
     SETTING_THEME,
     SETTING_UI_LANG,
     SETTING_AUTO_ADVANCE,
     SETTING_QUESTION_LANG,
+    SETTING_ANSWER_FX,
 ];
 /// Keys removed by `/api/settings/reset` (`questionLang` is kept).
-pub const RESETTABLE_SETTINGS: [&str; 3] = [SETTING_THEME, SETTING_UI_LANG, SETTING_AUTO_ADVANCE];
+pub const RESETTABLE_SETTINGS: [&str; 4] = [
+    SETTING_THEME,
+    SETTING_UI_LANG,
+    SETTING_AUTO_ADVANCE,
+    SETTING_ANSWER_FX,
+];
 
 /// Default value of a known setting key (`None` for unknown keys).
 pub fn setting_default(key: &str) -> Option<Value> {
@@ -399,6 +406,7 @@ pub fn setting_default(key: &str) -> Option<Value> {
         SETTING_UI_LANG => Value::from("en"),
         SETTING_AUTO_ADVANCE => Value::Bool(false),
         SETTING_QUESTION_LANG => Value::from("en"),
+        SETTING_ANSWER_FX => Value::Bool(true),
         _ => return None,
     })
 }
@@ -409,7 +417,7 @@ pub fn setting_valid(key: &str, value: &Value) -> bool {
     match key {
         SETTING_THEME => one_of(&["system", "light", "dark"]),
         SETTING_UI_LANG => one_of(&["en", "zh", "ja"]),
-        SETTING_AUTO_ADVANCE => value.is_boolean(),
+        SETTING_AUTO_ADVANCE | SETTING_ANSWER_FX => value.is_boolean(),
         SETTING_QUESTION_LANG => one_of(&["ja", "zh", "en"]),
         _ => false,
     }

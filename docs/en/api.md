@@ -448,7 +448,7 @@ Signed in. Clears the caller's study records (with their per-question detail) an
 Signed in. Settings are stored in the database per user (they survive container restarts and updates, clearing the browser cache and switching browsers):
 
 ```json
-{"theme": "system", "uiLang": "en", "autoAdvance": false, "questionLang": "en"}
+{"theme": "system", "uiLang": "en", "autoAdvance": false, "questionLang": "en", "answerFx": true}
 ```
 
 | Key | Values | Default |
@@ -457,10 +457,11 @@ Signed in. Settings are stored in the database per user (they survive container 
 | `uiLang` | `en` · `zh` · `ja` | `en` |
 | `autoAdvance` | `true` · `false` | `false` |
 | `questionLang` | `ja` · `zh` · `en` | `en` (*v2.6*; `ja` before) |
+| `answerFx` | `true` · `false` | `true` (*v3.0*) |
 
 *(v2.6)* `questionLang` is the **default question language**: every exam or practice starts in it, and the language switch of the exam page changes only that session (kept with the saved session in the browser, never posted here). A user who never stored a `questionLang` gets the new default `en`; a stored value is kept.
 
-`GET` returns the defaults merged with the stored values (a stored value that is not valid is ignored). `POST /api/settings` takes any subset of these keys and returns the full settings; unknown keys are ignored; a known key with an invalid value → **400** `设置的值不对。` ("A setting has an invalid value.") and nothing is written. `POST /api/settings/reset` (body `{}` or empty) restores `theme`, `uiLang` and `autoAdvance` to their defaults, keeps `questionLang`, and returns the full settings.
+`GET` returns the defaults merged with the stored values (a stored value that is not valid is ignored). `POST /api/settings` takes any subset of these keys and returns the full settings; unknown keys are ignored; a known key with an invalid value → **400** `设置的值不对。` ("A setting has an invalid value.") and nothing is written. `POST /api/settings/reset` (body `{}` or empty) restores `theme`, `uiLang`, `autoAdvance` and `answerFx` to their defaults, keeps `questionLang`, and returns the full settings.
 
 ### `GET /api/logs` *(v0.7)*
 Admin. The system log the **System log** page shows: the most recent 2000 lines the backend logged since it started, kept in memory only (empty again after a restart; nothing is written to the database). They are the lines `docker compose logs backend` shows (behind the same `XEXAM_LOG` filter), plus the startup and shutdown status lines, *(v0.8)* plus the lines ai-service sends (`target` `xexam_ai_service`, the message starting with `AI: `; they are not in `docker compose logs backend`). Log lines name users by their username (`user "admin" updated user "alex"`), never by id and never a typed name that has no account, and they never contain a password, a token, a cookie value or question text.

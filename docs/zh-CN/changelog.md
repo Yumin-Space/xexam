@@ -6,6 +6,15 @@ Xexam 每个版本的变化，最新的版本排在最前面。程序里的 **�
 
 <!-- Every update adds one entry at the very top of all three changelogs (docs/en, docs/ja and docs/zh-CN): ### vX.Y — date, with the version equal to CODE_VERSION in VERSION and the same headings in all three (CI checks this). The About page shows the entries and the GitHub Release notes come from the English one, so keep to simple Markdown: paragraphs, "- " bullets, nested "  - " bullets, **bold** and `code`. Links are relative to this folder. -->
 
+### v3.0 — 2026-11-28
+
+**练习里核对答案有了特效：答对撒彩纸，答错划两道爪痕，设置里有开关。数据库和变量都没有变化（主库 schema 12，AI 库 schema 11）。升级：拉取新镜像；回退到 v2.9 不需要恢复数据。**
+
+- **练习中核对答案时的特效**：答对时，绿色和琥珀色的小片扁平彩纸（圆点、方块、三角和六边形）从屏幕下方两个角高高吹起，伴着轻轻的一声“啵”和一个短促的提示音，再平转着缓缓落下，7 秒后淡出。答错时，两道干笔爪痕划过屏幕（先从右上到左下，再从左上到右下），每一道都有撕裂声、一声低吼和一声闷响，另有短促的红色闪光、爪痕和题目卡片的一次抖动，随后题目卡片的颤动，安卓手机会震动，最后是一声低沉的蜂鸣。点击会照常作用于页面，不会让特效提前结束；彩纸约 7 秒、爪痕约 3 秒后自动消失，切到另一题时立即结束。同一时间只会有一个特效。
+- **开关**：设置里的 **对错特效**，在 **答完自动跳到下一题** 旁边，默认开启，随账户保存，**恢复默认设置** 会把它恢复。特效只出现在练习里，考试、成绩页和学习记录里都没有；设备要求减少动态效果时，什么都不显示也不播放。
+- **内部改动**：
+  - 不下载任何图片或声音：彩纸、爪痕和音效都由代码生成。图片在打开练习时利用空闲时间画一次，开关关闭或要求减少动态效果时什么都不运行。新的设置项 `answerFx` 是 `GET` / `POST /api/settings` 的一部分（键的顺序：`theme`、`uiLang`、`autoAdvance`、`questionLang`、`answerFx`），存在原有的设置表里，所以没有 schema 变化。
+
 ### v2.9 — 2026-11-27
 
 **深色主题的答案卡片改用主题本身的绿色和橙色；每次推送到 `dev` 时，GitHub 上会跑全量手机走查。数据库、变量和 `docker-compose.yml` 都没有变化（主库 schema 12，AI 库 schema 11）。升级：拉取新镜像；回退到 v2.8 不需要恢复数据。**

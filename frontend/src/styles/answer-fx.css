@@ -1,0 +1,24 @@
+/* Answer effects of a checked practice answer (v3.0): the overlay, the claw reveal, the red flash, the jolt and the card shake.
+   Imported by components/answer-fx.ts. A stylesheet file, not a runtime <style>: the CSP allows only 'self' styles.
+   No CSS filters on the moving parts: the claw shadows are baked into their bitmaps. */
+
+.fx-layer { position: fixed; inset: 0; z-index: 9999; pointer-events: none; overflow: hidden; will-change: transform; contain: strict; }
+.fx-layer.fx-out { transition: opacity .35s ease; opacity: 0; }
+.fx-layer > canvas:not(.fx-wipe) { position: absolute; inset: 0; width: 100%; height: 100%; }
+.fx-jolt { animation: fx-jolt var(--fx-jt, .35s) cubic-bezier(.36,.07,.19,.97) both; }
+@keyframes fx-jolt {
+  0% { translate: 0 0; }
+  15% { translate: calc(var(--fx-j, 6px) * -1) var(--fx-j, 6px); }
+  30% { translate: var(--fx-j, 6px) calc(var(--fx-j, 6px) * -.6); }
+  45% { translate: calc(var(--fx-j, 6px) * -.6) calc(var(--fx-j, 6px) * .4); }
+  60% { translate: calc(var(--fx-j, 6px) * .4) 0; }
+  100% { translate: 0 0; }
+}
+/* a claw appears at once at --fx-at (a step, no per-frame work) */
+.fx-wipe { visibility: hidden; animation: fx-show 0s linear var(--fx-at, 0s) forwards; }
+@keyframes fx-show { to { visibility: visible; } }
+.fx-clawfull { position: absolute; inset: 0; width: 100%; height: 100%; }
+.fx-redhit { position: absolute; inset: 0; background: rgba(255,20,10,.38); opacity: 0; animation: fx-redhit .22s ease-out var(--fx-at, 0s) forwards; }
+@keyframes fx-redhit { 0% { opacity: 1; } 100% { opacity: 0; } }
+.fx-shake { animation: fx-shake .5s cubic-bezier(.36,.07,.19,.97) both; }
+@keyframes fx-shake { 10%, 90% { translate: -2px 0; } 20%, 80% { translate: 4px 0; } 30%, 50%, 70% { translate: -8px 0; } 40%, 60% { translate: 8px 0; } }

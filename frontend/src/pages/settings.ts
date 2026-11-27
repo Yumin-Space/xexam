@@ -99,7 +99,8 @@ function restoreFocus(root: HTMLElement, key: string | null): void {
 }
 
 const atDefaults = (s: Settings): boolean =>
-  s.theme === DEFAULT_SETTINGS.theme && s.uiLang === DEFAULT_SETTINGS.uiLang && s.autoAdvance === DEFAULT_SETTINGS.autoAdvance;
+  s.theme === DEFAULT_SETTINGS.theme && s.uiLang === DEFAULT_SETTINGS.uiLang && s.autoAdvance === DEFAULT_SETTINGS.autoAdvance
+  && s.answerFx === DEFAULT_SETTINGS.answerFx;
 
 // ---------------------------------------------------------------- actions
 
@@ -135,6 +136,7 @@ async function reset(): Promise<void> {
       theme: t(THEME_NAME[DEFAULT_SETTINGS.theme]),
       lang: t(LANG_NATIVE[DEFAULT_SETTINGS.uiLang]),
       auto: t(DEFAULT_SETTINGS.autoAdvance ? 'settings.on' : 'settings.off'),
+      fx: t(DEFAULT_SETTINGS.answerFx ? 'settings.on' : 'settings.off'),
     }),
     ok: t('settings.reset.ok'),
     cancel: t('common.cancel'),
@@ -301,7 +303,19 @@ export function renderSettings(): HTMLElement {
     h('span', { class: 'set-switch-ctl' },
       h('span', { class: 'set-track', 'aria-hidden': 'true' }, h('span', { class: 'set-knob' })),
       h('span', { class: 'set-switch-state', 'aria-hidden': 'true' }, t(on ? 'settings.on' : 'settings.off')))),
-    h('p', { class: 'set-note' }, t('settings.auto.note', { label: t('quiz.auto.on') })));
+    h('p', { class: 'set-note' }, t('settings.auto.note', { label: t('quiz.auto.on') })),
+    // v3.0: confetti / claw marks when a practice answer is checked
+    h('button', {
+      class: 'set-switch', type: 'button', role: 'switch', 'aria-checked': String(s.answerFx),
+      'aria-labelledby': 'set-fx-l', 'aria-describedby': 'set-fx-d', 'data-focus': 'set-fx',
+      onclick: () => void save({ answerFx: !S.settings.answerFx }),
+    },
+    h('span', { class: 'set-switch-text' },
+      h('span', { class: 'set-switch-l', id: 'set-fx-l' }, t('settings.fx.label')),
+      h('span', { class: 'set-switch-d', id: 'set-fx-d' }, t('settings.fx.desc'))),
+    h('span', { class: 'set-switch-ctl' },
+      h('span', { class: 'set-track', 'aria-hidden': 'true' }, h('span', { class: 'set-knob' })),
+      h('span', { class: 'set-switch-state', 'aria-hidden': 'true' }, t(s.answerFx ? 'settings.on' : 'settings.off')))));
 
   const defaults = atDefaults(s);
   const resetSec = section('set-reset-h', t('settings.reset'), null, undefined,

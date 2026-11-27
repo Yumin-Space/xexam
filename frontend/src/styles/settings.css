@@ -9,6 +9,7 @@
 .set-sechead { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 12px; }
 :is(.set-sechead, .set-themeseg) + .set-cards, .set-sechead + .set-themeseg, .set-sechead + .set-switch { margin-top: 12px; }
 .set-desc { margin-bottom: 16px; max-width: 46em; font-size: 14px; color: var(--ink3); }
+.set-note + .set-switch { margin-top: 8px; }
 .set-note { margin-top: 12px; font-size: 13px; color: var(--ink3); max-width: 46em; }
 
 /* ---------- Theme: selectable cards with a preview ---------- */

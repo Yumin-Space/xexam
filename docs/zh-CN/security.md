@@ -190,7 +190,7 @@ AI 路由（`/api/ai/*`）由 ai-service 响应，它有自己的三个级别（
 
 - **每个路由都有同样的守卫**：每个请求都检查 Host；POST 还要检查 Origin、会话、`Content-Type: application/json`、1,000,000 字节的请求体上限，以及「请求体必须是 JSON 对象」。Nginx 对每个 `/api/` 路径都一样处理（方法、限流、超时）。
 - **严格的结构。** `id` 必须是整数（布尔值不算），`withRecords`、`withStats`、`newBanks` 和 `canManageBanks` 这样的标记必须是布尔值，`all` 必须正好是 `true`，`banks` 必须是 `"all"` 或现存题库 id 的列表，`kind` 必须是 `exam` 或 `practice`。`GET /api/record` 只接受一个 1–18 位 ASCII 数字的 `id`。其他任何情况都是 400，什么都不改。
-- **设置的校验。** 只读取四个已知的键。`theme` 必须是 `system`、`light` 或 `dark`；`uiLang` 是 `en`、`zh` 或 `ja`；`questionLang` 是 `ja`、`zh` 或 `en`；`autoAdvance` 是布尔值。有一个值无效 → 400，什么都不写；未知的键忽略。读回设置时，保存的值无效就忽略它，改用默认值。前端在应用之前还会再检查一次这些值，它们只会进入 `data-theme` 和 `lang` 属性，从不进入 HTML。
+- **设置的校验。** 只读取五个已知的键。`theme` 必须是 `system`、`light` 或 `dark`；`uiLang` 是 `en`、`zh` 或 `ja`；`questionLang` 是 `ja`、`zh` 或 `en`；`autoAdvance` 和 `answerFx` 是布尔值。有一个值无效 → 400，什么都不写；未知的键忽略。读回设置时，保存的值无效就忽略它，改用默认值。前端在应用之前还会再检查一次这些值，它们只会进入 `data-theme` 和 `lang` 属性，从不进入 HTML。
 - **删除数据是明确的。** 没有任何东西会被 GET 或作为副作用删除。每个删除路由都是带 JSON 请求体的 POST，所以跨站表单发不出来（Content-Type），别的网站上的脚本也会被 Origin 检查拦住。每次删除都是一个事务。在界面上，每次删除都会打开一个确认对话框，写明要删掉什么，并说明无法恢复。随题库一起删除学习数据、随全部记录一起清空错题本，都是单独的复选框，默认不勾选。会下架题目的导入，确认之前会再问一次。没有撤销，也没有回收站：你自己的备份就是回头的路（[database.md](database.md) 第 5 节）。
 - **迁移前的备份。** 每次 schema 迁移之前，后端都把数据库复制到数据目录里的 `backups/`。它从不覆盖已有的文件；复制失败时，它拒绝启动，而不是在没有备份的情况下迁移。
 

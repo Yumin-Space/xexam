@@ -221,7 +221,7 @@ THEME = 'light'
 
 JS_SETUP = r"""(async (lang, theme) => {
   const post = (u, b) => fetch(u, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(b || {})});
-  const r = await post('/api/settings', {uiLang: lang, questionLang: lang, theme, autoAdvance: false});
+  const r = await post('/api/settings', {uiLang: lang, questionLang: lang, theme, autoAdvance: false, answerFx: false});
   if (!r.ok) throw new Error('POST /api/settings: ' + r.status);
   localStorage.removeItem('xexam.settings.v1');       // only the first-paint cache; a saved exam stays
   return 'settings ' + lang + ' ' + theme;

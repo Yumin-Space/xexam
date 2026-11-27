@@ -49,13 +49,13 @@ FUNCTIONS = [
     ('AI settings · usage and tokens', ['W-UC-*', 'W-PT-*', 'W-TK-*']),
     ('banks and AI import', ['W-IM-*', 'W-GB-*', 'W-JC-1', 'W-V22-GJ', 'W-L26', 'W-L57', 'W-L73', 'W-BK-29', 'W-AB-2']),
     ('AI badges and buttons', ['W-AB-1', 'W-AI-BTN', 'W-BT-1']),
-    ('quiz and answer sheet', ['W-QZ-*', 'W-AS-1v', 'W-L60', 'W-V22-QT', 'W-V27-QD', 'W-V27-QT']),
+    ('quiz and answer sheet', ['W-QZ-*', 'W-AS-1v', 'W-L60', 'W-V22-QT', 'W-V27-QD', 'W-V27-QT', 'W-FX-2', 'W-FX-3', 'W-FX-4']),
     ('home dashboard', ['W-HM-1', 'W-V25-DASH', 'W-V25-RS', 'W-V25-ST', 'W-V25-MN', 'W-V26-RANK', 'W-V26-POD', 'W-V26-CAP',
                         'W-V26-TL', 'W-V26-DSK']),
     ('result pages', ['W-RS-*', 'W-RC-*', 'W-V13-RS', 'W-V25-RB']),
     ('users, logs and records', ['W-US-*', 'W-V13-US', 'W-V13-LG', 'W-LG-*', 'W-V26-LOG', 'W-V27-PG', 'W-V27-UR']),
     ('sign-in, profile and settings', ['W-SI-1', 'W-V13-SI', 'W-V26-NAME', 'W-V26-PRF', 'W-V26-CTR', 'W-ST-1', 'W-FT-1', 'W-V22-FT',
-                                       'W-V22-AB']),
+                                       'W-V22-AB', 'W-FX-1']),
 ]
 OTHER = 'other checks'
 COMMON = 'common checks'

@@ -9,7 +9,7 @@ use rusqlite::{params, Connection};
 use serde_json::{Map, Value};
 use std::collections::HashMap;
 
-/// `{"theme", "uiLang", "autoAdvance", "questionLang"}` in that order.
+/// `{"theme", "uiLang", "autoAdvance", "questionLang", "answerFx"}` in that order.
 fn settings_json(c: &Connection, user: i64) -> Result<Value, DbError> {
     let stored: HashMap<String, String> = {
         let mut st = c.prepare("SELECT key, value FROM user_settings WHERE user_id=?1")?;
@@ -67,7 +67,7 @@ impl Store {
         settings_json(&g, user)
     }
 
-    /// `POST /api/settings/reset`: back to the defaults for theme, UI language and auto-advance (`questionLang` is kept).
+    /// `POST /api/settings/reset`: back to the defaults for theme, UI language, auto-advance and answer effects (`questionLang` is kept).
     pub fn reset_settings(&self, user: i64) -> Result<Value, DbError> {
         let g = self.lock();
         run_tx(&g, |c| {
