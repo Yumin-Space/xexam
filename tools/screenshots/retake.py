@@ -196,9 +196,18 @@ class DockerBackend:
     def start(self):
         if subprocess.run(['docker', 'info'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode:
             raise RuntimeError('Docker is not running (start it, or use --backend cargo)')
-        for tag, dockerfile in ((self.tag, 'backend/Dockerfile'), (self.ai_tag, 'ai-service/Dockerfile')):
-            print('building the image %s (takes minutes when nothing is cached) ...' % tag)
+        # CI hands over images it built already (both variables set): they are only given this run's unique tags, so the
+        # cleanup below removes the alias and leaves the given image alone
+        prebuilt = (os.environ.get('XEXAM_WALK_BACKEND_IMAGE'), os.environ.get('XEXAM_WALK_AI_IMAGE'))
+        use_prebuilt = all(prebuilt)
+        for tag, dockerfile, given in ((self.tag, 'backend/Dockerfile', prebuilt[0]),
+                                       (self.ai_tag, 'ai-service/Dockerfile', prebuilt[1])):
             self.cleanup.add('remove the image ' + tag, docker, 'rmi', '-f', tag)
+            if use_prebuilt:
+                print('using the prebuilt image %s as %s' % (given, tag))
+                docker('tag', given, tag)
+                continue
+            print('building the image %s (takes minutes when nothing is cached) ...' % tag)
             run(['docker', 'build', '--progress=plain', '-f', dockerfile, '-t', tag, '.'], cwd=REPO,
                 verbose=self.verbose, what='docker build ' + dockerfile)
         # Undone in reverse order: the containers first, then the volumes, then the network

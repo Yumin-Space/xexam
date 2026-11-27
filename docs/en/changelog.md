@@ -6,6 +6,14 @@ The changes in each version of Xexam, newest first. The **About Xexam** page of 
 
 <!-- Every update adds one entry at the very top of all three changelogs (docs/en, docs/ja and docs/zh-CN): ### vX.Y — date, with the version equal to CODE_VERSION in VERSION and the same headings in all three (CI checks this). The About page shows the entries and the GitHub Release notes come from the English one, so keep to simple Markdown: paragraphs, "- " bullets, nested "  - " bullets, **bold** and `code`. Links are relative to this folder. -->
 
+### v2.9 — 2026-11-27
+
+**The dark theme's answer cards use the theme's own green and orange, and the full phone walk now runs on GitHub for every push to `dev`. No database, variable or `docker-compose.yml` change (main schema 12, AI schema 11). Upgrading: pull the images; rolling back to v2.8 needs no restore.**
+
+- **Dark theme answer colours, one green and one orange**: the see-through tinted cards of v2.8 stay, now in the clearer green and orange the dark theme already uses everywhere else (the status icons of AI settings, the letters under the practice verdict, the result tiles, the study records). A correct answer is a green tint (`#2EA043` at 15 %) with a green line, letter and **Correct answer** label (`#3FB950`); a wrong answer is an orange tint (`#DB6D28` at 15 %) with an orange line, letter and **Your choice** label (`#F0883E`); the text stays light (`#F1F1F1`). The practice verdict bar, the answer-sheet tiles and legend, and the chosen and correct choices of hotspot statements in a review follow. The light theme is unchanged. Contrast on the cards: text 16.3:1, green 7.2:1, orange 7.3:1.
+- **Under the hood**:
+  - The full phone walk (`tools/phone-walk`, every check at 7 sizes, 3 languages and 2 themes) now runs on GitHub Actions for every push to `dev`, split into 20 parallel jobs that reuse the images the same run built; **phone walk · summary** merges the reports (failures with their screenshots are kept 7 days). `main` does not run the walk again: it only releases a commit whose `dev` run, walk included, passed (a push or a manual run on `main` stops otherwise). The walk has a new `--skip` option, and `XEXAM_WALK_BACKEND_IMAGE` / `XEXAM_WALK_AI_IMAGE` let it use prebuilt images.
+
 ### v2.8 — 2026-11-27
 
 **The dark theme shows graded answers as tinted cards; in User management the bank access of a user opens from a database icon; review fixes. No database or variable changes (main schema 12, AI schema 11). Upgrading: pull the images. Rolling back to v2.7 needs no restore (nothing in the databases changed).**

@@ -6,6 +6,14 @@ Xexam 每个版本的变化，最新的版本排在最前面。程序里的 **�
 
 <!-- Every update adds one entry at the very top of all three changelogs (docs/en, docs/ja and docs/zh-CN): ### vX.Y — date, with the version equal to CODE_VERSION in VERSION and the same headings in all three (CI checks this). The About page shows the entries and the GitHub Release notes come from the English one, so keep to simple Markdown: paragraphs, "- " bullets, nested "  - " bullets, **bold** and `code`. Links are relative to this folder. -->
 
+### v2.9 — 2026-11-27
+
+**深色主题的答案卡片改用主题本身的绿色和橙色；每次推送到 `dev` 时，GitHub 上会跑全量手机走查。数据库、变量和 `docker-compose.yml` 都没有变化（主库 schema 12，AI 库 schema 11）。升级：拉取新镜像；回退到 v2.8 不需要恢复数据。**
+
+- **深色主题的答案颜色，统一成一种绿、一种橙**：v2.8 的半透明带色调卡片保留不变，改用深色主题在其他地方已经在用的更鲜明的绿和橙（AI 设置里的状态图标、练习判定条下面那行字母、成绩页的格子、学习记录）。正确答案是绿色的底色（`#2EA043`，15 %），配绿色的线条、字母和 **正确答案** 标签（`#3FB950`）；错误答案是橙色的底色（`#DB6D28`，15 %），配橙色的线条、字母和 **你的选择** 标签（`#F0883E`）；文字仍是浅色（`#F1F1F1`）。练习的判定条、答题卡的格子和图例，以及复习卡片里热点题判断句的所选和正确选项，都用同样的颜色。浅色主题不变。卡片上的对比度：文字 16.3:1，绿色 7.2:1，橙色 7.3:1。
+- **内部改动**：
+  - 全量手机走查（`tools/phone-walk`，全部检查项，7 种尺寸、3 种语言、2 种主题）现在在每次推送到 `dev` 时由 GitHub Actions 运行，分成 20 个并行任务，用同一次运行构建好的镜像；**phone walk · summary** 汇总所有报告（失败项和截图保留 7 天）。`main` 不再重跑走查：只有当同一个提交在 `dev` 上的运行（包括走查）已经通过时才发布，否则推送或手动运行 `main` 都会停下。走查新增 `--skip` 选项，`XEXAM_WALK_BACKEND_IMAGE` / `XEXAM_WALK_AI_IMAGE` 可以让它使用已构建好的镜像。
+
 ### v2.8 — 2026-11-27
 
 **深色主题里，批改后的选项显示为带色调的卡片；用户管理里，用户的题库权限从一个数据库图标打开；还有评审中的修复。数据库和变量都没有变化（主库 schema 12，AI 库 schema 11）。升级：拉取镜像即可。回退到 v2.7 不需要恢复数据（数据库没有任何变化）。**

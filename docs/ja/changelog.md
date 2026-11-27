@@ -6,6 +6,14 @@ Xexam のバージョンごとの変更点です。新しいバージョンが�
 
 <!-- Every update adds one entry at the very top of all three changelogs (docs/en, docs/ja and docs/zh-CN): ### vX.Y — date, with the version equal to CODE_VERSION in VERSION and the same headings in all three (CI checks this). The About page shows the entries and the GitHub Release notes come from the English one, so keep to simple Markdown: paragraphs, "- " bullets, nested "  - " bullets, **bold** and `code`. Links are relative to this folder. -->
 
+### v2.9 — 2026-11-27
+
+**ダークテーマの解答カードを、テーマ自身の緑とオレンジにそろえました。`dev` へのプッシュごとに、GitHub で全件のスマートフォンのウォークスルーが走ります。データベース、変数、`docker-compose.yml` は変わりません（メインはスキーマ 12、AI はスキーマ 11）。更新：イメージを pull してください。v2.8 に戻すときに復元は要りません。**
+
+- **ダークテーマの解答の色を 1 つの緑と 1 つのオレンジに**：v2.8 の半透明の色付きカードはそのままに、ダークテーマがほかの場所ですでに使っている、よりはっきりした緑とオレンジ（AI 設定の状態アイコン、練習の判定バーの下の記号、結果のタイル、学習記録）にしました。正解は緑の色味（`#2EA043` の 15 %）に緑の線・記号・**正解** のラベル（`#3FB950`）、不正解はオレンジの色味（`#DB6D28` の 15 %）にオレンジの線・記号・**あなたの選択** のラベル（`#F0883E`）。文字は明るいまま（`#F1F1F1`）です。練習の判定バー、解答用紙のタイルと凡例、振り返りカードにあるホットスポット問題の文の選択と正解も同じ色になります。ライトテーマは変わりません。カード上のコントラスト：文字 16.3:1、緑 7.2:1、オレンジ 7.3:1。
+- **内部の変更**：
+  - 全件のスマートフォンのウォークスルー（`tools/phone-walk`、すべての確認項目を 7 つのサイズ、3 つの言語、2 つのテーマで）は、`dev` へのプッシュごとに GitHub Actions で実行されるようになりました。20 の並列ジョブに分かれ、同じ実行で作ったイメージを使います。**phone walk · summary** がレポートをまとめます（失敗とそのスクリーンショットは 7 日間保存）。`main` ではウォークスルーを再実行しません。同じコミットの `dev` での実行（ウォークスルーを含む）が通っている場合だけリリースし、そうでなければ `main` へのプッシュも手動実行も止まります。ウォークスルーには `--skip` オプションが加わり、`XEXAM_WALK_BACKEND_IMAGE` / `XEXAM_WALK_AI_IMAGE` で作成済みのイメージを使えます。
+
 ### v2.8 — 2026-11-27
 
 **ダークテーマでは、採点後の選択肢が色付きのカードで表示されます。ユーザー管理では、ユーザーの問題集アクセスをデータベースのアイコンから開けます。レビューでの修正も含みます。データベースと変数の変更はありません（メインはスキーマ 12、AI はスキーマ 11）。アップグレードはイメージを pull するだけです。v2.7 に戻す場合も復元は要りません（データベースは何も変わっていません）。**

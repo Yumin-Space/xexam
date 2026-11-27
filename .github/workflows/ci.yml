@@ -1,6 +1,7 @@
 name: Build, test and publish
 
 # Xexam pipeline: check -> component tests (frontend, backend, ai-service) + image builds (three images x x86 / arm64, each on its own native runner, started and checked) -> Nginx test + end-to-end test (from the image-build cache) -> publish the three images -> create the Release.
+#   - Push to dev (and a manual run on a branch other than main): additionally the FULL phone walk, 20 parallel shards on the x86 images from the build cache, plus the status "phone walk · summary". Main never runs it, but main only releases a commit whose dev run (walk included) passed.
 #   - Push to main: everything runs, the xexam-frontend, xexam-backend and xexam-ai-service images are published, and the GitHub Release is created (or updated).
 #   - Push to dev, pull requests and other branches: check and test only, **never publish** (publish and release require refs/heads/main).
 on:
@@ -35,10 +36,39 @@ jobs:
     name: check version and changelog
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read            # only for the main guard below: it reads the runs and jobs of this workflow
     outputs:
       version: ${{ steps.v.outputs.version }}
     steps:
       - uses: actions/checkout@v7
+      # Main guard: the full phone walk runs on dev only, so main must only release a commit whose dev run passed it. On a push
+      # to main or a manual run on main (both can publish) this step looks for a run of this workflow on branch dev for the very same commit (a fast-forward from dev
+      # keeps the SHA) that completed with conclusion success AND in which the job "phone walk · summary" succeeded; without
+      # one, the whole run stops here (nothing is published). Push to dev first and wait for it, then fast-forward main.
+      # The release bot's own commit carries [skip ci], so it never starts a run and never reaches this step.
+      - name: Main guard (the dev run of this commit, phone walk included, must have passed)
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -eu
+          runs=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&branch=dev&status=completed&per_page=50" \
+            --jq '.workflow_runs[] | select(.conclusion == "success") | .id')
+          [ -n "$runs" ] || { echo "Main guard: no successful run of this workflow on dev for commit $SHA. Push this commit to dev first, wait until its run is green (the phone walk included), then update main."; exit 1; }
+          for id in $runs; do
+            ok=$(gh api --paginate "repos/$REPO/actions/runs/$id/jobs?per_page=100" \
+              --jq '.jobs[] | select(.name == "phone walk · summary" and .conclusion == "success") | .id')
+            if [ -n "$ok" ]; then
+              echo "Main guard: dev run $id passed for $SHA, phone walk included."
+              exit 0
+            fi
+          done
+          echo "Main guard: the dev runs of $SHA that succeeded have no successful \"phone walk · summary\" job. Run the dev workflow for this commit again (the walk must pass) before updating main."
+          exit 1
       - id: v
         name: Check version and changelog
         run: |
@@ -564,6 +594,205 @@ jobs:
         env:
           XEXAM_STACK_COMPOSE: ${{ runner.temp }}/compose.merged.json
         run: python3 -I tests/integration/stack_check.py 18090
+
+  # (2b) Phone walk (dev only): the FULL phone walk (tools/phone-walk/walk.py --full: every check on the whole width matrix x three
+  #      languages x two themes, real Chrome on a phone-like viewport, throw-away stack with made-up data only) runs on every push
+  #      to dev, split into 20 shards that run in parallel. Main never runs it (and neither do pull requests): main only releases
+  #      a commit whose dev run, walk included, passed (see "Main guard" in the check job; it covers pushes and manual runs
+  #      on main). A manual run on any other branch runs the walk too. Each shard
+  #        - loads the backend and ai-service x86 images from the gha cache of the image-build-x86 job (scopes backend-x86 and
+  #          ai-service-x86, read only, nothing is compiled again) and hands them to walk.py with XEXAM_WALK_BACKEND_IMAGE /
+  #          XEXAM_WALK_AI_IMAGE (the walk then tags them instead of building them);
+  #        - runs `walk.py --full` with its own --only / --pages / --skip: shards 1-7 split the W-SH-* and W-MN-* checks by --pages
+  #          (together exactly the PAGES of walk.py), shards 8-19 take the other check families by id prefix, and shard 20 "rest"
+  #          runs --skip of every pattern above, so a check family added later that no shard lists is still run (it never
+  #          falls through the cracks; add it to a shard and to the skip list of "rest" when you want it elsewhere);
+  #        - uploads the output folder (report.json + one screenshot per entry) as the artifact walk-<shard> (7 days) and
+  #          report.json alone as walkreport-<shard> (what the summary reads, so it does not download every screenshot).
+  #      The job fails when walk.py exits non-zero (a P1 check failed). Keep the list of shards equal to EXPECTED_SHARDS below.
+  phone-walk:
+    name: phone walk · ${{ matrix.name }}
+    needs: [check, image-build-x86]
+    if: github.ref == 'refs/heads/dev' || (github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Shards 1-7: W-SH-* and W-MN-* by page (sign-in is also covered by every page shard: W-SH-10 visits it whenever --pages is given)
+          - { name: "shared-home",        only: "W-SH-*,W-MN-*", pages: "home,study,menu,forbidden" }
+          - { name: "shared-quiz",        only: "W-SH-*,W-MN-*", pages: "quiz" }
+          - { name: "shared-result",      only: "W-SH-*,W-MN-*", pages: "result,records" }
+          - { name: "shared-ai",          only: "W-SH-*,W-MN-*", pages: "ai" }
+          - { name: "shared-ai-settings", only: "W-SH-*,W-MN-*", pages: "ai-settings" }
+          - { name: "shared-admin",       only: "W-SH-*,W-MN-*", pages: "users,logs,settings" }
+          - { name: "shared-other",       only: "W-SH-*,W-MN-*", pages: "profile,banks,about,signin" }
+          # Shards 8-19: the other check families by id prefix
+          - { name: "quiz",          only: "W-QZ-*" }
+          - { name: "paging-tokens", only: "W-PT-*,W-TK-*" }
+          - { name: "chat",          only: "W-CH-*,W-AI-*,W-JC-*" }
+          - { name: "ai-banks",      only: "W-AS-*,W-CAP-*,W-IM-*,W-GB-*" }
+          - { name: "v13",           only: "W-V13-*" }
+          - { name: "v22",           only: "W-V22-*" }
+          - { name: "v23",           only: "W-V23-*" }
+          - { name: "v25",           only: "W-V25-*" }
+          - { name: "v26",           only: "W-V26-*" }
+          - { name: "v27",           only: "W-V27-*" }
+          - { name: "users-ai",      only: "W-UC-*,W-FP-*" }
+          - { name: "pages",         only: "W-RS-*,W-RC-*,W-HM-*,W-US-*,W-LG-*,W-ST-*,W-AB-*,W-BK-*,W-BT-*,W-FT-*,W-GROUP*,W-L*,W-SI-*" }
+          # Shard 20: everything no other shard matches (today probably nothing; the report then has 0 entries)
+          - name: "rest"
+            skip: "W-SH-*,W-MN-*,W-QZ-*,W-PT-*,W-TK-*,W-CH-*,W-AI-*,W-JC-*,W-AS-*,W-CAP-*,W-IM-*,W-GB-*,W-V13-*,W-V22-*,W-V23-*,W-V25-*,W-V26-*,W-V27-*,W-UC-*,W-FP-*,W-RS-*,W-RC-*,W-HM-*,W-US-*,W-LG-*,W-ST-*,W-AB-*,W-BK-*,W-BT-*,W-FT-*,W-GROUP*,W-L*,W-SI-*"
+    env:
+      TZ: UTC
+      XEXAM_WALK_BACKEND_IMAGE: xexam-walk-ci-backend:ci
+      XEXAM_WALK_AI_IMAGE: xexam-walk-ci-ai-service:ci
+      WALK_ONLY: ${{ matrix.only }}
+      WALK_PAGES: ${{ matrix.pages }}
+      WALK_SKIP: ${{ matrix.skip }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: crazy-max/ghaction-github-runtime@v3
+      - uses: docker/setup-buildx-action@v4
+        with:
+          driver: docker-container
+      - name: Backend image from the cache (not pushed)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: backend/Dockerfile
+          platforms: linux/amd64
+          load: true
+          push: false
+          provenance: false
+          tags: xexam-walk-ci-backend:ci
+          cache-from: type=gha,scope=backend-x86
+      - name: AI service image from the cache (not pushed)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ai-service/Dockerfile
+          platforms: linux/amd64
+          load: true
+          push: false
+          provenance: false
+          tags: xexam-walk-ci-ai-service:ci
+          cache-from: type=gha,scope=ai-service-x86
+      - name: Made-up AI provider image
+        run: docker pull python:3.12-slim
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Frontend dependencies
+        run: npm ci
+        working-directory: frontend
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Python packages and fonts
+        run: |
+          set -eu
+          # openpyxl is the only package the walk harness needs outside the standard library
+          python3 -m pip install openpyxl
+          # CJK and colour-emoji fonts, so Chinese and Japanese text and emoji take the space they take on a real phone
+          sudo apt-get update
+          sudo apt-get install -y fonts-noto-cjk fonts-noto-color-emoji
+          fc-cache -f
+          # Chrome's sandbox needs unprivileged user namespaces, which newer Ubuntu images may restrict
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+      - name: Phone walk (${{ matrix.name }})
+        run: |
+          set -eu
+          export XEXAM_CHROME="$(command -v google-chrome)"
+          "$XEXAM_CHROME" --version
+          args=(--full)
+          if [ -n "$WALK_ONLY" ]; then args+=(--only "$WALK_ONLY"); fi
+          if [ -n "$WALK_PAGES" ]; then args+=(--pages "$WALK_PAGES"); fi
+          if [ -n "$WALK_SKIP" ]; then args+=(--skip "$WALK_SKIP"); fi
+          python3 tools/phone-walk/walk.py "${args[@]}" --out "$RUNNER_TEMP/walk"
+      - name: Upload the report and the screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: walk-${{ matrix.name }}
+          path: ${{ runner.temp }}/walk
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Upload the report alone (read by the summary)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: walkreport-${{ matrix.name }}
+          path: ${{ runner.temp }}/walk/report.json
+          retention-days: 7
+          if-no-files-found: warn
+
+  # (2b) One status for the whole walk: reads the report.json of every shard, writes totals per shard and overall and every
+  #      failing entry to the job summary, and fails when a shard job did not succeed, a report is missing or a P1 check failed.
+  #      Look at this one ("phone walk · summary"); the main guard in the check job asks for it too.
+  phone-walk-summary:
+    name: phone walk · summary
+    needs: [phone-walk]
+    if: ${{ !cancelled() && (github.ref == 'refs/heads/dev' || (github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SHARDS_RESULT: ${{ needs.phone-walk.result }}
+      EXPECTED_SHARDS: "20"       # keep equal to the number of shards in the phone-walk matrix
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: walkreport-*
+          path: reports
+      - name: Merge the reports
+        run: |
+          python3 -I - <<'PY'
+          import glob, json, os, sys
+          expected = int(os.environ['EXPECTED_SHARDS'])
+          bad = []
+          if os.environ['SHARDS_RESULT'] != 'success':
+              bad.append('the phone walk shard jobs did not all succeed (result: %s)' % os.environ['SHARDS_RESULT'])
+          reports = sorted(glob.glob('reports/walkreport-*/report.json'))
+          if len(reports) != expected:
+              bad.append('%d of %d shard reports found' % (len(reports), expected))
+          rows, fails = [], []
+          tot = {'passed': 0, 'failed': 0, 'skipped': 0, 'p1': 0, 'total': 0}
+          for path in reports:
+              shard = os.path.basename(os.path.dirname(path))[len('walkreport-'):]
+              try:
+                  doc = json.load(open(path, encoding='utf-8'))
+                  s = doc['summary']
+              except Exception as e:
+                  bad.append('report of %s is unreadable: %s' % (shard, e))
+                  continue
+              rows.append((shard, s['passed'], s['failed'], s['skipped'], s['p1Failed'], s['total'], doc.get('seconds', 0)))
+              for k, v in (('passed', s['passed']), ('failed', s['failed']), ('skipped', s['skipped']), ('p1', s['p1Failed']), ('total', s['total'])):
+                  tot[k] += v
+              for r in doc['results']:
+                  if r['pass'] is False:
+                      fails.append((shard, r))
+              if s['p1Failed']:
+                  bad.append('%s: %d P1 failure(s)' % (shard, s['p1Failed']))
+          lines = ['## Phone walk', '', '| shard | pass | fail | skip | P1 fail | total | seconds |', '|---|--:|--:|--:|--:|--:|--:|']
+          for r in rows:
+              lines.append('| %s | %d | %d | %d | %d | %d | %d |' % r)
+          lines.append('| **all** | **%(passed)d** | **%(failed)d** | **%(skipped)d** | **%(p1)d** | **%(total)d** | |' % tot)
+          if fails:
+              lines += ['', '### Failing entries', '', '| shard | id | page | size | lang | theme | detail |', '|---|---|---|---|---|---|---|']
+              for shard, r in fails:
+                  word = 'FAIL' if r.get('priority', 1) == 1 else 'fail (P2)'
+                  detail = str(r.get('detail', '')).replace('|', '/').replace('\n', ' ')[:300]
+                  lines.append('| %s | %s %s | %s | %s | %s | %s | %s |' % (shard, word, r['id'], r['page'], r['size'], r['lang'], r['theme'], detail))
+          lines += [''] + (['**Not green:** ' + '; '.join(bad)] if bad else ['**Green:** every shard passed.'])
+          text = '\n'.join(lines) + '\n'
+          print(text)
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as fh:
+              fh.write(text)
+          sys.exit(1 if bad else 0)
+          PY
 
   # (3) Only when every test and image build has passed are the three images (amd64 + arm64) published, to Docker Hub (public; what
   #     docker/docker-compose.yml pulls) and to ghcr.io (same tags, a mirror). Published from main only; pull requests and other

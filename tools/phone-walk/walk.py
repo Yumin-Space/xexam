@@ -6,6 +6,7 @@
     python tools/phone-walk/walk.py --full               # every check on the whole matrix (final gate)
     python tools/phone-walk/walk.py --pages home,quiz,result,ai,menu
     python tools/phone-walk/walk.py --only W-QZ-*,W-CH-1
+    python tools/phone-walk/walk.py --full --skip "W-QZ-*,W-CH-*"   # everything except these checks
     python tools/phone-walk/walk.py --langs zh --widths 393x852,360x740 --themes light
     python tools/phone-walk/walk.py --keep               # leave the stack running: prints the URL and the made-up accounts
     python tools/phone-walk/walk.py --keep --lan         # the same, reachable from a phone on the home network
@@ -98,6 +99,8 @@ def parse_args(argv=None):
     p.add_argument('--full', action='store_true', help='every check on the whole width matrix x 3 languages x 2 themes (final gate)')
     p.add_argument('--pages', help='only these pages: %s' % ', '.join(PAGES))
     p.add_argument('--only', help='only the checks matching these comma-separated patterns, e.g. W-QZ-*,W-CH-1')
+    p.add_argument('--skip', help='skip the checks matching these comma-separated patterns (a catch-all CI shard uses it so that a '
+                                  'check prefix no other shard lists is still run); applied after --only')
     p.add_argument('--langs', help='languages, comma separated (zh, en, ja)')
     p.add_argument('--widths', help='sizes WxH or names (%s; add -land for landscape), comma separated, e.g. 393x852,iphone16pro-land '
                                          '(default %s)' % (', '.join(NAMED_SIZES), ','.join(DEFAULT_SIZES)))
@@ -120,6 +123,7 @@ def parse_args(argv=None):
         p.error('--lan only works together with --keep (the LAN address is for a phone trial, never for the automated walk)')
     args.pages = csv(args.pages) if args.pages else None
     args.only = csv(args.only) if args.only else None
+    args.skip = csv(args.skip) if args.skip else None
     args.langs = csv(args.langs) if args.langs else None
     args.themes = csv(args.themes) if args.themes else None
     if args.pages and (bad := [x for x in args.pages if x not in PAGES]):
@@ -386,6 +390,8 @@ class Walk:
         return not self.args.pages or page in self.args.pages
 
     def wants_check(self, check_id):
+        if self.args.skip and any(fnmatch.fnmatchcase(check_id, pat) for pat in self.args.skip):
+            return False
         return not self.args.only or any(fnmatch.fnmatchcase(check_id, pat) for pat in self.args.only)
 
 

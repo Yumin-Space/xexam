@@ -4,6 +4,7 @@
 
 > This document covers every upgrade path, newest first:
 >
+> - **v2.8 → v2.9** (section 0000000000000000): nothing to do besides `docker compose pull` and `docker compose up -d`. No database change (main schema 12, AI schema 11), no new variable, no `docker-compose.yml` or Nginx change. Rolling back to v2.8 needs no restore.
 > - **v2.7 → v2.8** (section 000000000000000): nothing to do besides `docker compose pull` and `docker compose up -d`. No database change (main schema 12, AI schema 11), no new variable, no `docker-compose.yml` or Nginx change. Rolling back to v2.7 needs no restore.
 > - **v2.6 → v2.7** (section 00000000000000): nothing to do besides `docker compose pull` and `docker compose up -d`. No database change (main schema 12, AI schema 11), no new variable, no `docker-compose.yml` or Nginx change. Rolling back to v2.6 needs no restore.
 > - **v2.5 → v2.6** (section 0000000000000): nothing to do besides `docker compose pull` and `docker compose up -d`. The main database moves to schema 12 on start after the copy `backups/xexam-schema11-<date-time>.db` (one new column, `users.display_name`); the AI database stays at schema 11 and only gains a table, columns and a model slot. Every existing user sets a username at the next sign-in, and users who never chose a question language now start in English. No new variable and no `docker-compose.yml` edit. Rolling back to v2.5 needs no restore.
@@ -32,6 +33,28 @@
 > **Going straight to v1.0 from an older version** applies every step of the sections below in one go with the current images: one backup named after the schema the database had, then the migration to the current schema (6 for the main database, 4 for the AI database). The sections below are written for the version they lead to, so where one says schema 5, v1.0 ends at schema 6, the log says `Upgraded the database to schema 6`, `/api/info` shows `1.0` and ai-service creates its database at schema 4.
 >
 > **Every upgrade from v0.6 or older retires all your questions.** Since v0.7 only the six-column Excel layout can be imported, and every start retires the questions that were imported from the three- and four-column layouts of earlier versions; every question of v0.6 and older is in one of those. The banks, the study records and the statistics stay. Prepare a six-column version of each workbook before you upgrade (section 12 of [usage.md](usage.md)), and update each bank with it afterwards (section 2.4).
+
+## 0000000000000000. Upgrading from v2.8 to v2.9
+
+This section is numbered 0000000000000000 because it is the newest one. The older sections keep their numbers.
+
+### 0000000000000000.1 What changes
+
+- **Nothing in the data or the servers.** Neither database changes (the main database stays at schema 12, the AI database at schema 11), there is no new variable, and neither `docker-compose.yml` nor the Nginx configuration needs an edit.
+- **Dark theme**: graded options use the theme's own green and orange (the same as the status icons of AI settings) instead of the olive and red-brown of v2.8; the light theme is unchanged.
+- **For people who build Xexam themselves**: the full phone walk runs on GitHub Actions for every push to `dev`, and a push or manual run on `main` only releases a commit whose `dev` run passed (see the CI section of the development guide). Nothing changes for a server that pulls the images.
+
+### 0000000000000000.2 Upgrade
+
+`docker compose pull`, then `docker compose up -d`. The data volumes stay as they are.
+
+### 0000000000000000.3 Check
+
+The app menu shows **Xexam v2.9**. In the dark theme a correct answer is a green card with a green line, like the status icons in AI settings.
+
+### 0000000000000000.4 Going back to v2.8
+
+Change `:latest` to `:v2.8` for the three images and run `docker compose up -d`. No restore is needed: nothing in the data changed.
 
 ## 000000000000000. Upgrading from v2.7 to v2.8
 

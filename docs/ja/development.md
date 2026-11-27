@@ -168,6 +168,7 @@ python tools/phone-walk/walk.py                      # 既定の実行：報告�
 python tools/phone-walk/walk.py --full               # 幅の一覧すべてでの、すべての確認（最後のゲートだけ）
 python tools/phone-walk/walk.py --pages home,quiz,result,ai,menu   # これらのページだけ
 python tools/phone-walk/walk.py --only W-QZ-*,W-CH-1 # 確認 ID による絞り込み（レビューする人向け）
+python tools/phone-walk/walk.py --full --skip "W-QZ-*,W-CH-*"   # このパターンに合う確認以外のすべて（--only の後に適用）
 python tools/phone-walk/walk.py --langs zh --widths 390x844,360x740 --themes light
 python tools/phone-walk/walk.py --keep               # スタックを動かしたままにする。URL と架空のアカウントを表示
 python tools/phone-walk/walk.py --keep --lan         # 同じ。ホームネットワーク上の電話用（先に警告が出ます）
@@ -177,6 +178,7 @@ python tools/phone-walk/walk.py --out <dir> --chrome <path>
 - **幅の一覧**：縦向き 360×740、390×844、412×915。横向き 740×360 と 844×390。タブレット 768×1024。デスクトップ 1280×800。ライトとダークのテーマ。zh が先で、次に en と ja。
 - **既定の実行**：コントラスト（ライトとダーク、zh、390×844 と 1280×800）、文字の収まり（それを指定した行の、zh、en、ja のライト）、それ以外のすべての確認は zh・ライトで、その行が指定したサイズで行います。`--full` はすべてを幅の一覧全体で実行し、最後のゲートだけに使います。
 - **出力**：`report.json`（確認ごとに 1 項目：ID、ページ、状態、ユーザー、サイズ、言語、テーマ、合否、詳細、スクリーンショット）と、`<check>-<page>-<user>-<lang>-<theme>-<w>x<h>.png` という名前のスクリーンショット。P1 の確認が 1 つでも失敗すると終了コードは 1 です。複数を同時に動かすときは、実行ごとに別の `--out` フォルダを指定してください。
+- **CI**：フルの確認は、`dev` へのプッシュのたびに `.github/workflows/ci.yml`（8 節）の一部として 20 個に分けて実行されます。`main` では実行しません。そこではイメージをビルドキャッシュから取ります。`XEXAM_WALK_BACKEND_IMAGE` と `XEXAM_WALK_AI_IMAGE` の**両方**が設定されているときは、`docker build` を行わず、その 2 つの既存イメージに、この実行専用の一意なタグを付けます（後始末で消すのは付けたタグだけです）。未設定なら従来どおりビルドします。`--skip` は `--only` と同じくカンマ区切りのパターンを取ります。ほかのすべての分割のパターンを `--skip` に並べた分割は、誰も挙げていない確認 ID を実行し、何も残らないときは終了コード 0 と項目 0 件の報告で終わります。
 - **データ**：架空のアカウントと問題集だけです（`seed_extra.py`、`seed.py`）。ほかのインスタンスには決して接続せず、キーを表示しません。v2.6 からは、架空のユーザーは全員 `sam@example.com` のようなメールアドレスでログインし、表示名を持ちます（`seed.LOGINS`、`seed.NAMES`）。`seed.Session.sign_in` は最初のログインのページ（新しいパスワードとユーザー名、またはユーザー名だけ）を通過します。v2.6 のチェック（`checks_v26.py`、ID は `W-V26-*`：ランキングとよく間違える問題のボード、評価のカード、タイル、プロフィール、中央に置いたページ、システムログのページ送り、最初のログイン）は `tools/phone-walk/README.md` に一覧があり、`--pages` は `profile` を知っています。`--lan` は自分の電話での短い試用用です。Ctrl+C までは、ネットワーク上のどの機器からもそのスタックに届きます。
 
 ## 6. 旧版との照合（回帰）
@@ -218,8 +220,12 @@ python tools/phone-walk/walk.py --out <dir> --chrome <path>
 | `end-to-end · test (x86)` | x86 の 3 つのイメージのビルドがすべて終わった後：compose スタック全体を起動（3 つのイメージは、統合した compose ファイルと `crazy-max/ghaction-github-runtime` を通じて、同じキャッシュのスコープ `backend-x86`、`frontend-x86`、`ai-service-x86` からビルドされ、再コンパイルはなし。架空の AI プロバイダー）し、314 項目のエンドツーエンドのチェックを実行（最大 45 分） |
 | `<component> · image publish (x86\|arm64)` と `<component> · image tags` | `main` のみ。すべてのテスト、イメージのビルド、`Nginx · test`、`end-to-end · test` が通った後：`image publish` が 3 つのイメージをそれぞれ専用のネイティブランナー（amd64 は `ubuntu-latest`、arm64 は `ubuntu-24.04-arm`、並行。イメージのビルドの `<component>-<arch>` キャッシュのレイヤーを再利用）でビルドしてダイジェストでプッシュし、`image tags` が両者を 1 つのマルチアーキテクチャイメージにまとめて、タグ `latest`、`v<CODE_VERSION>`、`sha-<コミット>` で Docker Hub（`docker.io/yuminspace/`、公開。`docker/docker-compose.yml` が pull するのはこちら）と ghcr.io（非公開のミラー）に付け、両方でマニフェストとタグを検証。リポジトリのシークレット `DOCKERHUB_USERNAME` と `DOCKERHUB_TOKEN`（必要に応じて変数 `DOCKERHUB_NAMESPACE`）が必要で、ない場合は何もプッシュせずに止まる |
 | `release` | `main` のみ（`image tags` の後）：GitHub Release `v<CODE_VERSION>` を作成（または更新）。リリースノートは `docs/en/changelog.md` から取る（`scripts/release-notes.py`）。`main` にすでに記録されたリリースより古いバージョンの実行では、その Release を最新（latest）にしない。最後のステップでリリースを記録する（8.1 節） |
+| `phone walk · <分割名>` | `dev`（と `main` 以外のブランチでの手動起動）のみ。`main` やプルリクエストでは実行しません。`check` と x86 の backend / ai-service のイメージのビルドの後：20 個の分割を並行して実行（それぞれ最大 60 分）し、各分割が自分の `--only` / `--pages` / `--skip` で `tools/phone-walk/walk.py --full`（5.1 節）を動かします。7 つの分割が `W-SH-*` と `W-MN-*` の確認をページごとに分け（合わせて `walk.py` のページ全部とちょうど一致）、12 個がそのほかの確認のまとまりを ID の接頭辞で受け持ち、最後の 1 つ（`rest`）がどの分割にも合わないものすべてを実行します。新しい確認のまとまりが黙って抜け落ちることはありません。各分割は、backend と ai-service の x86 イメージをイメージのビルドのキャッシュ（スコープ `backend-x86` と `ai-service-x86`、読み取りのみ、再コンパイルなし）から読み込み、`XEXAM_WALK_BACKEND_IMAGE` と `XEXAM_WALK_AI_IMAGE` で確認に渡します。CJK と絵文字のフォントを入れ、ランナーの Chrome を使い、`TZ=UTC` で動きます。出力フォルダはアーティファクト `walk-<分割名>`（`report.json` とスクリーンショット、7 日間保存。`walkreport-<分割名>` は `report.json` だけ）としてアップロードされます。確認が終了コード 1（P1 の確認が失敗）で終わると、このジョブは失敗します |
+| `phone walk · summary` | `dev`（と他のブランチでの手動起動）、全分割の後（一部が失敗しても実行しますが、新しいプッシュで実行が取り消された場合は実行しません）：20 件の報告をまとめ、分割ごとと全体の合計、失敗した項目すべて（ID、ページ、サイズ、言語、テーマ、詳細）をジョブの要約に書き、分割のジョブが成功しなかった、報告が欠けている、または P1 の確認が失敗した場合に失敗します。見るべき状態はこれ 1 つで、下の main の門番もこれを調べます。最も遅い分割（v27 / v26）が所要時間を決めます。イメージのビルドの後でおよそ 30〜45 分を見込んでください（見積もりで、最初の dev の実行で測ります。分割が 60 分の上限に近づいたら `--langs` か `--widths` で分けます） |
 
-`dev` へのプッシュと `main` へのプルリクエストでは、検査のジョブ（`check` から `end-to-end · test (x86)` まで）だけを実行し、**公開は一切行いません**。公開されるのは `main` へのプッシュだけです。手動で起動した場合は、実行対象のブランチへのプッシュと同じ動きになります。
+`dev` へのプッシュでは、`end-to-end · test (x86)` までのジョブに加えて電話の幅での確認を実行し、**公開は一切行いません**。`main` へのプルリクエストでは電話の幅での確認を除いた同じものを実行します。公開されるのは `main` へのプッシュだけです。`dev` や他のブランチで手動起動した場合は、そのブランチへのプッシュと同じ動き（確認を実行）になり、`main` で手動起動した場合は `main` へのプッシュと同じ動き（確認なし、門番が働く）になります。
+
+**main の門番。** 確認は長いので 2 回は実行せず、`main` では動かしません。`main` へのプッシュ（と `main` での手動起動）では `check` の最初のステップが、GitHub API（読み取り専用、実行自身のトークン）で、まったく同じコミットの `dev` 上のこのワークフローの実行のうち、成功で終わり、かつ `phone walk · summary` が成功したものを探し、なければ実行全体を止めます（何も公開されません）。`main` が公開するのは、`dev` での実行が、確認を含めて通ったコミットだけです。先に `dev` にプッシュして緑になるのを待ち、それから `main` をそのコミットへ fast-forward で進めてください（マージコミットは SHA が新しく、`dev` の実行がありません）。リリースのボット自身のコミットには `[skip ci]` が付いているので、門番には届きません。
 
 ### 8.1 リリースの後：ボットのコミット
 

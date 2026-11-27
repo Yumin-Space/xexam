@@ -2,18 +2,49 @@
 
 Drives the real Xexam UI on a phone-like Chrome (touch taps, rotation, safe-area insets, a simulated keyboard) against a
 throw-away stack that holds only made-up data and a made-up AI provider. It is a release gate run by the coordinator and by
-the UX reviewers, not a CI job. Run it from the repository root:
+the UX reviewers, and since v2.9 also by CI on every push to `dev` (see "CI" below). Run it from the repository root:
 
 ```sh
 python tools/phone-walk/walk.py                      # default run: report + screenshots into a new temporary folder
 python tools/phone-walk/walk.py --full               # every check on the whole matrix (final gate)
 python tools/phone-walk/walk.py --pages home,quiz,result,ai,menu
 python tools/phone-walk/walk.py --only W-QZ-*,W-CH-1
+python tools/phone-walk/walk.py --full --skip 'W-QZ-*,W-CH-*'   # everything except these
 python tools/phone-walk/walk.py --langs zh --widths 393x852,360x740 --themes light
 python tools/phone-walk/walk.py --keep               # leave the stack running: prints the URL and the made-up accounts
 python tools/phone-walk/walk.py --keep --lan         # the same, reachable from a phone on the home network
 python tools/phone-walk/walk.py --out DIR --chrome PATH
 ```
+
+## Options
+
+| Option | Meaning |
+|---|---|
+| `--full` | every check on the whole width matrix x 3 languages x 2 themes (final gate) |
+| `--pages a,b` | only these pages (`home, study, quiz, result, records, ai, ai-settings, users, logs, settings, profile, banks, about, signin, forbidden, menu`) |
+| `--only P,...` | only the checks whose ID matches one of these comma-separated `fnmatch` patterns (`W-QZ-*,W-CH-1`) |
+| `--skip P,...` | v2.9: the checks whose ID matches one of these patterns are not run (same pattern syntax as `--only`, applied after it). A CI shard that skips every pattern the other shards list runs the check IDs nobody else lists, so a new check family is never silently left out; when nothing is left to run the walk still starts the stack, writes a `report.json` with 0 entries and exits 0 |
+| `--langs`, `--widths`, `--themes` | narrow the language, size and theme matrix |
+| `--slow` | also the checks that wait for a time window |
+| `--keep`, `--lan` | leave the stack running (see below) |
+| `--out DIR`, `--chrome PATH`, `--backend docker\|cargo`, `--frontend DIR`, `--verbose` | output folder, browser, how the backend runs, another frontend folder, build output |
+
+Environment: `XEXAM_CHROME` / `CHROME_PATH` (browser), and, for the Docker backend, `XEXAM_WALK_BACKEND_IMAGE` plus
+`XEXAM_WALK_AI_IMAGE`: when **both** are set the walk does not run `docker build`; it gives those two existing images its
+own unique tags (`docker tag`) and prints which ones it uses; its cleanup removes only the tags it added, never the given
+images. Unset, it builds the images as before.
+
+## CI
+
+`.github/workflows/ci.yml` runs the full walk on every push to `dev` (and on a manual run on any other branch), never on `main` or pull
+requests: 20 parallel jobs `phone walk · <shard>`, each `walk.py --full` with its own `--only` / `--pages` / `--skip`
+(7 shards split `W-SH-*` and `W-MN-*` by `--pages`, 12 take the other check prefixes, the last one, `rest`, runs whatever no
+other shard matches). The backend and ai-service x86 images come from the build cache of the `image-build-x86` job and are
+handed over with `XEXAM_WALK_BACKEND_IMAGE` / `XEXAM_WALK_AI_IMAGE`. Each shard uploads its output folder as the artifact
+`walk-<shard>` (`report.json` + screenshots, 7 days). `phone walk · summary` merges the reports into a table in the job
+summary and is the one status to look at. `main` only releases a commit whose dev run, walk included, passed (the first step
+of the `check` job asks for it): push to `dev` first and wait for it. A new check prefix belongs in one shard of the matrix
+and in the `--skip` list of `rest` (see `docs/en/development.md`, sections 5.1 and 8).
 
 ## What it needs
 

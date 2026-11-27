@@ -169,6 +169,7 @@ python tools/phone-walk/walk.py                      # 默认运行：报告和�
 python tools/phone-walk/walk.py --full               # 整个宽度矩阵上的全部检查（只用于最终检查）
 python tools/phone-walk/walk.py --pages home,quiz,result,ai,menu   # 只这些页面
 python tools/phone-walk/walk.py --only W-QZ-*,W-CH-1 # 按检查编号的子集（审阅者用）
+python tools/phone-walk/walk.py --full --skip "W-QZ-*,W-CH-*"   # 除了匹配这些模式的检查之外的全部（在 --only 之后生效）
 python tools/phone-walk/walk.py --langs zh --widths 390x844,360x740 --themes light
 python tools/phone-walk/walk.py --keep               # 保持栈运行；打印它的地址和虚构的账户
 python tools/phone-walk/walk.py --keep --lan         # 同上，供家里网络里的手机使用（会先警告）
@@ -178,6 +179,7 @@ python tools/phone-walk/walk.py --out <dir> --chrome <path>
 - **宽度矩阵**：竖屏 360×740、390×844 和 412×915；横屏 740×360 和 844×390；平板 768×1024；桌面 1280×800。亮色和暗色主题；先 zh，然后 en 和 ja。
 - **默认运行**：对比度（亮色和暗色，zh，390×844 和 1280×800）；文字适配（写明它的行，用 zh、en 和 ja，亮色）；其他每项检查在 zh、亮色下，用它的行所写的尺寸。`--full` 在整个矩阵上运行全部检查，只用于最终检查。
 - **输出**：`report.json`（每项检查一个条目：编号、页面、状态、用户、尺寸、语言、主题、是否通过、详情、截图），以及名为 `<check>-<page>-<user>-<lang>-<theme>-<w>x<h>.png` 的截图。当 P1 检查失败时退出码为 1。同时运行多次时，每次给一个自己的 `--out` 文件夹。
+- **CI**：完整的走查在每次推送到 `dev` 时作为 `.github/workflows/ci.yml`（第 8 节）的一部分运行，分成 20 个分片；`main` 不运行它。在那里镜像来自构建缓存：当 `XEXAM_WALK_BACKEND_IMAGE` 和 `XEXAM_WALK_AI_IMAGE` **两个都**设置时，走查不再执行 `docker build`，而是给这两个现成的镜像打上这次运行专用的唯一标签（清理时只删它加的标签）；不设置就和以前一样构建。`--skip` 和 `--only` 一样接受逗号分隔的模式；把其他所有分片的模式都写进 `--skip` 的那个分片，会运行没有任何人列出的检查编号，什么都不剩时以退出码 0 结束，报告里是 0 个条目。
 - **数据**：只有虚构的账户和题库（`seed_extra.py`、`seed.py`）；它从不连接到其他实例，也从不打印密钥。从 v2.6 起，每个虚构的用户都用 `sam@example.com` 这样的邮箱登录，并有一个显示名（`seed.LOGINS`、`seed.NAMES`）；`seed.Session.sign_in` 会走完第一次登录的页面（新密码和用户名，或只有用户名）。v2.6 的检查（`checks_v26.py`，编号 `W-V26-*`：学习排行和最常错的题两张图、评估卡片、入口、个人资料、居中的页面、系统日志的翻页和第一次登录）列在 `tools/phone-walk/README.md` 里；`--pages` 认识 `profile`。`--lan` 只用于在自己的手机上短暂试用：局域网里的每台设备都能访问那个栈，直到 Ctrl+C。
 
 
@@ -220,8 +222,12 @@ python tools/phone-walk/walk.py --out <dir> --chrome <path>
 | `end-to-end · test (x86)` | 在三个 x86 镜像都构建好之后：启动完整的 compose 栈（三个镜像通过合并后的 compose 文件和 `crazy-max/ghaction-github-runtime`，用同样的缓存范围 `backend-x86`、`frontend-x86`、`ai-service-x86` 构建，不再重新编译；虚构的 AI 服务商），跑 314 项端到端检查（最多 45 分钟） |
 | `<component> · image publish (x86\|arm64)` 和 `<component> · image tags` | 只有 `main`，在所有测试、镜像构建、`Nginx · test` 和 `end-to-end · test` 都通过之后：`image publish` 让三个镜像各自在原生 runner 上并行构建（amd64 用 `ubuntu-latest`，arm64 用 `ubuntu-24.04-arm`，复用镜像构建里 `<component>-<arch>` 缓存的镜像层）并按摘要推送；`image tags` 再把两者合成每个镜像一个多架构镜像，以 `latest`、`v<CODE_VERSION>` 和 `sha-<提交>` 标签发布到 Docker Hub（`docker.io/yuminspace/`，公开，`docker/docker-compose.yml` 拉取的就是它）和 ghcr.io（私有镜像副本），并在两边都核对清单和标签。需要仓库机密 `DOCKERHUB_USERNAME` 和 `DOCKERHUB_TOKEN`（变量 `DOCKERHUB_NAMESPACE` 可选）；没有它们时，会在推送任何东西之前停下 |
 | `release` | 只有 `main`（在 `image tags` 之后）：建立（或更新）GitHub Release `v<CODE_VERSION>`，说明取自 `docs/en/changelog.md`（`scripts/release-notes.py`）。比 `main` 上已经记录的发布更旧的版本的运行，不会把它的 Release 标成最新版。它的最后一步记录这次发布（第 8.1 节） |
+| `phone walk · <分片名>` | 只有 `dev`（以及在 `main` 以外的分支上手动启动的运行）；`main` 和拉取请求都不运行。在 `check` 和 x86 的 backend / ai-service 镜像构建之后：20 个分片并行（每个最多 60 分钟），每个分片用自己的 `--only` / `--pages` / `--skip` 运行 `tools/phone-walk/walk.py --full`（第 5.1 节）：七个分片按页面拆分 `W-SH-*` 和 `W-MN-*` 检查（合起来正好是 `walk.py` 的全部页面），十二个按编号前缀负责其余的检查类别，最后一个（`rest`）运行所有其他分片都不匹配的检查，因此新增的检查类别不会被悄悄漏掉。每个分片从镜像构建的缓存（范围 `backend-x86` 和 `ai-service-x86`，只读，不再编译）加载 backend 和 ai-service 的 x86 镜像，并通过 `XEXAM_WALK_BACKEND_IMAGE` 和 `XEXAM_WALK_AI_IMAGE` 交给走查；它安装 CJK 和 emoji 字体，使用 runner 自带的 Chrome，并以 `TZ=UTC` 运行。输出文件夹作为构件 `walk-<分片名>`（`report.json` 和截图，保留 7 天；`walkreport-<分片名>` 只含 `report.json`）上传。走查以退出码 1（有 P1 检查失败）结束时，这个任务失败 |
+| `phone walk · summary` | 只有 `dev`（以及其他分支上的手动运行），在所有分片之后（即使有分片失败也运行，但运行被新的推送取消时不运行）：合并 20 份报告，把每个分片和整体的合计，以及每个失败的条目（编号、页面、尺寸、语言、主题、详情）写进任务摘要；有分片任务没成功、缺少报告或有 P1 检查失败时失败。要看的就是这一个状态，下面的 main 守卫也是看它。最慢的分片（v27 / v26）决定总时间：预计在镜像构建之后大约 30–45 分钟（这是估计值，要在第一次 dev 运行时实测；若某个分片接近 60 分钟上限，就按 `--langs` 或 `--widths` 再拆分） |
 
-推送到 `dev` 和向 `main` 提拉取请求只跑检查任务（`check` 到 `end-to-end · test (x86)`），**从不发布**；只有推送到 `main` 才会发布。手动启动的运行，和推送到它所在的分支效果一样。
+推送到 `dev` 会运行到 `end-to-end · test (x86)` 的全部任务，再加上手机走查，**从不发布**；向 `main` 提拉取请求运行同样的任务，但没有手机走查；只有推送到 `main` 才会发布。在 `dev` 或其他分支上手动启动的运行，和推送到该分支效果一样（会运行走查）；在 `main` 上手动启动的运行，和推送到 `main` 效果一样（没有走查，main 守卫生效）。
+
+**main 守卫。** 走查太长，不值得跑两遍，所以 `main` 不运行它：推送到 `main`（或在 `main` 上手动启动）时，`check` 的第一步通过 GitHub API（只读，用这次运行自己的令牌）查找 `dev` 上针对完全相同提交的、以成功结束且其中 `phone walk · summary` 成功的本工作流的运行；找不到就停下整次运行（不发布任何东西）。`main` 只发布 dev 上的运行（包括走查）已通过的提交：先推送到 `dev`，等它变绿，再用 fast-forward 把 `main` 更新到那个提交（合并提交有新的 SHA，没有 dev 的运行）。发布机器人自己的提交带 `[skip ci]`，所以不会走到守卫。
 
 ### 8.1 发布之后：机器人的提交
 
