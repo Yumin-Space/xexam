@@ -86,6 +86,8 @@
 .gen-usage.gu-narrow .gu-n { grid-column: 1 / -1; }
 .gen-usage.gu-narrow .gu-c, .gen-usage.gu-narrow .gu-e { display: none; }
 .gen-usage.gu-tiny { font-size: 11px; }
+.gen-usage.gu-stack { grid-template-columns: max-content; }
+.gen-usage.gu-stack .gu-v { padding-left: 8px; }
 .gen-usage:focus-visible { outline: 2px solid var(--print); outline-offset: 2px; border-radius: 4px; }
 .btn.danger-text { color: var(--danger); }
 @media (hover: hover) { .btn.danger-text:hover:not(:disabled) { color: var(--danger-hover); background: var(--danger-soft); } }
@@ -138,7 +140,7 @@
 .gen-expl { margin: 0; }
 
 /* ---------- v1.3: the placeholder bank row (Home / Bank management) ---------- */
-.gen-ph { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 10px 12px; border: 1px dashed var(--line); border-radius: 10px; color: var(--ink2); min-width: 0; background: transparent; text-align: left; }
+.gen-ph { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 10px 12px; border: 1px dashed var(--line); border-radius: 10px; color: var(--ink2); min-width: 0; max-width: 100%; box-sizing: border-box; /* v2.9: a button sizes to its text, so a long name (wide fonts) must be capped at the row; the name then takes the ellipsis */ background: transparent; text-align: left; }
 /* a button: no browser button grey (it showed in the dark theme); a light hover like other rows */
 @media (hover: hover) { .gen-ph:hover { background: var(--hover); } }
 .gen-ph-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; color: var(--ink); }

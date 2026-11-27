@@ -530,10 +530,10 @@ function syncTopH(): void {
   if (row && right && left) {
     // Steps (styles/quiz.css): short labels and count, then smaller gaps and no clock icon, then no tag / finish icon; each
     // only while something is still clipped or pushed onto a second line
-    row.classList.remove('tight', 'tighter', 'tightest', 'tightest2', 'tightest3');
+    row.classList.remove('tight', 'tighter', 'tightest', 'tightest1', 'tightest1b', 'tightest2', 'tightest3');
     const lastEnd = (): number => (left.lastElementChild?.getBoundingClientRect().right ?? 0) - left.getBoundingClientRect().right;
     const over = (): boolean => left.scrollWidth > left.clientWidth + 1 || lastEnd() > 0.5 || right.offsetTop > left.offsetTop + 4 || row.scrollWidth > row.clientWidth + 1;
-    for (const step of ['tight', 'tighter', 'tightest', 'tightest2', 'tightest3']) {
+    for (const step of ['tight', 'tighter', 'tightest', 'tightest1', 'tightest1b', 'tightest2', 'tightest3']) {
       if (!over()) break;
       row.classList.add(step);
     }

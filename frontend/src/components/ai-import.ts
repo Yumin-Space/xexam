@@ -304,6 +304,25 @@ export function importCard(): HTMLElement | null {
       errBox);
   };
   draw();
-  subscribeGen(host, draw);
+  subscribeGen(host, () => { draw(); twinWidth(); });
+  twinWidth();
   return host.hidden ? null : host;
+}
+
+/** v2.9: the Excel and AI import buttons sit in different cards but are one pair: both take the wider of the two natural
+ *  widths (measured, so it holds in every font and language), capped at the row by CSS (the label then wraps). */
+let twinBound = false;
+function twinWidth(): void {
+  const run = (): void => {
+    const bs = Array.from(document.querySelectorAll<HTMLElement>('.btn.bk-choose, .gen-impbtn.ibtn'));
+    if (bs.length < 2) return;
+    for (const b of bs) { b.style.setProperty('--bk-btn-w', 'max-content'); }
+    const w = Math.ceil(Math.max(...bs.map((b) => b.getBoundingClientRect().width)));
+    for (const b of bs) b.style.setProperty('--bk-btn-w', `${w}px`);
+  };
+  requestAnimationFrame(run);
+  if (twinBound) return;
+  twinBound = true;
+  window.addEventListener('resize', () => requestAnimationFrame(run));
+  void document.fonts?.ready.then(() => requestAnimationFrame(run));
 }

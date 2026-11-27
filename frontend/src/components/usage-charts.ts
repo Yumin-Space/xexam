@@ -27,15 +27,60 @@ function svgEl<K extends keyof SVGElementTagNameMap>(tag: K, attrs: Record<strin
 /** The estimated width of a label at the chart's 11 px type (CJK is wider) */
 const labelWidth = textWidth;
 
-/** The measured width of a text in the page's font at 11 px (a canvas; the estimate where a canvas is not available) */
-function measurer(): (s: string) => number {
+/**
+ * The measured width of a text as the chart draws it: an off-screen SVG text with the chart's own label class, so the font stack,
+ * the page language (CJK glyph variants) and the size are exactly those of the real labels. The canvas and then the estimate are
+ * the fallbacks (no layout, e.g. under a test runner).
+ */
+function measurer(): { measure: (s: string) => number; lineHeight: () => number; dispose: () => void } {
+  const none = (): void => {};
+  const noLine = (): number => 0;
+  try {
+    const svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('class', 'uc-svg');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.style.cssText = 'position:absolute;left:-9999px;top:0;width:10px;height:10px;visibility:hidden';
+    const text = document.createElementNS(NS, 'text');
+    text.setAttribute('class', 'uc-label');
+    svg.append(text);
+    document.body.append(svg);
+    const probe = (s: string): number => {
+      text.textContent = s;
+      return text.getComputedTextLength();
+    };
+    if (probe('MMMMMMMMMM') > 0) {
+      const memo = new Map<string, number>();
+      const measured = (s: string): number => {
+        let w = memo.get(s);
+        if (w == null) {
+          w = probe(s) + 1;
+          memo.set(s, w);
+        }
+        return w;
+      };
+      // the line box of a label in the real font (taller in CJK fonts), 0 when it cannot be measured
+      const lineHeight = (): number => {
+        try {
+          text.textContent = '0';
+          const h = text.getBBox().height;
+          return h > 0 ? h : 0;
+        } catch {
+          return 0;
+        }
+      };
+      return { measure: measured, lineHeight, dispose: () => svg.remove() };
+    }
+    svg.remove();
+  } catch {
+    // fall through to the canvas
+  }
   try {
     const ctx = document.createElement('canvas').getContext('2d');
-    if (!ctx) return labelWidth;
+    if (!ctx) return { measure: labelWidth, lineHeight: noLine, dispose: none };
     ctx.font = `11px ${getComputedStyle(document.body).fontFamily || 'sans-serif'}`;
-    return (s) => Math.max(labelWidth(s) * 0.5, ctx.measureText(s).width) + 1;
+    return { measure: (s) => Math.max(labelWidth(s) * 0.5, ctx.measureText(s).width) + 1, lineHeight: noLine, dispose: none };
   } catch {
-    return labelWidth;
+    return { measure: labelWidth, lineHeight: noLine, dispose: none };
   }
 }
 
@@ -137,10 +182,11 @@ export function barChart(o: { ariaLabel: string; items: readonly BarItem[]; form
       const rowH = 30;
       const top = 4;
       const right = 8;
-      const measure = measurer();
+      const { measure, dispose } = measurer();
       const nameW = nameColumn(o.items.map((i) => measure(i.label)), w - right);
       const left = nameW + 12;
-      const valRoom = Math.max(0, ...o.items.map((i) => o.format(i.value).length)) * 6.6 + 8;
+      // the value is bold 11.5 px: measured in the label font, plus a margin for the heavier weight
+      const valRoom = Math.max(0, ...o.items.map((i) => measure(o.format(i.value)))) * 1.15 + 10;
       const svg = svgOf(top + rowH * n + 6);
       svg.classList.add('uc-hsvg');
       svg.append(svgEl('line', { x1: left, y1: top, x2: left, y2: top + rowH * n, class: 'uc-axis' }));
@@ -161,6 +207,7 @@ export function barChart(o: { ariaLabel: string; items: readonly BarItem[]; form
         g.append(svgEl('text', { x: b.x + b.width + 5, y: b.rowY + rowH / 2 + 4, class: 'uc-val' }, o.format(it.value)));
         svg.append(g);
       });
+      dispose();
       return svg;
     }
     // columns: every label fits flat (wrapped into up to three lines inside its slot)
@@ -384,7 +431,13 @@ export function lineChart(o: {
     const slot = (w - left - right) / Math.max(1, n - 1);
     // horizontal short dates, thinned by the room (a gap of 12 px between two), counted from the newest back
     const step = labelStep(slot, lw, 12);
-    const bottom = 30;
+    // room for the dates: their line box (taller in CJK fonts) must clear the 0 tick's
+    // measured in the real label font; 22 / 34 when nothing can be measured
+    const probe = measurer();
+    const lh = probe.lineHeight();
+    probe.dispose();
+    const dateY = lh > 0 ? Math.max(22, Math.ceil(3.5 + lh + 3)) : 22;
+    const bottom = lh > 0 ? Math.max(34, Math.ceil(dateY + lh * 0.3 + 2)) : 34;
     const plotW = w - left - right;
     const plotH = H - top - bottom;
     const svg = svgEl('svg', { viewBox: `0 0 ${w} ${H}`, width: w, height: H, role: 'img', 'aria-label': o.ariaLabel, class: 'uc-svg', tabindex: 0 });
@@ -411,7 +464,7 @@ export function lineChart(o: {
     pts.forEach((p, i) => {
       const [x, y] = points[i]!;
       if (n <= 45 || val(p) > 0) svg.append(svgEl('circle', { cx: x, cy: y, r: 3.4, class: 'uc-dot' }));
-      if (named.has(i)) svg.append(svgEl('text', { x, y: top + plotH + 18, 'text-anchor': 'middle', class: 'uc-label uc-date' }, shorts[i]!));
+      if (named.has(i)) svg.append(svgEl('text', { x, y: top + plotH + dateY, 'text-anchor': 'middle', class: 'uc-label uc-date' }, shorts[i]!));
     });
     svg.append(hot);
     const showAt = (i: number): void => {

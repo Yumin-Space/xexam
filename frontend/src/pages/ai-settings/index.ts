@@ -93,7 +93,7 @@ onSignedIn(() => {
 
 /** The row of category tabs under the status cards: icon + label, short labels under PHONE, one row */
 function tabsRow(tab: AiTab): HTMLElement {
-  return h('div', { class: 'seg ais-tabs', role: 'group', 'aria-label': t('ai.set.tabs.aria') },
+  const row = h('div', { class: 'seg ais-tabs', role: 'group', 'aria-label': t('ai.set.tabs.aria') },
     AI_TABS.map((k) => {
       const d = TABS[k];
       const b = h('button', {
@@ -103,6 +103,24 @@ function tabsRow(tab: AiTab): HTMLElement {
       holdTip(b, t(d.full));
       return b;
     }));
+  fitTabs(row);
+  return row;
+}
+
+/** Makes the labels fit the row in the current font and width, measured not guessed: first the icons go, then the padding and type tighten */
+function fitTabs(row: HTMLElement): void {
+  const fit = (): void => {
+    row.classList.remove('ais-noic', 'ais-tight');
+    if (row.clientWidth === 0) return;
+    const over = (): boolean => row.scrollWidth > row.clientWidth;
+    if (!over()) return;
+    row.classList.add('ais-noic');
+    if (over()) row.classList.add('ais-tight');
+  };
+  if (typeof ResizeObserver === 'function') new ResizeObserver(fit).observe(row);
+  // Web fonts arriving later change the label widths without resizing the row
+  void document.fonts?.ready.then(fit);
+  window.requestAnimationFrame(fit);
 }
 
 /** Shows a category: the hash keeps it (`#/ai-settings?tab=users`), replaced in place, so Back does not walk through tabs */

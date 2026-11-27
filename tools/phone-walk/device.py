@@ -52,6 +52,24 @@ LANDSCAPE_INSETS = {'top': 0, 'bottom': 21, 'left': 47, 'right': 47}
 # v2.5: '#/' is the dashboard; the exam setup (the old Home) lives at '#/study'
 SETUP = '#/study'
 
+# --wide-text / XEXAM_WALK_WIDE_TEXT=1: an emulation of the wider Linux / Android font metrics (see README, "Wide text").
+# A constructed stylesheet needs no DOM, so it is in place before the first paint of every new document.
+# Windows has no Linux fonts, so the emulation swaps the three font stacks of the app (main.css: --en, --jp, --zh) for the
+# widest installed Windows faces: Verdana (as wide as DejaVu Sans) for Latin, Yu Gothic (fixed-width kana; Yu Gothic UI sets
+# the kana proportionally, Noto Sans CJK does not) for Japanese, Microsoft YaHei (its Latin glyphs are wider than YaHei UI's)
+# for Chinese. Calibrated against the CI log (ubuntu-latest, Chrome, fonts-noto-cjk): the ai-settings tab row is 400 px / 430 px
+# wide at 390 / 412 en and 414 px at 412 ja on Linux, 358.4 / 388.4 / 377.1 with the default stacks on Windows, and 398.4 /
+# 428.4 / 414.6 with these (within 2 px).
+WIDE_TEXT_CSS = (':root{--en:Verdana,"Microsoft YaHei UI","Yu Gothic UI",sans-serif;--num:Verdana,sans-serif}'
+                 'html:lang(ja){--jp:"Yu Gothic","Meiryo",sans-serif}'
+                 'html:lang(zh-CN){--zh:"Microsoft YaHei","Noto Sans SC",sans-serif}')
+WIDE_TEXT_SCRIPT = ("try{var s=new CSSStyleSheet();s.replaceSync(%s);document.adoptedStyleSheets=[...document.adoptedStyleSheets,s];}"
+                    "catch(e){}")
+
+
+def wide_text_enabled():
+    return os.environ.get('XEXAM_WALK_WIDE_TEXT', '') not in ('', '0', 'false')
+
 
 class EventCDP(CDP):
     """CDP that keeps the events it passes while waiting for an answer (browser.CDP drops them)."""
@@ -103,6 +121,8 @@ class Device:
             for d in ('Page', 'Runtime', 'DOM', 'Network'):
                 self.cdp.call(d + '.enable')
             self.cdp.call('Page.addScriptToEvaluateOnNewDocument', source=PRELUDE)
+            if wide_text_enabled():
+                self.cdp.call('Page.addScriptToEvaluateOnNewDocument', source=WIDE_TEXT_SCRIPT % json.dumps(WIDE_TEXT_CSS))
             self.cdp.call('Emulation.setTimezoneOverride', timezoneId='UTC')
             self.set_theme(theme)
             self.set_reduced_motion(reduced_motion)

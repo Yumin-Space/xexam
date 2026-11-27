@@ -126,13 +126,37 @@ function featuresLine(u: AiAdminUserRow): HTMLElement {
   };
   const colon = uiLang() === 'en' ? ':' : '：';
   const err = A.featErr.get(u.id);
-  return h('div', { class: 'ais-feats', role: 'group', 'aria-label': `${t('ai.set.feat.title')}: ${u.username}`, title: admin ? t('ai.set.feat.adminAll') : null },
+  const row = h('div', { class: 'ais-feats', role: 'group', 'aria-label': `${t('ai.set.feat.title')}: ${u.username}`, title: admin ? t('ai.set.feat.adminAll') : null },
     h('span', { class: 'ais-feat-t' }, t('ai.set.feat.title')),
     h('div', { class: 'ais-fg' }, FEATURE_GROUPS.main.map(box)),
     h('div', { class: 'ais-fg ais-fg-banks' }, h('span', { class: 'ais-fg-l' }, t('ai.feature.group.banks') + colon), FEATURE_GROUPS.banks.map(box)),
     admin ? h('span', { class: 'sr-only' }, t('ai.set.feat.adminAll')) : null,
     admin ? freeSwitch(u) : null,
     err ? h('p', { class: 'ais-ferr ais-feat-err', role: 'alert' }, err) : null);
+  tidyFeatureGroups(row);
+  return row;
+}
+
+/** v2.9: a group of boxes stays on ONE row when it fits; when the font is wider than the room (Android phones, Japanese) it
+ *  becomes a two-column grid instead of a ragged wrap. Measured, so it follows the real font and width. */
+function tidyFeatureGroups(row: HTMLElement): void {
+  if (typeof ResizeObserver === 'undefined') return;
+  const fit = (): void => {
+    if (!row.isConnected || row.getClientRects().length === 0) return;
+    for (const g of row.querySelectorAll<HTMLElement>('.ais-fg:not(.ais-fg-free)')) {
+      g.classList.remove('ais-fg-grid');
+      const tops = new Set(Array.from(g.querySelectorAll('label'), (l) => Math.round(l.getBoundingClientRect().top)));
+      if (tops.size > 1) g.classList.add('ais-fg-grid');
+    }
+  };
+  let last = 0;
+  new ResizeObserver(() => {
+    const w = Math.round(row.getBoundingClientRect().width);
+    if (w === last) return;
+    last = w;
+    fit();
+  }).observe(row);
+  void document.fonts?.ready.then(fit);
 }
 
 /** A-OWNER-21: an administrator row's AI Chat free mode switch (ordinary users never get one); saved at once */

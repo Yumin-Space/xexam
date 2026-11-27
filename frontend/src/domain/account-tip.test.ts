@@ -32,7 +32,7 @@ test('v2.2 fix round: account button redraws across the phone line, one tip at a
 });
 
 test('quiz top row steps down (short count, tighter gaps, no clock icon) before the position is clipped', () => {
-  assert.match(src('../pages/quiz.ts'), /\['tight', 'tighter', 'tightest', 'tightest2', 'tightest3']/);
+  assert.match(src('../pages/quiz.ts'), /\['tight', 'tighter', 'tightest', 'tightest1', 'tightest1b', 'tightest2', 'tightest3']/);
   const css = src('../styles/quiz.css');
   assert.match(css, /\.qbar\.tight \.qcount-s \{ display: inline; \}/);
   // The toggle's box is its own 44 px tap area (no ::after a neighbour could cover)

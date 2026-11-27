@@ -95,6 +95,7 @@ class Run:
         self.saved = {}
         self.cache = {}
         self.t0 = time.time()
+        self.t_last = self.t0          # end of the previous entry: 'ms' of an entry = the time since then
         self.notes = []
 
     # -- selection
@@ -256,6 +257,9 @@ class Run:
                 shot = None
         entry = {'id': cid, 'page': page, 'state': state, 'user': user, 'size': size_s, 'lang': lang, 'theme': theme,
                  'pass': ok, 'detail': detail, 'screenshot': shot, 'priority': pri}
+        now = time.time()
+        entry['ms'] = round((now - self.t_last) * 1000)
+        self.t_last = now
         self.results.append(entry)
         word = 'skip' if ok is None else ('PASS' if ok else ('FAIL' if pri == 1 else 'fail(P2)'))
         print('%-8s %-9s %-14s %-6s %-9s %s %s  %s' % (word, cid, page + (':' + state if state else ''), user or '-', size_s, lang,
@@ -263,9 +267,17 @@ class Run:
         return ok
 
     def guard(self, cid, page, fn, *a):
-        """Runs one case; an exception is a failed entry (with its message), not the end of the walk."""
+        """Runs one case; an exception is a failed entry (with its message), not the end of the walk. A browser socket timeout
+        (a slow, busy CI machine) is not a finding: the devices are dropped and the case runs once more."""
+        n0 = len(self.results)
         try:
-            return fn(*a)
+            try:
+                return fn(*a)
+            except TimeoutError:
+                del self.results[n0:]
+                self.notes.append('retried %s after a browser timeout' % cid)
+                self.drop_devices()
+                return fn(*a)
         except Exception as e:
             tb = traceback.extract_tb(e.__traceback__)[-1]
             self.rec(cid, page, 'error', None, '0x0', '-', '-', False, '%s: %s (%s:%d)' % (type(e).__name__, str(e)[:200], tb.filename.split(os.sep)[-1], tb.lineno))
@@ -276,7 +288,8 @@ class Run:
         failed = [r for r in self.results if r['pass'] is False and r['priority'] == 1]
         summary = {'total': len(self.results), 'passed': sum(1 for r in self.results if r['pass'] is True),
                    'failed': sum(1 for r in self.results if r['pass'] is False),
-                   'p1Failed': len(failed), 'skipped': sum(1 for r in self.results if r['pass'] is None)}
+                   'p1Failed': len(failed), 'skipped': sum(1 for r in self.results if r['pass'] is None),
+                   'seconds': round(time.time() - self.t0)}
         doc = {'seconds': round(time.time() - self.t0), 'full': bool(self.args.full), 'summary': summary, 'notes': self.notes,
                'results': self.results}
         os.makedirs(self.out, exist_ok=True)
@@ -2136,12 +2149,19 @@ def saved_problems(rc, d, lang, size, sel, user):
         r = d.rect(sel)
         if phone(size):
             d.tap(r['cx'], r['cy'], 0.5)
-        else:
+        elif d.js("matchMedia('(hover: hover)').matches"):
             d.cdp.call('Input.dispatchMouseEvent', type='mouseMoved', x=r['cx'], y=r['cy'])
             time.sleep(0.6)
+        else:
+            # a headless Chrome without a pointing device (Linux CI) reports (hover: none), so the app rightly shows no hover tip
+            # there; the tip must then still come with keyboard focus (the same .tip rule for :focus-visible)
+            d.cdp.call('Input.dispatchKeyEvent', type='keyDown', key='Tab', code='Tab', windowsVirtualKeyCode=9)
+            d.cdp.call('Input.dispatchKeyEvent', type='keyUp', key='Tab', code='Tab', windowsVirtualKeyCode=9)
+            d.js('(s => { const e = document.querySelector(s); if (e) e.focus() })(%s)' % json.dumps(sel))
+            time.sleep(0.4)
         s2 = d.js('(%s)(%s)' % (SAVED_JS, json.dumps(sel)))
         if not (s2 and s2['tip'] and s2['tip']['shown']):
-            out.append('a %s does not show the tip' % ('tap' if phone(size) else 'hover'))
+            out.append('a %s does not show the tip' % ('tap' if phone(size) else 'hover' if d.js("matchMedia('(hover: hover)').matches") else 'keyboard focus (no hover on this browser)'))
     return out
 
 
@@ -2342,11 +2362,17 @@ FEAT_ROWS = """(() => {
   const rows = [...document.querySelectorAll('.ais-feats')].map(f => {
     // v1.1 (A-OWNER-21): an administrator row also has the free-mode switch (.ais-fg-free), not one of the six boxes (v1.3: AI hint and AI analysis are one box, ais-feat-<id>-hint, labelled 提示+解析)
     const boxes = f.querySelectorAll('.ais-fg:not(.ais-fg-free) input[type=checkbox]').length;
-    const groups = [...f.querySelectorAll('.ais-fg:not(.ais-fg-free)')].map(g => new Set([...g.querySelectorAll('label')].map(l => Math.round(l.getBoundingClientRect().top))).size);
+    // v2.9: a group that does not fit one row (a wider font) is a tidy two-column grid (.ais-fg-grid: labels in at most two columns, the group label on its own line); only a ragged wrap counts as wrapped
+    const groups = [...f.querySelectorAll('.ais-fg:not(.ais-fg-free)')].map(g => {
+      const ls = [...g.querySelectorAll('label')].map(l => l.getBoundingClientRect());
+      const rows = new Set(ls.map(b => Math.round(b.top))).size, cols = new Set(ls.map(b => Math.round(b.left))).size;
+      return rows > 1 && g.classList.contains('ais-fg-grid') && cols <= 2 ? 1 : rows;
+    });
     const free = f.querySelectorAll('.ais-fg-free input[role=switch]').length;
     const admin = [...f.querySelectorAll('.ais-fg:not(.ais-fg-free) input')].every(i => i.disabled);
     const split = !!f.querySelector('input[id$="-explain"]') || !f.querySelector('input[id$="-hint"]');
-    return {boxes, groups, admin, free, split, freeOk: admin ? free === 1 : free === 0};
+    const widths = [...f.querySelectorAll('.ais-fg:not(.ais-fg-free)')].map(g => Math.round(g.getBoundingClientRect().width) + '/' + Math.round(g.scrollWidth));
+    return {boxes, groups, admin, free, split, freeOk: admin ? free === 1 : free === 0, widths, room: Math.round(f.getBoundingClientRect().width)};
   });
   return rows })()"""
 
@@ -2542,6 +2568,7 @@ def im1_case(rc, lang, theme, size):
               noteLines: note ? Math.round(note.getBoundingClientRect().height / lh) : 0, note: note ? note.textContent : '',
               inExcel: !!document.querySelector('#bk-import .gen-impbtn'), head: !!card.querySelector('h2'),
               drop: !!card.querySelector('.bk-droprow'), over: card.classList.contains('bk-drop'),
+              fit: !!btn && btn.scrollWidth <= btn.clientWidth + 1 && (!x || x.scrollWidth <= x.clientWidth + 1),
               twin: rx && rb ? {dw: Math.round(Math.abs(rx.width - rb.width)), dh: Math.round(Math.abs(rx.height - rb.height)), dl: Math.round(Math.abs(rx.left - rb.left))} : null} })()""")
     if r is None:
         rc.rec('W-IM-1', 'banks', 'ai-card', 'sam', size, lang, theme, None, 'no AI card (AI+ not usable for this account on this stack)')
@@ -2559,6 +2586,8 @@ def im1_case(rc, lang, theme, size):
         problems.append('button %d px high' % r['btnH'])
     if r['noteLines'] > 5:
         problems.append('note %d lines' % r['noteLines'])
+    if not r['fit']:
+        problems.append('a button label spills out of its box')
     t = r['twin']
     if t and (t['dw'] > 2 or t['dh'] > 2 or t['dl'] > 2):
         problems.append('the AI button is not the twin of the Excel button (%s)' % t)
@@ -2729,7 +2758,7 @@ def fp1_case(rc, lang, theme, size):
         if len(r['groups']) != 2:
             problems.append('row %d has %d groups' % (i, len(r['groups'])))
         elif lang in ('zh', 'ja') and any(g > 1 for g in r['groups']):
-            problems.append('row %d: a group wraps at %d px in %s' % (i, size[0], lang))
+            problems.append('row %d: a group wraps at %d px in %s (group widths %s, row %s px)' % (i, size[0], lang, r['widths'], r['room']))
     if not any(r['admin'] for r in rows):
         problems.append('no administrator row with disabled boxes')
     rc.rec('W-FP-1', 'ai-settings', 'features', 'admin', size, lang, theme, not problems,

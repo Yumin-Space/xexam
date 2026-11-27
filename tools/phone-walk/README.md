@@ -25,6 +25,7 @@ python tools/phone-walk/walk.py --out DIR --chrome PATH
 | `--only P,...` | only the checks whose ID matches one of these comma-separated `fnmatch` patterns (`W-QZ-*,W-CH-1`) |
 | `--skip P,...` | v2.9: the checks whose ID matches one of these patterns are not run (same pattern syntax as `--only`, applied after it). A CI shard that skips every pattern the other shards list runs the check IDs nobody else lists, so a new check family is never silently left out; when nothing is left to run the walk still starts the stack, writes a `report.json` with 0 entries and exits 0 |
 | `--langs`, `--widths`, `--themes` | narrow the language, size and theme matrix |
+| `--wide-text` | emulate the wider Linux / Android font metrics on Windows (also `XEXAM_WALK_WIDE_TEXT=1`); default off, see "Wide text" below |
 | `--slow` | also the checks that wait for a time window |
 | `--keep`, `--lan` | leave the stack running (see below) |
 | `--out DIR`, `--chrome PATH`, `--backend docker\|cargo`, `--frontend DIR`, `--verbose` | output folder, browser, how the backend runs, another frontend folder, build output |
@@ -37,14 +38,55 @@ images. Unset, it builds the images as before.
 ## CI
 
 `.github/workflows/ci.yml` runs the full walk on every push to `dev` (and on a manual run on any other branch), never on `main` or pull
-requests: 20 parallel jobs `phone walk · <shard>`, each `walk.py --full` with its own `--only` / `--pages` / `--skip`
-(7 shards split `W-SH-*` and `W-MN-*` by `--pages`, 12 take the other check prefixes, the last one, `rest`, runs whatever no
-other shard matches). The backend and ai-service x86 images come from the build cache of the `image-build-x86` job and are
-handed over with `XEXAM_WALK_BACKEND_IMAGE` / `XEXAM_WALK_AI_IMAGE`. Each shard uploads its output folder as the artifact
-`walk-<shard>` (`report.json` + screenshots, 7 days). `phone walk · summary` merges the reports into a table in the job
-summary and is the one status to look at. `main` only releases a commit whose dev run, walk included, passed (the first step
-of the `check` job asks for it): push to `dev` first and wait for it. A new check prefix belongs in one shard of the matrix
-and in the `--skip` list of `rest` (see `docs/en/development.md`, sections 5.1 and 8).
+requests, and only after every build and test of the run passed. `main` only releases a commit whose dev run, walk included, passed
+(the first step of the `check` job asks for it): push to `dev` first and wait for it. Three kinds of job:
+
+- `phone walk · plan` runs `ci_plan.py`, which reads `ci-timings.json` (seconds per check ID and language, per page for the
+  `W-SH-*` / `W-MN-*` checks, setup seconds) and plans the runners: check IDs grouped by FUNCTION (`FUNCTIONS` in `ci_plan.py`:
+  "AI chat", "quiz and answer sheet", "home dashboard", "banks and AI import", "common checks · <pages>", ...), a group longer than
+  the target cut by check ID, one check or page still longer cut by theme (`--themes light` / `dark`, two runners), everything packed
+  longest-first onto the least loaded runner (same function preferred, then a hill-climbing pass), and the runner count N in 8..19
+  with the shortest predicted wall time (GitHub's free plan runs 20 jobs at once). Its JSON matrix is the matrix of the next job, the
+  table goes to the job summary, the plan to the artifact `walkplan`. Every known check ID is in exactly one runner (`validate()`
+  proves it before the plan is accepted); an ID that no group lists is planned as "other checks" with a default estimate and runs on
+  the catch-all runner, which uses `--skip` of every other runner's IDs, so a new check is never left out.
+  `python tools/phone-walk/ci_plan.py` prints the plan (`--n 12` forces the count).
+- `phone walk · <runner>`: one job per runner of the plan, named by function. It loads the backend and ai-service x86 images from the
+  build cache of the `image-build-x86` job (`XEXAM_WALK_BACKEND_IMAGE` / `XEXAM_WALK_AI_IMAGE`) and runs THREE `walk.py --full`
+  processes at once, `--langs zh`, `en` and `ja`, each with its own stack (random container names, free ports), its own Vite build
+  folder, Chrome profiles and `--out` folder, started 10 s apart; their lines are prefixed `[zh]` / `[en]` / `[ja]`. A runner's time is
+  its longest language, not the sum. `ci_plan.py --merge DIR_ZH DIR_EN DIR_JA --out DIR` writes the one `report.json` (a process
+  without a report is a failed entry). Artifacts: `walk-<slug>` (report + screenshots, 7 days) and `walkreport-<slug>` (report only); the slug is an ASCII form of the runner name that the plan makes (artifact names may not contain `/ \ : < > | * ? "`). Checks that hard-code the language zh (`HARD_ZH` in `ci_plan.py`) run in the zh process only; the en and ja processes skip them, and the merge drops any repeat.
+- `phone walk · summary` merges the reports into a table in the job summary and is the one status to look at; it expects as many
+  reports as the plan has runners. It also writes the artifact `walk-timings`: `ci_plan.py --update-from <folder with the walkreport-*
+  folders> --plan plan.json --write ci-timings.json` turns the `ms` field of every entry into the new `ci-timings.json`.
+
+Refreshing the timings: when the runners finish more than a few minutes apart (see the table in the job summary of the plan job
+and the seconds of the summary job), download `walk-timings` from the latest dev run and copy it over `tools/phone-walk/ci-timings.json`
+(it also sets `parallelFactor` to 1.0, because those numbers were measured with the three languages running at once). A new check
+needs no entry: it is planned with `defaultCheckSeconds`. To give it a function, add its ID pattern to `FUNCTIONS` in `ci_plan.py`.
+Splitting by theme assumes the check honours `--themes` (a check that ignores it would run in both halves, only costing time).
+
+## Wide text
+
+CI runs on Linux (Chrome, `fonts-noto-cjk`), where text is wider than with the Windows fonts (Segoe UI, Yu Gothic UI, Microsoft
+YaHei UI), as on many Android phones; a row that fits on a Windows PC can then overflow. `--wide-text` (or
+`XEXAM_WALK_WIDE_TEXT=1`) reproduces that on Windows: every new page gets a constructed stylesheet (`device.WIDE_TEXT_CSS`) that
+replaces the three font stacks of `main.css` (`--en`, `--jp`, `--zh`) by the widest installed Windows faces: Verdana for Latin,
+Yu Gothic (fixed-width kana) for Japanese, Microsoft YaHei for Chinese. It is an emulation only: it never changes the app, it
+needs those fonts, and it is off by default.
+
+How it was chosen: the first CI run measured the AI settings tab row (`div.seg.ais-tabs`, content width) on Linux at 400 px (390
+en), 430 px (412 en) and 414 px (412 ja); with the default Windows stacks the same row is 358.4 / 388.4 / 377.1 px. Arial gives
+373.9 px (too narrow), Verdana 398.4 / 428.4 px and Yu Gothic 414.6 px, each within 2 px of Linux. The Chinese stack has no
+Linux measurement of its own (YaHei is chosen on the same reasoning); check any Chinese-only difference against the CI log.
+Not every Linux difference is font width (hover behaviour of headless Chrome, rendering of emoji), so `--wide-text` reproduces the
+width failures, not all of them.
+
+## Timing
+
+Every entry of `report.json` has `ms`, the wall time since the previous entry was recorded (the stack start is not in it; the
+first entry includes its fixture setup), and `summary.seconds` is the wall time of the whole walk. The console lines are unchanged.
 
 ## What it needs
 
@@ -130,6 +172,7 @@ How some checks measure (so a finding means what a thumb would meet):
   end of the page (practice, Home for lee and alex, AI Chat): it must not touch the bar and must lie fully between the
   top row (`--top-h`) and the bottom safe area.
 - W-QZ-1 measures from the top of the safe area (the emulated 47 px notch inset is screen the page cannot use).
+- v2.9: `rc.guard` runs a case once more after a browser socket timeout (a busy CI machine); W-SH-8 checks the Saved tip by keyboard focus when the browser reports `(hover: hover)` false (headless Chrome on Linux without a pointing device), by a real mouse move otherwise.
 - W-QZ-2 compares the slots' left edge, width and top inside the bar; the bar itself may sit higher up on a short page.
 - W-QZ-4 also passes when the page cannot scroll the panel head that far up (a short page): the whole panel is then between
   the top row and the pinned bar.
@@ -159,7 +202,7 @@ insets are then reported as skipped.
 | W-IM-2 | Bank management (sam) at 360 / 390 / 412: a made-up file with 130 numbered lines fails locally (no AI call); the failed import card has a close button in its top-right corner, 44 px on a phone, and tapping it removes the card |
 | W-GB-1 | Home (sam): the AI generation button sits in the start panel header inside the screen, no sideways scroll |
 | W-BT-1 | every AI+ badge (header, menu, Profile, User management, AI settings rows, Home) has a non-empty tip; the account button has no native `title` |
-| W-FP-1 | AI settings > AI+ users: five checkboxes in two groups per row (AI hint and AI analysis are one box), each group on one row in zh / ja; administrators' boxes disabled |
+| W-FP-1 | AI settings > AI+ users: five checkboxes in two groups per row (AI hint and AI analysis are one box), each group on one row in zh / ja, or (v2.9, a font wider than the room) a tidy two-column grid, never a ragged wrap; administrators' boxes disabled |
 | W-UC-1 | AI settings > AI usage at 360 / 390 / 412: three charts with an `aria-label`, every bar labelled, the calls / tokens switch on both bar charts (the title follows, tokens are stacked), a tip on a tapped bar and 10 px beside the line (none 90 px away), the line 3 px, labels never overlap, they fit the card |
 | W-AB-1 | one AI bank is generated (admin), practised and deleted again: the AI+题集 badge with its tip and caution line is on the question card and on the result (skipped when no AI bank can be made on the stack) |
 | W-AS-1v | practice and exam at 360 / 390 / 768: no finish button in the answer sheet (closed or open drawer), the top row has "已答 x/n" and a 完成考试 (green) / 完成练习 (orange) button, white text, left of the clock (44 px on touch, no overlap, inside the screen); at 1280 the rail keeps its button and the top row has neither |
@@ -243,7 +286,7 @@ phones (< 720 px) and an always-visible sidebar (`aside.ai-list`) on tablets / d
 | W-V23-LT | "Jump to latest" scrolls to the end and the focus goes to the message list, never to the input |
 | W-V23-CTR | An empty new chat: greeting, composer and reply-language hint are one group centred in the visible area under the chat head (composer centre in the middle third, greeting above, hint below, no line above the composer, same background as the conversation), above an emulated keyboard (`--vvh` / `--kb`); an open chat with messages has the composer at the bottom |
 | W-V23-CMP | Composer growth: empty = one compact pill row (input and send on one line, fully rounded); a long line = expanded layout (input at the full width above the controls row, radius 16-32 px, focus kept); many lines grow it up to 8 lines / 40 % of the visible height, then it scrolls inside; clearing returns to the compact row (393, 320, 1280) |
-| W-V23-NT | The administrator notice is under the composer on one line at 375 / 393 / 430 px, and not in the drawer; over 900 px (`--full`) it is the one line under the page title instead, never shown twice |
+| W-V23-NT | The administrator notice is under the composer on one line at 375 / 393 / 430 px (v2.9: the text shrinks, measured, down to 11 px before it would wrap), and not in the drawer; over 900 px (`--full`) it is the one line under the page title instead, never shown twice |
 
 W-V22-AB also checks the top bar's brand: the word Xexam without the logo icon on phones, with it on wider screens.
 

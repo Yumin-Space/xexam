@@ -222,10 +222,12 @@ export function usageNote(job: GenJob): HTMLElement[] {
   // under each other; if even that is too wide the type shrinks a little
   const fit = (): void => {
     if (!p.isConnected || p.clientWidth === 0) return;
-    p.classList.remove('gu-narrow', 'gu-tiny');
+    p.classList.remove('gu-narrow', 'gu-tiny', 'gu-stack');
     if (p.scrollWidth <= p.clientWidth) return;
     p.classList.add('gu-narrow');
     if (p.scrollWidth > p.clientWidth) p.classList.add('gu-tiny');
+    // last step, any font: each label on its own line above its figure
+    if (p.scrollWidth > p.clientWidth) p.classList.add('gu-stack');
   };
   if (typeof ResizeObserver !== 'undefined') new ResizeObserver(fit).observe(p);
   return [h('span', { class: 'has-tip tip-tap gen-usage-wrap' }, p, tipEl(id, exact))];

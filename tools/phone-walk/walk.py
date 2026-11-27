@@ -117,6 +117,8 @@ def parse_args(argv=None):
     p.add_argument('--backend', default='docker', choices=['docker', 'cargo'], help='how to run the backend (default docker)')
     p.add_argument('--frontend', help='build this frontend folder instead of frontend/ (for example the frontend of another '
                                       'checkout; its parent folder must hold docs/ for the changelog, and it needs node_modules)')
+    p.add_argument('--wide-text', action='store_true',
+                   help='emulate the wider Linux / Android font metrics (also XEXAM_WALK_WIDE_TEXT=1); an emulation only, default off')
     p.add_argument('--verbose', action='store_true', help='show the output of the builds')
     args = p.parse_args(argv)
     if args.lan and not args.keep:
@@ -434,6 +436,8 @@ def print_lan_warning():
 
 def main(argv=None):
     args = parse_args(argv)
+    if args.wide_text:
+        os.environ['XEXAM_WALK_WIDE_TEXT'] = '1'       # device.Device reads it, wherever a device is made
     chrome = None
     if not args.keep:
         chrome = find_chrome(args.chrome)

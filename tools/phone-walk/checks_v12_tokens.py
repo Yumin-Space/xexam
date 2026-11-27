@@ -23,7 +23,10 @@ TK2_JS = """(() => { const u = document.querySelector('.gen-usage'); const c = d
   const vis = (e) => getComputedStyle(e).display !== 'none';
   return {narrow: u.classList.contains('gu-narrow'), tiny: u.classList.contains('gu-tiny'), fit: u.scrollWidth <= u.clientWidth, wraps, fs: parseFloat(cs.fontSize), tab: cs.fontVariantNumeric,
     n: q('.gu-n:not(.gu-e)').filter(vis).map(box), l: q('.gu-l').map(box), v: q('.gu-v').map(box), right: u.getBoundingClientRect().right, vw: innerWidth,
-    side: document.documentElement.scrollWidth <= innerWidth + 1, label: c.textContent.trim(), tip: (u.closest('.has-tip').querySelector('.tip') || {}).textContent} })()"""
+    side: document.documentElement.scrollWidth <= innerWidth + 1,
+    over: [...document.querySelectorAll('body *')].filter(e => e.getClientRects().length && e.getBoundingClientRect().right > innerWidth + 1).slice(0, 4)
+      .map(e => (e.className && e.className.baseVal === undefined ? '.' + String(e.className).split(' ')[0] : e.tagName) + ' ' + Math.round(e.getBoundingClientRect().right)),
+    label: c.textContent.trim(), tip: (u.closest('.has-tip').querySelector('.tip') || {}).textContent} })()"""
 
 
 def tk2_case(rc, lang, theme, size, source, cache):
@@ -80,7 +83,7 @@ def tk2_case(rc, lang, theme, size, source, cache):
         if r['narrow'] and r['n'][0]['t'] >= r['l'][0]['t']:
             problems.append('narrow: the call text is not above the label rows')
         if not r['fit'] or r['wraps'] or r['right'] > r['vw'] + 0.5 or not r['side']:
-            problems.append('does not fit: fit %s, wrapped %s, right %.1f of %s, no sideways scroll %s' % (r['fit'], r['wraps'], r['right'], r['vw'], r['side']))
+            problems.append('does not fit: fit %s, wrapped %s, right %.1f of %s, no sideways scroll %s, past the screen: %s' % (r['fit'], r['wraps'], r['right'], r['vw'], r['side'], r['over']))
         if r['fs'] < 11 or r['fs'] > 12.5 or 'tabular' not in r['tab']:
             problems.append('type %s / %s' % (r['fs'], r['tab']))
         if cache and not any(x in (r['tip'] or '') for x in ('6,900', '6.900', '6 900')):

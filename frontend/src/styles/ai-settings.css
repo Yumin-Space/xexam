@@ -306,7 +306,7 @@ td.ais-usum { display: none; }
   .ais-tl-short { display: inline; }
   .ais-tl-full { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
   .ais-tabs { width: 100%; }
-  .ais-tabs button { flex: 1 1 auto; min-height: var(--tab-h, 44px); gap: 4px; padding-inline: 6px; }
+  .ais-tabs button { flex: 1 1 auto; min-width: 44px; min-height: var(--tab-h, 44px); gap: 4px; padding-inline: 6px; }
   .ais-caps { gap: 8px; }
   .ais-cap { flex: 1 1 0; }
   .ais-cap .ais-num { width: 100%; }
@@ -354,6 +354,9 @@ td.ais-usum { display: none; }
 .ais-feat-t { flex: none; font-size: 12.5px; font-weight: 600; color: var(--ink3); }
 .ais-fg { display: flex; flex-wrap: wrap; /* v2.6: four boxes in the first group may wrap on a 320 px phone */ align-items: center; gap: 0 10px; min-width: 0; }
 .ais-fg-l { flex: none; font-size: 12.5px; font-weight: 600; color: var(--ink3); }
+/* v2.9: set by pages/ai-settings/users.ts when a group does not fit one row: two even columns, the group label on its own line */
+.ais-fg.ais-fg-grid { flex: 1 1 100%; display: grid; grid-template-columns: 1fr 1fr; gap: 0 10px; }
+.ais-fg-grid > .ais-fg-l { grid-column: 1 / -1; }
 .ais-fl { display: inline-flex; align-items: center; gap: 4px; min-height: 36px; white-space: nowrap; cursor: pointer; }
 .ais-fl:has(input:disabled) { cursor: default; color: var(--ink3); }
 .ais-fbox { margin: 0; accent-color: var(--primary); }
@@ -505,13 +508,11 @@ td.ais-usum { display: none; }
 @media (max-width: 400px) {
   /* five tabs must fit 320 px without clipping the selected one's outline */
   .ais-tabs button { padding-inline: 4px; gap: 2px; }
-  /* A-OWNER-77: the ja short labels (ユーザー, セキュリティ) are wider than zh / en; the icons give way, the labels stay */
-  html:lang(ja) .ais-tabs .ais-tab-ic { display: none; }
 }
-/* A-OWNER-87: at 320 px the English labels (Function, Users, Usage, Safety, Banks) need the icons' room too. Since v1.3 the
-   first label is the longer "Connections": with the icons the English row needs about 357 px and clipped "Banks" on screens
-   up to about 384 px wide (360, 375), so there the icons give way below 390 px (v2.8) */
-@media (max-width: 389px) { html:lang(en) .ais-tabs .ais-tab-ic { display: none; } }
+/* The icons give way when the labels need their room: pages/ai-settings/index.ts (fitTabs) measures the row for the current
+   font, width and language and sets .ais-noic, then .ais-tight if that is still not enough; the labels always stay */
+.ais-tabs.ais-noic .ais-tab-ic { display: none; }
+.ais-tabs.ais-tight button { padding-inline: 2px; gap: 0; font-size: 12.5px; }
 
 .ais-genjobs .ais-skipn { color: var(--ink3); }
 

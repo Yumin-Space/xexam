@@ -2572,8 +2572,44 @@ function makeComposer(): Composer {
 
 /** The administrator notice: one muted line with the info icon that wraps to show the whole text (owner, v2.2: never cut
  *  off with an ellipsis on phones; before v2.2 a tap opened the cut text) */
+type NoticeLine = HTMLElement & { refit?: () => void };
 function noticeButton(extra: string): HTMLElement {
-  return h('p', { class: `ai-notice-btn ${extra}` }, ico('info'), h('span', null, t('ai.adminNotice')));
+  const text = h('span', null, t('ai.adminNotice'));
+  const line = h('p', { class: `ai-notice-btn ${extra}` }, ico('info'), text);
+  (line as NoticeLine).refit = fitNoticeLine(line, text);
+  return line;
+}
+
+/** v2.9: the notice is meant to be ONE line; a wider font (Android phones) would wrap it, so while it wraps the text shrinks
+ *  in half-pixel steps down to 11 px (measured, not tuned to one font); beyond that it wraps and shows the whole text. */
+function fitNoticeLine(line: HTMLElement, text: HTMLElement): () => void {
+  if (typeof ResizeObserver === 'undefined') return () => {};
+  let busy = false;
+  const fit = (): void => {
+    if (busy || !line.isConnected || line.getClientRects().length === 0) return;
+    busy = true;
+    text.style.removeProperty('font-size');
+    const base = parseFloat(getComputedStyle(text).fontSize) || 12;
+    const lines = (): number => {
+      const r = document.createRange();
+      r.selectNodeContents(text);
+      return new Set(Array.from(r.getClientRects(), (b) => Math.round(b.top))).size;
+    };
+    for (let fs = base; lines() > 1 && fs > 11; ) {
+      fs = Math.max(11, fs - 0.5);
+      text.style.fontSize = `${fs}px`;
+    }
+    busy = false;
+  };
+  let last = 0;
+  new ResizeObserver(() => {
+    const w = Math.round(line.getBoundingClientRect().width);
+    if (w === last) return;
+    last = w;
+    fit();
+  }).observe(line);
+  void document.fonts?.ready.then(fit);
+  return fit;
 }
 
 function syncCount(): void {
@@ -3048,6 +3084,7 @@ function syncComposer(): void {
   c.latestText.textContent = t('ai.latest');
   const noticeText = c.notice.lastElementChild;
   if (noticeText) noticeText.textContent = t('ai.adminNotice');
+  (c.notice as NoticeLine).refit?.();
   syncCount();
   syncLatest();
 }

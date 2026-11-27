@@ -216,6 +216,23 @@
   .rail-body { margin-top: 12px; }
 }
 
+/* ---------- 601-880 px (tablet): the same stepwise squeeze as the phone row ---------- */
+/* quiz.ts syncTopH adds .tight .. .tightest3 one after the other while the row is clipped or wraps (it measures, so a wider font
+   only takes more steps). From 601 px the count keeps its word and the finish pill its full label, so the steps only take
+   room that is not text: smaller gaps, the mode tag, the pill icon, then the answer-sheet icon, Save and exit as its icon, and last the Aa button; the count always stays */
+@media (min-width: 601px) and (max-width: 880px) and (min-height: 501px), (min-width: 601px) and (max-width: 880px) and (orientation: portrait) {
+  .qbar.tight .r { gap: 4px 8px; }
+  .qbar.tight .ql { gap: 6px; }
+  .qbar.tighter .r { gap: 4px; }
+  .qbar.tighter .qkind { display: none; }
+  .qbar.tightest .qsubmit .mi { display: none; }
+  .qbar.tightest1 #qz-pos .qpos-ic { display: none; }
+  .qbar.tightest2 .btn.quiet.qexit { width: 44px; min-width: 44px; padding: 0; }
+  .qbar.tightest2 .qexit .lbl { display: none; }
+  .qbar.tightest2 .qexit .mi { display: inline; width: 22px; height: 22px; }
+  .qbar.tightest3 .hand-btn { display: none; }
+}
+
 /* ---------- PHONE ---------- */
 @media (max-width: 600px), (orientation: landscape) and (max-height: 500px) { /* PHONE */
   /* The top row: 44 px (+ the safe area), pinned; the meter is its 3 px bottom edge */
@@ -275,6 +292,10 @@
   .qbar.tighter .qtime .mi { display: none; }
   .qbar.tightest .qkind { display: none; }
   .qbar.tightest .qsubmit .mi { display: none; }
+  /* before the count goes: the answer-sheet button drops its icon (keeps label, numbers and 44 px tap area) */
+  .qbar.tightest1 #qz-pos .qpos-ic { display: none; }
+  /* then the Aa button (the switch stays in Settings), so that the count outlasts it */
+  .qbar.tightest1b .hand-btn { display: none; }
   /* v2.7 (owner): the two-line count ("已核对" over "2 / 50") outlasts the mode tag; it leaves the row only on the narrowest phones
      (the meter under it shows it; the screen-reader text stays), which pays for the theme toggle's full 44 px tap area */
   .qbar.tightest2 .qcount { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
@@ -341,7 +362,8 @@
   .qbar .qpos-btn .qpos-lab { font-size: 11px; font-weight: 400; color: var(--ink3); white-space: nowrap; }
   .qbar .qpos-btn .qpos-n { font-size: 14px; white-space: nowrap; }
   .qbar .qpos-btn .qpos-n .dim { margin-left: .2em; }
-  .qbar .qpos-btn::after { content: ""; position: absolute; inset: -5px -4px; }
+  /* the inset is measured from the padding box (inside the 1 px border), so -6 px gives 44 px for the 34 px minimum box in any font */
+  .qbar .qpos-btn::after { content: ""; position: absolute; inset: -6px -4px; }
   .qbar .qpos-btn:active, .qbar .qpos-btn[aria-expanded="true"] { background: var(--hover-strong); }
 }
 @media (max-width: 600px) and (prefers-reduced-motion: reduce), (orientation: landscape) and (max-height: 500px) and (prefers-reduced-motion: reduce) {
