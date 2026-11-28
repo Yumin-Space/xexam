@@ -38,11 +38,22 @@
 | POST | `/api/reset` | ログイン | 自分の学習記録を消去する | はい |
 | POST | `/api/settings` | ログイン | 自分の画面の設定を変更する *(v0.5)* | はい |
 | POST | `/api/settings/reset` | ログイン | 自分の画面の設定を既定に戻す *(v0.5)* | はい |
+| GET | `/api/devices` | ログイン | 呼び出したユーザーのログイン中の端末 *(v3.1)* | いいえ |
+| POST | `/api/devices/hello` | ログイン | アプリの起動時の報告（タイムゾーン、インストール済みか、通知の許可）。古いセッションをその端末に結び付けます *(v3.1)* | はい（端末の行） |
+| POST | `/api/devices/signout` | ログイン | 自分のほかの端末を 1 台ログアウトさせる *(v3.1)* | はい |
+| POST | `/api/devices/signout-others` | ログイン | 自分のほかのすべての端末をログアウトさせる *(v3.1)* | はい |
+| GET | `/api/push/config` | ログイン | サーバーのプッシュ用の公開鍵と、配達役がつながっているか *(v3.1)* | いいえ |
+| POST | `/api/push/subscribe` | ログイン | この端末のプッシュの購読を保存する *(v3.1)* | はい |
+| POST | `/api/push/test` | ログイン | この端末にテスト通知をキューに入れる *(v3.1)* | はい（アウトボックスの 1 行） |
+| POST | `/api/study/saved` | ログイン | 未完了の練習や試験を報告する *(v3.1)* | はい |
+| POST | `/api/study/saved/discard` | ログイン | その報告を破棄する *(v3.1)* | はい |
 | GET | `/api/imports` | 問題集の管理 | 直近 12 回のインポート記録（問題集の管理権限を持つユーザーには、自分の問題集のもの） | いいえ |
 | POST | `/api/upload` | 問題集の管理 | .xlsx をアップロードし、**プレビュー**と一回限りの確認コードを得る。任意のヘッダー `X-Bank-Target` *(v0.5)* | **いいえ**（メモリ上に一時保存されるだけ） |
 | POST | `/api/import/confirm` | 問題集の管理 | インポートを確定する | **はい**（1 つのトランザクション） |
 | POST | `/api/import/cancel` | 問題集の管理 | 自分の確認待ちのインポートを取り消す | いいえ |
 | POST | `/api/banks/delete` | 問題集の管理 | 問題集を削除する（その学習データも一緒に削除できる） *(v0.5)* | はい |
+| POST | `/api/banks/categories` | 管理者 | 問題集の分類と、分類内の問題集を作成・名前変更・削除・並べ替えする *(v3.1)* | はい |
+| POST | `/api/banks/category` | 管理者 | 問題集を分類へ移す、または分類から出す *(v3.1)* | はい |
 | GET | `/api/banks/download?id=<bank>&format=xlsx\|docx` | 管理者、または問題集のダウンロード権限 | 問題集を Excel（インポート形式）または Word のファイルとして返す *(v1.6)* | いいえ |
 | GET | `/api/users` | 管理者 | すべてのアカウントと、その権限とログインのロック *(v0.6)* | いいえ |
 | GET | `/api/users/records?user=<int>` | 管理者 | 他のユーザーの学習記録（読み取り専用） *(v2.7)* | いいえ（操作履歴に 1 行） |
@@ -52,6 +63,8 @@
 | POST | `/api/users/password` | 管理者 | ほかのユーザーに新しい初期パスワードを設定する *(v0.6)* | はい |
 | POST | `/api/users/delete` | 管理者 | ユーザーとその学習データを削除する *(v0.6)* | はい |
 | POST | `/api/users/unlock` | 管理者 | ユーザーのログインのロックを解除する *(v0.6)* | いいえ（メモリのみ） |
+| GET | `/api/users/devices?user=<int>` | 管理者 | ユーザーの端末（読み取り専用） *(v3.1)* | いいえ |
+| POST | `/api/users/devices/signout` | 管理者 | ユーザーの端末を 1 台または全部ログアウトさせる *(v3.1)* | はい |
 | GET | `/api/logs` | 管理者 | システムログの最近の行 *(v0.7)* | いいえ |
 | POST | `/api/shutdown` | 管理者 | プログラムを終了する（ローカルマシンで実行しているときのみ使用可能。Docker では常に 403） | いいえ |
 
@@ -66,6 +79,7 @@
 - `Cache-Control: no-store` と `X-Content-Type-Options: nosniff`。`Server` ヘッダーはありません。
 - JSON は UTF-8 で、日本語や中国語は `\uXXXX` にエスケープされません。区切り文字は `", "` と `": "`（コロンの後にスペースあり）で、キーの順序は固定です（本書と [openapi.yaml](../en/openapi.yaml) に示した順序）。**これは取り決めの一部です**。ゴールデンテスト（`backend/tests/api_golden.rs`）が、JSON を旧版の応答とバイト単位で比較します。
 - エラーは `{"error": "<理由>"}` の形式です。理由はユーザーにそのまま表示できる中国語の文で（フロントエンドが表示言語に翻訳します）、第 4 節にすべてを英語の意味と一緒に挙げています。リクエスト層の低レベルな応答だけは、旧版の短い英語のままです：`bad content type`（415）、`too large`（413）、`bad json`（400）、`not found`（404）、`method not allowed`（405）。ログインのロックによる 429 の応答には、キー `retryAfter` が 1 つ加わります。
+- *(v3.1)* 新しいエラー応答はキーをもう 1 つ持ちます：`{"error": "<中国語のメッセージ>", "code": "<コード>"}`（たとえば `banks.categoryTaken`、`devices.current`、`push.staleKey`）。`code` は変わらないもので、プログラム向けです。メッセージは人向けの文です。コードはメッセージと一緒に第 4 節に挙げてあります。
 - バックエンドは、例外名、ファイルパス、SQLite のエラーメッセージをレスポンスに含めません。詳細はログにのみ出力されます。
 
 ## 3. ガード（すべてのリクエストが最初に通る）
@@ -155,12 +169,13 @@ flowchart LR
 ログインしているとき（新しいパスワードの設定が必要な間も含む）：
 
 ```json
-{"user": {"id": 1, "username": "admin", "displayName": "Ann", "needsName": false, "role": "admin", "mustChangePassword": false, "canManageBanks": true, "aiAllowed": true}, "library": "3f0c9a7d5e21b4c88a9d0e6f17b2c453", "aiAvailable": true, "aiService": {"connected": true, "stopped": false, "lastSeen": 1789900000, "version": "0.9", "enabled": true, "link": true}}
+{"user": {"id": 1, "username": "admin", "displayName": "Ann", "needsName": false, "role": "admin", "mustChangePassword": false, "canManageBanks": true, "canDownloadBanks": true, "aiAllowed": true}, "library": "3f0c9a7d5e21b4c88a9d0e6f17b2c453", "categories": "9b1e7c3a4d5f60821c7e0a4b3d9f5e12", "aiAvailable": true, "aiService": {"connected": true, "stopped": false, "lastSeen": 1789900000, "version": "0.9", "enabled": true, "link": true}}
 ```
 
 - *(v2.6)* `username` は **ログイン ID** です（v2.6 から、画面で作るすべてのアカウントではメールアドレス。`admin` のような古いログイン ID も引き続き有効です）。`displayName` はユーザー自身の **ユーザー名** で、画面が全員に表示する名前（ランキング、あいさつ、上部バー、メニュー）です。未設定の間は `null` で、ちょうどそのとき `needsName` が `true` になります。`needsName`（または `mustChangePassword`）のセッションは設定のページにとどめられます：3 節の「セッションとアクセスレベル」を参照してください。
 - `role` は `admin` または `user` です。`canManageBanks` *(v0.7)* は、すべての管理者と、**問題集を管理できる** 権限を持つ一般ユーザーで `true` です。`aiAllowed` *(v0.8)* は、すべての管理者と、**AI+** を持つ一般ユーザーで `true` です。そもそも AI がオンかどうかは `GET /api/ai/status` にあります。同じ `user` オブジェクトが、ログインとパスワードの変更の応答にも入ります。
 - `library` は、ユーザーが見られる問題集を表す中身の見えないスタンプです。16 進数 32 桁のダイジェストで、もとになった数値は何も分かりません。それらの問題集のどれかがインポート・置き換え・削除されると変わり（別のプロセスの `import` コマンドによるものも含みます）、*(v0.7)* ユーザーが見られる問題集や管理できる問題集が変わったときにも変わります（管理者が問題集を割り当てた、権限を変えた、問題集の所有者が変わった）。開いているページはこれを比べ、変わったら問題集を読み直します。一部の問題集だけを見られるユーザーでは、スタンプはその問題集だけから作られます。見られない問題集のサイズ、問題数、更新日時は明かさず、それに合わせて変わることもありません。
+- `categories` *(v3.1)*（`library` の直後。ログイン中のみ）：分類と、その中でユーザーが見られる問題集の位置を表す、意味を持たないスタンプ（16 進 32 桁）。管理者が分類を作成・名前変更・削除・並べ替えしたとき、問題集を移動したとき、そして見られる問題集の集合が変わったときに変わります。開いているページはこれを比べ、変わったら `GET /api/banks` を読み直します。`library` は分類の編集では変わりません。
 
 - `aiAvailable` *(v0.8、ラウンド 2)* は、AI+ が利用できる間 `true` です。ai-service がバックエンドに報告してから 60 秒以内で（かつ停止すると伝えていない）、**かつ** AI 設定の **AI+ 機能** のスイッチがオンのときです。ログインしているすべてのユーザーで同じ値です。ユーザー管理ページは、これを使って AI+ のスイッチを表示するかどうかを決め、バックエンドは、これを使ってそれを拒否します（下の `POST /api/users/update` と `create`）。
 - `aiService` *(v0.8、ラウンド 2)* が応答に入るのは**管理者だけ**です（一般ユーザーの応答にはこのキーがありません）。ai-service についてバックエンドが知っていることで、最後の報告から得ています（バックエンドが ai-service を呼び出すことはありません。ai-service が、25 秒ごと、変更の直後、停止するときに 1 回報告します：第 6 節の `POST /internal/ai/heartbeat`）。報告はメモリに保持されるので、バックエンドを再起動した後は、次の報告が届くまで（25 秒以内）`lastSeen` は `null` です。
@@ -213,7 +228,7 @@ flowchart LR
 管理者。すべてのアカウントを id の順に返します。
 
 ```json
-{"users": [{"id": 2, "username": "cook@example.com", "displayName": "Cook", "role": "user", "disabled": false, "createdAt": "2026-11-10 14:00", "lastLoginAt": "2026-11-10 15:02", "mustChangePassword": false, "records": 12, "banks": [1, 3], "newBanks": true, "canManageBanks": true, "ai": true, "ownedBanks": [3], "lock": null, "aiSuspended": false}], "aiAvailable": true}
+{"users": [{"id": 2, "username": "cook@example.com", "displayName": "Cook", "role": "user", "disabled": false, "createdAt": "2026-11-10 14:00", "lastLoginAt": "2026-11-10 15:02", "mustChangePassword": false, "records": 12, "banks": [1, 3], "newBanks": true, "canManageBanks": true, "canDownloadBanks": false, "ai": true, "ownedBanks": [3], "lock": null, "aiSuspended": false, "devices": 2}], "aiAvailable": true}
 ```
 
 - `displayName` *(v2.6)*（`username` = ログイン ID の後）：ユーザーが選んだユーザー名、または未設定なら `null`。ここでは読み取りだけで、設定するのはユーザー本人だけです（`POST /api/auth/name`）。
@@ -225,6 +240,7 @@ flowchart LR
 - `canDownloadBanks` *(v1.6)*：保存されている **問題集のダウンロード** の権限（既定は `false`）。意味があるのは一般ユーザーだけで（管理者は常にダウンロードできます）、見られる問題集に限ります。`GET /api/auth/state` と各ログイン応答の `user` にも入り（管理者は常に `true`）、権限が変わっても保持されます。`POST /api/users/create` と `POST /api/users/update` は省略可能な真偽値 `canDownloadBanks` を受け付け（真偽値以外は 400）、更新ではシステムログに変更したキーとして記録されます。
 - `ai` *(v0.8)*：保存されている、ユーザーの **AI+ 機能** のスイッチ。意味があるのは一般ユーザーだけで（管理者は AI がオンの間は常に使えます）、AI 設定で AI+ 機能がオンの間だけです。AI+ が利用できないときも保持されます。
 - `aiSuspended` *(v0.8、ラウンド 2)*、`lock` の後：管理者が AI 設定でそのユーザーの **AI+ 機能** を一時停止したとき `true`（第 5 節の `suspend`。画面では「一時停止」「一時停止中」と表示され、JSON では名前 `suspended` のままです）。ai-service の最後の報告から来るので、バックエンドに報告がない間（たとえば再起動の直後）は全員 `false` で、一時停止できない管理者は常に `false` です。`ai` とは別で、一時停止しても保存されているスイッチは変わりません。
+- `devices` *(v3.1)*（最後のキー、`aiSuspended` の次）：そのユーザーの端末の行数（[database.md](database.md) の 4.10 節）。端末そのものは `GET /api/users/devices` にあります。
 - `aiAvailable` *(v0.8、ラウンド 2)*、`users` の隣のトップレベルのキー：`GET /api/auth/state` と同じ値。**ユーザーの一覧を返すすべての応答**にあります（`create`、`update`、`password`、`delete`、`unlock` も）。
 - `ownedBanks` *(v0.7)*：ユーザーが新しい問題集としてインポートした（所有している）問題集の id の昇順のリスト。
 - `lock`：アカウントのログインの状態（メモリ上）。最初の段階でロックもされていなければ `null`、それ以外は次のとおりです。
@@ -302,7 +318,7 @@ v0.5 からは、どの問題にも最後にキーが 1 つ追加されます。
 ログイン。問題集とは、インポートした 1 つのワークブックのことです。ユーザーが見られる問題集を `id` の順に返します。
 
 ```json
-{"banks": [{"id": 1, "name": "Kitchen basics", "filename": "Kitchen basics.xlsx", "legacy": true, "createdAt": "2026-11-10 14:00", "updatedAt": "2026-11-10 15:00", "total": 5, "inactive": 0, "sheets": [{"name": "Cooking", "usable": 3, "inactive": 0}, {"name": "Safety", "usable": 2, "inactive": 0}], "studied": 4, "records": 3, "ownerId": 1, "owner": "admin", "manageable": true}]}
+{"banks": [{"id": 1, "name": "Kitchen basics", "filename": "Kitchen basics.xlsx", "legacy": true, "createdAt": "2026-11-10 14:00", "updatedAt": "2026-11-10 15:00", "total": 5, "inactive": 0, "sheets": [{"name": "Cooking", "usable": 3, "inactive": 0}, {"name": "Safety", "usable": 2, "inactive": 0}], "studied": 4, "records": 3, "ownerId": 1, "owner": "admin", "manageable": true, "categoryId": 1, "sort": 1}], "categories": [{"id": 1, "name": "Everyday life", "sort": 0}]}
 ```
 
 - `name` は、問題集を作成したときのファイル名から `.xlsx` を除いたものです（ほかの問題集がすでに同じ名前を使っている場合は ` (2)`、` (3)`、… が付きます）。問題集を更新すると `filename` と `updatedAt` は変わりますが、`name` は変わりません。
@@ -311,6 +327,9 @@ v0.5 からは、どの問題にも最後にキーが 1 つ追加されます。
 - `studied` = この問題集の問題（有効・無効を問わず）のうち、統計があるものの数です。`records` = この問題集を含む学習記録の数です。管理者にはすべてのユーザーのデータを数えます（学習データと一緒に削除したときに消えるもの）。それ以外のユーザーには *(v0.7)* 自分のデータだけを数えます。
 - `ownerId` / `owner` *(v0.7)*：その問題集を新しい問題集としてインポートしたユーザーの id とユーザー名です（v0.7 より前の問題集は最初の管理者のものです）。両方が得られるのは管理者だけです。ほかのユーザーには、自分の問題集のときだけ `ownerId` が入り（それ以外は `null`）、`owner` は常に `null` なので、問題集の一覧からほかのアカウントの名前は分かりません。
 - `manageable` *(v0.7)*：このユーザーがその問題集を更新・削除できるかどうか（管理者：常に、問題集の管理権限を持つユーザー：自分の問題集、それ以外：なし）。
+- `categoryId` と `sort` *(v3.1)*（`manageable` の次）：問題集の分類（`null` は未分類）と、グループ内の位置（配置されると 1～n、`0` はまだ未配置）。グループ内の問題集は `((sort = 0), sort, id)` の順に並ぶので、一度も配置されていない問題集は配置済みのものの後ろに来ます。問題集を移動しても `updatedAt` は変わりません。AI 問題集のキー `ai`（後述）は引き続き最後です。
+- `categories` *(v3.1)*（トップレベルのキー、`banks` の次）：`[{"id": 1, "name": "Everyday life", "sort": 0}]`。`(sort, id)` の順。管理者にはすべての分類が、それ以外のユーザーには自分が見られる問題集を 1 つ以上含む分類だけが返ります（分類が 1 つもなければ空で、どのページもこれまでと同じです）。[database.md](database.md) の 4.11 節。
+- この応答の `ETag`（第 4 節の `GET /api/bank`）は、分類とすべての問題集の位置でも変わるので、順序だけが変わったときも開いているページが更新されます。`library` のスタンプは変わりません（問題だけに従います）。
 
 ### `GET /api/dashboard`
 *(v2.5、v2.6)* ログイン済み、読み取り専用（何も書き込まず、ボディもありません）。ホームのダッシュボードの 2 つのブロックを、2 つのクエリで返します。
@@ -451,7 +470,7 @@ v0.5 からは、どの問題にも最後にキーが 1 つ追加されます。
 ログイン。設定はユーザーごとにデータベースに保存されます（コンテナの再起動や更新、ブラウザのキャッシュの消去、ブラウザの切り替えの後も残ります）。
 
 ```json
-{"theme": "system", "uiLang": "en", "autoAdvance": false, "questionLang": "en", "answerFx": true}
+{"theme": "system", "uiLang": "en", "autoAdvance": false, "questionLang": "en", "answerFx": true, "push": true, "tz": "auto"}
 ```
 
 | キー | 値 | 既定 |
@@ -461,10 +480,14 @@ v0.5 からは、どの問題にも最後にキーが 1 つ追加されます。
 | `autoAdvance` | `true` · `false` | `false` |
 | `questionLang` | `ja` · `zh` · `en` | `en`（*v2.6*。それより前は `ja`） |
 | `answerFx` | `true` · `false` | `true`（*v3.0*） |
+| `push` | `true` · `false` | `true`（*v3.1*）：このアカウントの通知。すべての端末に効きます |
+| `tz` | `auto` または IANA ゾーン名（`A–Z a–z 0–9 _ + - /` の 1～64 文字で、サーバーが知っているもの） | `auto`（*v3.1*）：通知を鳴らさない時間帯のタイムゾーン。`auto` ＝ 端末が報告したゾーン |
 
 *(v2.6)* `questionLang` は **問題の既定の言語** です：試験や練習はそれぞれこの言語で始まり、試験ページの言語の切り替えはそのセッションだけを変えます（ブラウザーに保存したセッションと一緒に保たれ、ここには送りません）。`questionLang` を一度も保存していないユーザーは新しい既定の `en` になり、保存済みの値はそのまま残ります。
 
-`GET` は、既定値に保存済みの値を重ねたものを返します（保存済みの値が正しくない場合は無視します）。`POST /api/settings` はこれらのキーの任意の組み合わせを受け取り、設定全体を返します。未知のキーは無視します。既知のキーの値が正しくない場合 → **400** `设置的值不对。`（「設定の値が正しくありません。」）となり、何も書き込みません。`POST /api/settings/reset`（ボディは `{}` または空）は `theme`、`uiLang`、`autoAdvance`、`answerFx` を既定に戻し、`questionLang` はそのまま残して、設定全体を返します。
+*(v3.1)* `push` はアカウントの通知のスイッチです（行がなければオン。設定 → **通知**）。`tz` は通知を鳴らさない時間帯 0:00～8:00 のタイムゾーンです（プロフィール → **タイムゾーン**）。どちらも `POST /api/settings/reset` では変わりません。応答は 7 つのキーを表の順に返します。
+
+`GET` は、既定値に保存済みの値を重ねたものを返します（保存済みの値が正しくない場合は無視します）。`POST /api/settings` はこれらのキーの任意の組み合わせを受け取り、設定全体を返します。未知のキーは無視します。既知のキーの値が正しくない場合 → **400** `设置的值不对。`（「設定の値が正しくありません。」）となり、何も書き込みません。`POST /api/settings/reset`（ボディは `{}` または空）は `theme`、`uiLang`、`autoAdvance`、`answerFx` を既定に戻し、`questionLang`・`push`・`tz` はそのまま残して、設定全体を返します。
 
 ### `GET /api/logs` *(v0.7)*
 管理者。**システムログ** のページが表示するシステムログです。バックエンドが起動してから記録した最新の 2000 行で、メモリ上にだけ保持されます（再起動すると空に戻ります。データベースには何も書き込みません）。`docker compose logs backend` で見える行（同じ `XEXAM_LOG` のフィルターを通ったもの）に、起動と終了の状態を示す行と、*(v0.8)* ai-serviceが送る行（`target` が `xexam_ai_service` で、メッセージが `AI: ` で始まる。これらは `docker compose logs backend` には出ません）を加えたものです。ログの行ではユーザーをユーザー名で示し（`user "admin" updated user "alex"`）、id や、アカウントのない入力された名前は決して出しません。パスワード、トークン、Cookie の値、問題文が含まれることもありません。
@@ -489,6 +512,64 @@ v0.5 からは、どの問題にも最後にキーが 1 つ追加されます。
 
 ### `POST /api/shutdown`
 管理者。`--allow-shutdown` を付けて起動した場合（Windows では `start.bat` をダブルクリック）にのみ使用できます。それ以外は **403** `在 Docker 里请用 docker compose stop 停止容器。`（「Docker で動かしているときは、docker compose stop でコンテナを停止してください。」）。Docker では常に 403 になるので、`docker compose stop` を使います。
+
+### 端末 *(v3.1)*
+
+端末とは、1 人のユーザーの 1 つのブラウザーのことで、ランダムなクッキー `xexam_did` で見分けます（[database.md](database.md) の 4.10 節）。端末を一覧するすべての応答は、このオブジェクト（`DeviceJson`、キーはこの順）を使います。
+
+```json
+{"id": 12, "current": true, "state": "active", "ua": "Mozilla/5.0 (iPhone; …)", "app": true, "createdAt": "2026-11-28 09:00:00", "signinAt": "2026-11-28 09:00:00", "signinIp": "203.0.113.7", "signinLocation": {"country": "XX", "region": null, "city": null}, "activeAt": "2026-11-28 10:15:42", "activeIp": "203.0.113.7", "activeLocation": null, "push": true}
+```
+
+- `state`：`active`（期限が切れていないセッションがある）、`signedOut`（そのようなセッションがなく、明示的にログアウトされた）、`expired`（それ以外：ログインの期限が切れた。端末は一覧に残り、30 日使われなくなるまで通知を受け取り続けます）。`current` は、リクエストしたセッションの端末にだけ `true` です（セッションの行から読み、クッキーからは決して読みません）。
+- `signinIp`・`activeIp` と 2 つの場所は、ログイン情報の目が閉じている間は `null` です（ユーザー自身の一覧でも管理者でも同じ）。`ua` は整形した User-Agent で、画面側が名前に変えます。`push`：端末に購読があり、**かつ** アカウントのスイッチがオンで、**かつ** その購読が有効（ユーザーが有効、端末がログアウトしておらず 30 日以内に使われている、サーバーの鍵が現在のもの）。
+- 並び順：呼び出した端末が先頭、あとは最後の操作が新しい順です。
+
+**`GET /api/devices`**（ログイン）→ `{"devices": [DeviceJson], "signinInfo": true|false}`：呼び出したユーザー自身の、すべての状態の端末。
+
+**`POST /api/devices/hello`**（ログイン）`{"tz": 文字列|null, "app": 真偽値, "permission": "granted"|"denied"|"default"|"unsupported"}` → `{"device": DeviceJson}`。アプリはログイン後の起動のたびと、1 時間以上たってから前面に戻ったときに送ります。`tz` は正しい IANA ゾーン名のときに保存され（それ以外は `null`）、`app` はインストールしたアプリとして動いているかを表します。`permission` が `granted` 以外なら、この端末のプッシュの購読を削除します（アクティビティ `settings.pushOff`）。v3.1 より前（または古いバイナリ）で作られたセッションは、ここでその端末に結び付けられ、ブラウザーにクッキーがなければ応答に新しい `xexam_did` クッキーが付きます。このブラウザーに最後にログインしたのが別のユーザーなら、そのユーザーのこのブラウザー上のプッシュ購読とキューにあるプッシュはここで削除されます（ログイン時も同じです）。ブラウザーは最後にログインしたアカウントのものになります。キーがない、または型が違う場合 → **400** `请求的格式不对。`。
+
+**`POST /api/devices/signout`**（ログイン）`{"id": <整数>}` → `{"devices": [...], "signinInfo": 真偽値}`。呼び出したユーザーのほかの端末を 1 台ログアウトさせます。その端末のセッション、プッシュの購読、キューにある通知が削除され、行は `signedOut` として残ります。呼び出したユーザーの端末でなければ **404** `这台设备不存在（可能已退出登录），请刷新页面后再试。`（`devices.notFound`）、今使っている端末なら **409** `不能在这里退出当前这台设备，请用菜单里的「退出登录」。`（`devices.current`）。アクティビティ `auth.signoutDevice`。
+
+**`POST /api/devices/signout-others`**（ログイン。ボディは `{}`）→ `{"devices": [...], "signinInfo": 真偽値, "count": <整数>}`：ほかのすべての端末をログアウトさせます（`count` はセッションまたは購読があった端末の数）。アクティビティ `auth.signoutOthers`。
+
+**`GET /api/users/devices?user=<整数>`**（管理者。`user` は 1～18 桁の数字）→ `{"user": {"id", "username", "displayName"}, "devices": [...], "signinInfo": 真偽値}`。存在しないユーザーは **404** `这个用户不存在…`。何も記録しません。管理者は端末のプッシュの状態を見られますが、ユーザーの通知をオン・オフするルートはありません。
+
+**`POST /api/users/devices/signout`**（管理者）`{"user": <整数>, "id": <整数>|null}` → 上の `GET` と同じ応答。`id` があればそのユーザーのその端末をログアウトさせます（そのユーザーの端末でなければ **404** `devices.notFound`。呼び出した本人が今使っている端末なら **409** `devices.current`）。`id` が `null` ならそのユーザーのすべての端末をログアウトさせます（本人の場合は今使っている端末以外）。アクティビティ `users.signoutDevice`（`{"all": 真偽値, "count": <整数>}`、対象はそのユーザーのログイン）。
+
+### プッシュ *(v3.1)*
+
+仕組みは [database.md](database.md) の 4.12 節と [architecture.md](architecture.md) の 5 節にあります。ブラウザーの鍵がバックエンドの外に出ることはなく、リクエストは下のキー以外を持てません。
+
+**`GET /api/push/config`**（ログイン。アクティビティには数えません）→ `{"publicKey": "<87 文字、65 バイトの非圧縮 P-256 点の base64url>"|null, "keyId": "<16 桁の 16 進>"|null, "courier": true|false}`。`publicKey` はプッシュがオフの間（鍵のファイルを読めなかったとき）`null` です。そのとき設定は「サーバーは今、通知を送れません」と表示し、ガイドの通知のステップも同じ一文に置き換わります。`courier` は、直近 60 秒以内に ai-service がプッシュのジョブを取りに来たとき `true` です。
+
+**`POST /api/push/subscribe`**（ログイン）`{"endpoint": "https://…", "keys": {"p256dh": "…", "auth": "…"}, "expirationTime": <数値>|null, "keyId": "<16 桁の 16 進>"}` → `{"device": DeviceJson}`。次の順に確認します。形（**400** `请求的格式不对。`）。`keyId` がサーバーの現在の鍵 id と同じ（**409** `推送密钥已更换，请重新开启通知。`、`push.staleKey`）。endpoint が許可されたプッシュサービス（**400** `这个浏览器的推送地址不受支持。`、`push.badEndpoint`：`https`、ポートは 443 のみ、ユーザー情報なし、IP アドレスなし、ホストは `fcm.googleapis.com`、`updates.push.services.mozilla.com`、`web.push.apple.com`、`*.push.apple.com`、`*.notify.windows.com` のいずれか）。鍵がデコードできる（**400** `推送订阅的密钥不对。`、`push.badKeys`：`p256dh` は正しい 65 バイトの点、`auth` は 16 バイト。base64url はパディングの有無どちらでも可）。アカウントのスイッチがオン（**409** `你的账号已关闭通知，请先在设置里打开。`、`push.off`）。端末の購読は 1 つで、新しいものは古いものを置き換え、別の端末（別のユーザー）にあった endpoint はこの端末に移り、1 人のユーザーが持てるのは最大 10 です。同じ endpoint を 1 日以内に再確認しても何も書き込みません。新しい購読は `settings.pushOn` を記録します。セッションに端末が必要です（先に `hello` を呼びます）。なければ **400**。
+
+**`POST /api/push/test`**（ログイン。ボディは `{}`）→ `{"ok": true, "courier": true|false}`：この端末にテスト通知を今すぐキューに入れます（静かな時間帯は適用されません）。**409** `你的账号已关闭通知，请先在设置里打开。`（`push.off`）。**409** `这台设备还没有开启通知。`（`push.noDevice`）。**429** `测试通知发得太频繁了，请稍后再试。`（`push.testBusy`：端末ごとに 10 秒に 1 回）。アクティビティ `settings.pushTest`。
+
+### 保存セッションのマーカー *(v3.1)*
+
+**`POST /api/study/saved`**（ログイン）`{"key": "<小文字 16 進 32 桁>", "kind": "exam"|"practice", "answered": <整数>, "total": <整数>, "startedAt": <整数>, "timeLeft": <整数>|null}` → `{"ok": true}`。アプリは未完了のセッションを報告します（セッションごとに 1 分に 1 回まで、またページが隠れたとき）。`total` は 1～100000、`answered` は 0～`total`、`startedAt` はブラウザーの開始時刻（Unix 秒）、`timeLeft` は時間制限付きの試験なら 0～36000 秒（この保存時の残り秒数。時計は試験を開いている間だけ進みます）、それ以外は `null` です。形が違う場合 → **400** `请求的格式不对。`。サーバーはユーザーとキーごとに 1 つ、ブラウザーごとに 1 つのマーカーを持ち、新しいセッションはそのブラウザーの古いものを置き換え、リマインダーは保存のたびにやり直しになります。無効なアカウントには何も書き込みません。ログには残りません。マーカーは、そのセッションの `POST /api/attempt` が成功すると消えます。
+
+**`POST /api/study/saved/discard`**（ログイン）`{"key": "<小文字 16 進 32 桁>"}` → `{"ok": true}`：呼び出したユーザーのマーカーを削除します（マーカーがなくてもエラーではありません）。ログには残りません。
+
+### 問題集の分類 *(v3.1)*
+
+分類は問題集を 1 階層でまとめるもので、変更できるのは管理者だけです。`GET /api/banks` が分類を返します（下記）。2 つの POST ルートは、呼び出したユーザーの `GET /api/banks` と同じ本文を、新しいもの（`ETag` なし）で返します。
+
+**`POST /api/banks/categories`**（管理者）— 1 回の呼び出しにつき 1 つの操作：
+
+| ボディ | 効果 | エラー |
+|---|---|---|
+| `{"op": "create", "name": "…"}` | 末尾に新しい分類。名前は整形され（連続する空白は 1 つに、前後は削除）、1～60 文字 | **400** `分类名称需要 1–60 个字，不能包含控制字符。`（`banks.categoryName`）。**409** `已经有同名的分类了。`（`banks.categoryTaken`。大文字小文字を区別せず比較） |
+| `{"op": "rename", "id": <整数>, "name": "…"}` | 名前を変える | 同じものと、**404** `这个分类不存在（可能已被删除），请刷新页面后再试。`（`banks.categoryNotFound`） |
+| `{"op": "delete", "id": <整数>}` | 分類を削除する。その問題集は未分類になり、そのグループの末尾に追加されてグループが振り直され、ほかの分類も振り直される | **404** `banks.categoryNotFound` |
+| `{"op": "order", "ids": [<整数>]}` | 順序を設定する。`ids` はすべての分類の id とちょうど一致すること | **409** `分类或题库的顺序已经变了，请刷新页面后再试。`（`banks.categoryOrder`） |
+| `{"op": "bankOrder", "categoryId": <整数>\|null, "ids": [<整数>]}` | その分類（`null` は未分類）の中の問題集の順序を設定する。`ids` は今そこにある問題集とちょうど一致すること | **404** `banks.categoryNotFound`。**409** `banks.categoryOrder` |
+
+アクティビティ `bank.categories`（`{"op", "name"}`）。
+
+**`POST /api/banks/category`**（管理者）`{"ids": [<整数>, …1000 個まで], "categoryId": <整数>|null}`：問題集（重複しない id）を分類の末尾に、指定した順で追加します（`null` は未分類）。元にいたグループは振り直されます。存在しない問題集は **404** `这个题库不存在…`（`MSG_BANK_NOT_FOUND`）、存在しない分類は **404** `banks.categoryNotFound`。問題集を移動しても `updatedAt` は変わりません。アクティビティ `bank.categoryMove`（`{"count", "categoryId"}`）。
 
 ### エラーメッセージ
 ほかのバックエンドのメッセージと同じく、中国語で、文面は固定です（フロントエンドが翻訳します）。どのルートでも返りうるものは第 3 節にあります。アップロードとパーサーのメッセージ（ファイルを拒否した理由、行が読み取れない理由）は、その翻訳と一緒に `frontend/src/i18n/server-messages.ts` にあります。
@@ -526,7 +607,19 @@ v0.5 からは、どの問題にも最後にキーが 1 つ追加されます。
 | 409 | `不能对自己的账户做这个操作。` | 自分のアカウントにはこの操作はできません。 | ユーザー：更新、パスワード、削除 |
 | 409 | `至少要保留一个启用的管理员。` | 有効な管理者を少なくとも 1 人残す必要があります。 | ユーザー：更新、削除 |
 | 409 | `请先在 AI 设置里开启 AI+ 功能。`（`"code": "ai.serviceOff"` 付き） | 先に AI 設定で AI+ 機能をオンにしてください。 | ユーザー：`ai` 付きの更新、`ai: true` での作成。AI+ が利用できない間 *(v0.8)* |
+| 400 | `分类名称需要 1–60 个字，不能包含控制字符。`（`"code": "banks.categoryName"` 付き） | 分類名は 1～60 文字で、制御文字は使えません。 | 分類：作成、名前の変更 *(v3.1)* |
+| 400 | `这个浏览器的推送地址不受支持。`（`push.badEndpoint`） | このブラウザーのプッシュ通知の宛先には対応していません。 | `POST /api/push/subscribe` *(v3.1)* |
+| 400 | `推送订阅的密钥不对。`（`push.badKeys`） | プッシュ通知の購読キーが正しくありません。 | `POST /api/push/subscribe` *(v3.1)* |
+| 404 | `这个分类不存在（可能已被删除），请刷新页面后再试。`（`banks.categoryNotFound`） | この分類は存在しません（削除された可能性があります）。ページを再読み込みしてからもう一度お試しください。 | 分類 *(v3.1)* |
+| 404 | `这台设备不存在（可能已退出登录），请刷新页面后再试。`（`devices.notFound`） | この端末は存在しません（ログアウトされた可能性があります）。ページを再読み込みしてからもう一度お試しください。 | 端末：ログアウト *(v3.1)* |
+| 409 | `已经有同名的分类了。`（`banks.categoryTaken`） | 同じ名前の分類がすでにあります。 | 分類：作成、名前の変更 *(v3.1)* |
+| 409 | `分类或题库的顺序已经变了，请刷新页面后再试。`（`banks.categoryOrder`） | 分類または問題集の順序が変わりました。ページを再読み込みしてからもう一度お試しください。 | 分類：order、bankOrder *(v3.1)* |
+| 409 | `不能在这里退出当前这台设备，请用菜单里的「退出登录」。`（`devices.current`） | 使用中の端末はここではログアウトできません。メニューの「ログアウト」を使ってください。 | 端末：ログアウト *(v3.1)* |
+| 409 | `推送密钥已更换，请重新开启通知。`（`push.staleKey`） | サーバーのプッシュ通知キーが変わりました。通知をもう一度有効にしてください。 | `POST /api/push/subscribe` *(v3.1)* |
+| 409 | `你的账号已关闭通知，请先在设置里打开。`（`push.off`） | このアカウントの通知はオフです。先に設定でオンにしてください。 | `POST /api/push/subscribe`、`POST /api/push/test` *(v3.1)* |
+| 409 | `这台设备还没有开启通知。`（`push.noDevice`） | この端末ではまだ通知が有効になっていません。 | `POST /api/push/test` *(v3.1)* |
 | 429 | `登录失败次数太多，请稍后再试。` | 失敗が多すぎます。しばらくしてからもう一度お試しください。 | ログイン、パスワードの変更（`retryAfter` 付き） |
+| 429 | `测试通知发得太频繁了，请稍后再试。`（`push.testBusy`） | テスト通知の送信が多すぎます。しばらくしてからもう一度お試しください。 | `POST /api/push/test` *(v3.1)* |
 | 500 | `写入数据库失败，题库没有任何改动。` | データベースへの書き込みに失敗しました。問題集は変更されていません。 | 確定 |
 | 500 | `服务器内部出错，请稍后再试。` | サーバー内部でエラーが発生しました。しばらくしてからもう一度お試しください。 | すべてのルート |
 
@@ -557,6 +650,18 @@ v0.5 からは、どの問題にも最後にキーが 1 つ追加されます。
 - **`xlsx`** は 6 列をそのままにして、選ばれていない言語のセルを空にします（見出し行は常にすべて入ります。`en` を外すとそのファイルは再インポートできません）。**`docx`** には選ばれた言語だけが、必ず英語、中国語、日本語の順で入ります。
 - **ファイル名**：3 言語すべてなら `<stem>.<ext>`、一部なら `<stem>_<codes>.<ext>` で、コードは en、zh、ja の順に `-` でつなぎます（例：`Garden_en-zh.docx`）。ASCII の代替名は `xexam-bank-<id>_<codes>.<ext>` です。
 - **アクティビティ**：`bank.download` の詳細は `{"format", "langs": ["en", "zh", "ja"]（選ばれた部分をこの順で）, "sheets", "questions"}` です。
+
+### 公開ルートへの v3.1 の追加 *(v3.1)*
+
+- **`POST /api/auth/login`**：`xexam_session`（引き続き最初の `Set-Cookie`）と `xexam_device` のほかに、3 つ目のクッキー `xexam_did=<43 文字>; HttpOnly; SameSite=Strict; Path=/; Max-Age=34560000`（400 日）を設定します（`Secure` の規則は同じ）。これはこのブラウザーのランダムな識別子です。ログインはそれでユーザーの端末の行を探すか作り、行にログインを記録し、新しいセッションをそれに結び付けます。データベースに保存するのはその SHA-256 だけで、認証情報ではありません。ブラウザーはログアウトしても保持するので、同じ端末の行が再利用されます。`xexam_did` クッキーを作るのは、`Secure` の判断が確かな場面だけです。ログイン時と、`Origin` を持つ `POST`（アプリが起動のたびに送る `POST /api/devices/hello`）です。
+- **`POST /api/auth/logout`**：セッションを削除し、端末もログアウトさせます（その端末のほかのセッション、プッシュの購読、キューにある通知が消え、端末の行は `signedOut` で残ります）。`xexam_did` クッキーは残ります。
+- **`POST /api/auth/password`**：アカウントのほかの端末がログアウトされます（セッション、プッシュの購読、キューにある通知）。今の端末は購読を保ち、新しいセッションを受け取ります。管理者によるパスワードのリセット（`POST /api/users/password`）、ユーザーの無効化やロールの変更（`POST /api/users/update`）、コマンドラインの `reset-password`、ユーザーの削除（`POST /api/users/delete`）は、そのユーザーのすべての端末をログアウトさせるか、削除します。
+- **古いバージョンのセッション**：v3.1 より前に作られたセッションには端末がありません。最初の `POST /api/devices/hello`（アプリは起動のたびに送ります）、または `Origin` を持つ任意の `POST` が結び付けます。`GET` はクッキーを作りません。
+- **`POST /api/attempt`**：保存に成功すると、そのセッションの保存セッションのマーカーを消します（消せなくても保存は失敗しません）。
+- **`POST /api/users/update`**：更新で一般ユーザーに既存の問題集が付与されると、そのユーザーの端末に通知が送られます（問題集ごとに 1 件。一度に複数なら「あと N 件」の 1 件）。管理者には送りません。[database.md](database.md) の 4.12 節を参照してください。
+- **`GET /api/banks`、`GET /api/auth/state`、`GET /api/users`、`GET` / `POST /api/settings`**：上のキー。
+- **アクティビティログ**：新しいアクション `auth.signoutDevice`、`auth.signoutOthers`、`users.signoutDevice`、`settings.pushOn`、`settings.pushOff`、`settings.pushTest`、`bank.categories`、`bank.categoryMove` と、システムの行 `system.pushVersion`（`{"from", "to", "devices"}`）、`system.pushAuth`（`{"host"}`）。拒否されたログインの行は、最後の試行から 90 日後に削除されます（成功したログインはこれまでどおり残ります）。
+- **Nginx**：`/sw.js` と `/manifest.webmanifest` は専用のヘッダーを持つ静的ファイルです（[deployment.md](deployment.md) の 4 節）。`/api/` は引き続き `GET`、`HEAD`、`POST` だけを許可します。
 
 ## 5. AI のルート（`/api/ai/*`、v0.8）
 
@@ -1123,6 +1228,8 @@ Cloudflare の所在地ヘッダーに代わる任意の手段です（[deployme
 | POST | `/internal/ai/record` | ai-service *(v0.9)* | `X-Xexam-Internal-Token` |
 | POST | `/internal/ai/record-info` | ai-service *(v0.9)* | `X-Xexam-Internal-Token` |
 | POST | `/internal/ai/assess` | ai-service *(v2.5)* | `X-Xexam-Internal-Token` |
+| POST | `/internal/ai/push/next` | ai-service *(v3.1)* | `X-Xexam-Internal-Token` |
+| POST | `/internal/ai/push/result` | ai-service *(v3.1)* | `X-Xexam-Internal-Token` |
 
 `/internal/` の下のほかのパス、間違ったメソッド、トークンがないか間違っているトークンのルート（またはトークンが読み込まれていない間）は、知らないパスとまったく同じく 404 `text/plain` の `not found` を返すので、ルートの存在は明かされません。拒否したトークンは、多くても約 1 分に 1 回ログに出します。トークンのルートには `Content-Type: application/json` と JSON のオブジェクトが必要で、その応答はバックエンドのいつもの JSON です。
 
@@ -1157,6 +1264,16 @@ Cloudflare の所在地ヘッダーに代わる任意の手段です（[deployme
 - `POST /internal/ai/geo/source` `{"source": "api" | "cloudflare"}` で取得元を設定、`{}` で読み取り → `{"source": …}`。5.9 節の `enable` と `delete` が使います。
 
 すべてのトークンルートと同様に、トークンがないと 404 を返します。24 時間の記憶、キュー、1 分あたりの受け渡し上限はバックエンド側にあり、ai-service は予約済みアドレスのフィルターと 1 分 30 回の自前の上限をもう一度適用し、記憶は持ちません。
+
+### v3.1 の内部ルート *(v3.1)*
+
+Web プッシュは ai-service が届けます。位置情報の照会と同じように ai-service が仕事を**取りに来る**ので、バックエンドが ai-service を呼ぶことはなく、インターネットへの接続も持ちません。バックエンドがメッセージをキューに入れ、本文を作り、暗号化（RFC 8291、`aes128gcm`）し、認可ヘッダーに署名（RFC 8292、VAPID）します。ai-service は出来上がったバイト列を転送するだけで、購読の鍵も VAPID の秘密鍵も平文も見ません。どちらのルートも、ほかのトークン付きルートの規則に従います（トークン、`Content-Type: application/json`、最大 64 KiB の JSON オブジェクト、トークンが違えば 404 `not found`、未知のキーは 400）。
+
+- **`POST /internal/ai/push/next`** `{"waitMs": 0..20000}` → `{"jobs": [Job]}`（0～20 件）。ロングポーリングです。期限の来たジョブがあればすぐに、なければジョブの期限が来たとき、待ち時間が終わったとき、サーバーが止まるときに応答します。呼び出しのたびに配達役がいることを記録します（`GET /api/push/config` の `courier`。60 秒間）。`Job` は `{"id": 4711, "tries": 1, "endpoint": "https://fcm.googleapis.com/fcm/send/…", "ttl": 21600, "urgency": "normal", "topic": "remind", "authorization": "vapid t=<jwt>, k=<公開鍵>", "body": "<パディングなしの base64url>"}` で、`ttl` は秒、`topic` はなければ `null`、`body` は暗号化されたレコード（最大 4096 バイト）です。渡したジョブは 120 秒間リースされ、応答がなければ再び渡されます。
+- **`POST /internal/ai/push/result`** `{"results": [{"id": 4711, "tries": 1, "outcome": "sent", "status": 201, "retryAfter": null}]}`（1～20 件）→ `{"ok": true}`。`outcome` は `sent`、`gone`（プッシュサービスが購読はもう存在しないと答えた：404 または 410。購読は削除されます）、`auth`（401 または 403：鍵 id が現在のものでなければ購読を削除し、そうでなければ失敗として数えます）、`retry`（5xx、タイムアウト、429：待ち時間をおくか、指定された `retryAfter` のあとにもう一度。最大 5 回）、`deferred`（同じプッシュサービスが流量を制限していたため送らなかった：試行に数えずあとでもう一度）、`rejected`（メッセージ自体が拒否された：失敗）のいずれかです。`status` はプッシュサービスの HTTP ステータス（0 はネットワークエラー）または `null`、`retryAfter` は 1～3600 秒または `null` です。結果が受け付けられるのは、まだリース中で `tries` が同じジョブだけです。遅れた結果や重複した結果は無視されます。
+- **変わらないもの**：`POST /internal/ai/heartbeat` は 4 つのキーのままです。v3.1 の ai-service は 5 つ目を加えません。v3.0 のバックエンドは、ほかの本文を拒否して AI+ が動かなくなるからです。そのためバックエンドは、配達役がいることをハートビートではなくポーリングから知ります。
+- **古いものと新しいものの組み合わせ**：v3.0 の ai-service は取りに来ないので、何も配信されず、キューにあるメッセージは失効します。v3.0 のバックエンドと話す v3.1 の ai-service は、`push/next` で 404 を受け取り、60 秒休んでからもう一度試します。
+- **許可リスト**：ai-service が送るのは `POST /api/push/subscribe` に挙げたプッシュサービスだけです（同じ規則を改めて確認します）。プライベートネットワークに解決されるアドレスは拒否し、endpoint もヘッダーも本文もログに出しません（[security.md](security.md) の 11 節）。
 
 ## 7. 旧版との違い
 
@@ -1345,6 +1462,14 @@ AI のルートだけが変わり、どの変更も追加か既定値です。�
 - **変更**：評価（`POST /api/ai/assess/ask`）は回答の全体を求め、整形し、検査し、最大 3 回まで聞き直し、`delta` イベント 1 つで届きます。`GET /api/ai/assess/latest` は、今日の検査に通らない保存済みの文を隠します。思考の強さを送る呼び出しには、Token の余裕が加わります（5.5 節）。
 - **変更なし**：ほかのすべてのルート、フィールド、メッセージ、データベース（メインのスキーマ 12、AI のスキーマ 11）、バックエンドと ai-service の間のやり取り。
 - **バージョン**：`GET /api/info` は `"version": "2.7"` を返し、AI サービスの `/healthz` も同じです。
+
+### v3.1 での変更（v3.0 との比較）
+
+- **新規**：公開ルート 13 本：`GET /api/devices`、`POST /api/devices/hello`、`POST /api/devices/signout`、`POST /api/devices/signout-others`、`GET /api/users/devices`、`POST /api/users/devices/signout`、`GET /api/push/config`、`POST /api/push/subscribe`、`POST /api/push/test`、`POST /api/study/saved`、`POST /api/study/saved/discard`、`POST /api/banks/categories`、`POST /api/banks/category`。内部ルートが 2 本：`POST /internal/ai/push/next` と `/internal/ai/push/result`。
+- **変更**：`GET /api/banks`（`categories`、問題集ごとの `categoryId` と `sort`）、`GET /api/auth/state`（`categories`）、`GET /api/users`（ユーザーごとの `devices`）、`GET` / `POST /api/settings`（キー `push` と `tz`。`POST /api/settings/reset` は両方を残します）、ログイン・ログアウト・パスワードの変更（端末のクッキー `xexam_did` と端末のログアウト）、`POST /api/attempt`（保存セッションのマーカーを消す）、`POST /api/users/update`（問題集の付与の通知）。
+- **エラー**：`code` を持つ新しい応答（第 2 節とエラーの表）。
+- **バージョン**：`GET /api/info` は `"version": "3.1"` を返し、AI サービスの `/healthz` も同じです。メインのデータベースはスキーマ 13（[database.md](database.md) の 6.21 節）で、AI データベースはスキーマ 11 のままです。
+- **変更なし**：それ以外のすべてのルート、フィールド、メッセージ。サービス間のハートビート。AI のルート。
 
 ## 8. 呼び出し例
 

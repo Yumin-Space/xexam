@@ -9,6 +9,9 @@ F Japanese answer. Everything here is invented for the screenshots; nothing come
   Kitchen basics (v2).xlsx    the update shown in the upload preview: one new question, one updated, one retired, and
                               one Japanese answer that differs from the English one (so the preview shows its warning)
 
+v3.1: the two banks belong to made-up question bank categories (seed.categorize creates them through the API): `Science` holds
+"General knowledge", `Everyday life` holds "Kitchen basics" (CATEGORY_OF below). The workbooks themselves carry no category.
+
 build(folder) writes the three files into `folder` (a temporary folder: .xlsx files are never committed) and returns
 their paths. Needs openpyxl.
 """
@@ -142,6 +145,8 @@ NEW_SAFETY = q('How long should you wash your hands before cooking?\n\nA. 2 seco
 GENERAL = 'General knowledge.xlsx'
 KITCHEN = 'Kitchen basics.xlsx'
 KITCHEN_V2 = 'Kitchen basics (v2).xlsx'
+# v3.1: bank name (the file name without .xlsx) -> the made-up category that holds it
+CATEGORY_OF = {GENERAL[:-5]: 'Science', KITCHEN[:-5]: 'Everyday life'}
 
 
 def _save(folder, name, sheets):

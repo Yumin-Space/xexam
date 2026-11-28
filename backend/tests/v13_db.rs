@@ -126,7 +126,7 @@ fn a_v7_file_migrates_to_v8_with_a_backup_and_the_backfill() {
             &c,
             "SELECT actor || '|' || action || '|' || detail || '|' || result FROM activity_log"
         ),
-        "system|system.migrate|{\"from\":7,\"to\":12}|ok"
+        "system|system.migrate|{\"from\":7,\"to\":13}|ok"
     );
     // fresh == migrated
     assert_eq!(master(&db), master(&fresh));
@@ -249,6 +249,7 @@ fn create_touch_purge_and_the_cap_of_sessions() {
             remember: i % 2 == 0,
             ip: Some("203.0.113.7"),
             ua: Some("Mozilla/5.0 test"),
+            device_id: None,
         })
         .expect("create");
     }
@@ -413,6 +414,7 @@ fn the_signin_info_switch_only_hides_and_the_clear_wipes() {
         remember: true,
         ip: Some("203.0.113.8"),
         ua: Some("ua"),
+        device_id: None,
     })
     .expect("session");
     s.activity_insert(&[row(NOW, "auth.signin", Some("ip"))])

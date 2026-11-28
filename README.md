@@ -44,6 +44,10 @@ Xexam is a self-hosted app for practising exam questions in the browser. You imp
   <img src="docs/en/screenshots/readme/phone-result.png" alt="A result on a phone" width="24%">
   <img src="docs/en/screenshots/readme/phone-ai-chat.png" alt="AI Chat on a phone" width="24%">
 </p>
+<p align="center">
+  <img src="docs/en/screenshots/readme/phone-fx-right.png" alt="Practice on a phone, a right answer: confetti sprays up" width="24%">
+  <img src="docs/en/screenshots/readme/phone-fx-wrong.png" alt="Practice on a phone, a wrong answer: two claw marks across the screen" width="24%">
+</p>
 
 ## AI features
 
@@ -67,8 +71,8 @@ The repository contains **no questions**. Xexam only provides the tools to impor
 
 | | |
 |---|---|
-| Current version | **v3.0** (see the [changelog](docs/en/changelog.md) or the repository's [Releases](../../releases) page; in the app: menu → **Xexam v3.0**) |
-| Images | Three, on Docker Hub (public, no login needed): `docker.io/yuminspace/xexam-frontend`, `docker.io/yuminspace/xexam-backend` and `docker.io/yuminspace/xexam-ai-service`, with tags `latest` / `v3.0` / `sha-<commit>` (the `sha-` tags are for troubleshooting). Mirror: `ghcr.io/yumin-space/xexam-frontend`, `ghcr.io/yumin-space/xexam-backend` and `ghcr.io/yumin-space/xexam-ai-service` (private, same tags) |
+| Current version | **v3.1** (see the [changelog](docs/en/changelog.md) or the repository's [Releases](../../releases) page; in the app: menu → **Xexam v3.1**) |
+| Images | Three, on Docker Hub (public, no login needed): `docker.io/yuminspace/xexam-frontend`, `docker.io/yuminspace/xexam-backend` and `docker.io/yuminspace/xexam-ai-service`, with tags `latest` / `v3.1` / `sha-<commit>` (the `sha-` tags are for troubleshooting). Mirror: `ghcr.io/yumin-space/xexam-frontend`, `ghcr.io/yumin-space/xexam-backend` and `ghcr.io/yumin-space/xexam-ai-service` (private, same tags) |
 | CPU architecture | `linux/amd64`, `linux/arm64` (the right one is picked automatically under the same tag) |
 | Port | `8765` (bound to the local machine only by default) |
 | License | [MIT](LICENSE) |
@@ -93,12 +97,15 @@ The repository contains **no questions**. Xexam only provides the tools to impor
 - **Exams**: nothing is scored until you submit. Then you see your score and each wrong question (or all of them) with your answer, the correct answer, the explanation and the memory aid. You can jump between questions, mark them to revisit, and save and exit to continue later.
 - **Practice**: every answer is checked right away and shows the correct answer and the explanation; since v3.0 a right answer sprays confetti and a wrong one leaves two claw marks (**Answer effects** in Settings, on by default).
 - **Your own question banks**: every Excel workbook you import is its own bank, and each worksheet a group of questions you can pick. Workbooks use the six-column layout: the question and the answer in English, and if you like in Chinese and Japanese too. A preview shows what an import will change before anything is saved.
+- **Question bank categories** (v3.1): administrators group the banks in one-level categories (add, rename, reorder, move banks). The pickers, the filters and the bank access of users show the groups; without categories nothing looks different.
 - **Three languages**: the interface in English, Chinese or Japanese, and every question, answer and explanation switchable between **English**, **中文** and **日本語**.
 - **Study records and a wrong-answer notebook**: every exam and practice is kept with its answers; questions you got wrong stay in the notebook until you answer them right twice in a row.
 - **Several people, one Xexam**: everyone signs in and has their own records and settings. Administrators decide who sees which question bank and who may import banks (bank managers), and can follow the **System log**.
+- **Signed-in devices** (v3.1): Settings lists every browser you signed in on and can sign any of them out; administrators can sign a user's devices out too.
 - **AI Chat** (optional, off until an administrator sets it up): administrators connect an OpenAI-compatible API, Anthropic or Cloudflare AI Gateway in **AI settings**, test it and switch the **AI+ feature** on, and give the **AI+ feature** to each user who may use it in **User management**. In **AI settings** they can **Pause** and **Resume** a user's **AI+ feature** without taking it away. Answers stream in (with **Thinking…** while a reasoning model works) and keep being written when the page is closed; the AI answers in the language chosen in **Settings**; chats are saved (and deleted automatically after 90 days by default); **Memory** keeps short notes the AI uses in later chats; administrators can choose **Free** under **AI chat mode** in **Settings** to talk to the model without the study-assistant instructions. Administrators see usage statistics and can view and delete the chats and memories of users with the AI+ feature, which AI Chat tells every user. The AI runs in its own container, `xexam-ai-service`, with its own database; the provider keys are stored encrypted.
 - **AI help while you study** (for users with the **AI+ feature**; nothing during an exam): in a practice, **AI hint** (how to approach the question, without giving the answer) and **AI analysis** (the answer and why), in one panel under the question; on the results and in study records, **AI analysis** of every question and **AI summary** of your wrong answers. The answers are saved in **AI Chat**, and nothing in the AI panel leaves the page. Each user has per-minute, per-hour and per-day limits on AI requests, set by an administrator.
 - **AI question banks** (for users with the **AI+ feature** and the matching features): **AI questions** writes a new bank of 20 questions, in English, Chinese and Japanese with answers and explanations, from the banks you tick; **AI wrong-answer drill** writes 20 new questions from the questions you got wrong; **AI import** reads a PDF, Word, Excel, PowerPoint, Markdown, TXT or CSV file: the questions in it become a bank (up to 100 by default), and study material becomes 20 questions written from it. The file is read in memory and never stored. Every AI bank carries an **AI+** badge that says where it came from.
+- **Notifications and install** (v3.1): install Xexam on your phone (a guide on Home walks you through it; iPhone needs iOS 16.4 or later) and get a reminder when a practice or exam stays unfinished, news when a bank you use is new or updated, and a note when Xexam was updated. Quiet from 00:00 to 08:00 in your time zone. They need the `https` address of Xexam and the xexam-ai-service container.
 - **Phones first**: every page works at phone width without sideways scrolling, with icon buttons that show their name on press and hold, touch targets of at least 44 px, a centred footer line with the project link, and the questions and answers getting most of the space. Desktop pages are centred on wide screens.
 
 How each page works, the AI help in practice and results, AI Chat and AI settings, the Excel format and the import rules: [docs/en/usage.md](docs/en/usage.md).
@@ -134,7 +141,7 @@ This pulls the three images and starts **three containers**: `xexam-frontend` (N
 | Action | Command |
 |---|---|
 | Update to the latest version | `docker compose pull`, then `docker compose up -d` (read [Upgrading](#upgrading) first) |
-| Pin to a specific version | Change `:latest` to `:v3.0` for all three images in `docker-compose.yml`, then run `docker compose up -d` |
+| Pin to a specific version | Change `:latest` to `:v3.1` for all three images in `docker-compose.yml`, then run `docker compose up -d` |
 | Check status | `docker compose ps` (all three containers should be `healthy`) |
 | Stop / start again | `docker compose stop` / `docker compose start` |
 | View logs | `docker compose logs -f backend` and `docker compose logs -f ai-service` (administrators can also open **System log** in the menu; it shows the AI service's lines too) |

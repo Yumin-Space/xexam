@@ -85,6 +85,8 @@ docker compose -f docker/docker-compose.build.yml up -d --build
 | `XEXAM_AI_UPSTREAM` | `http://ai-service:8766` | *(v1.9；frontend 容器)* Nginx 在哪里找 ai-service；格式相同 |
 | `XEXAM_NGINX_RESOLVER` | `127.0.0.11` | *(v1.9；frontend 容器)* Nginx 解析上面两个名字用的 DNS 服务器：IPv4 或 IPv6（直接写或加方括号），可选 `:port`，用空格或逗号分隔。默认是 Docker 自己的解析器 |
 | `XEXAM_BACKEND_BIND`、`XEXAM_AI_BIND` | 按机器拆分的文件里必填 | *(v1.9)* 后端（`10.0.0.2:8765`）或 ai-service（`10.0.0.3:8766`）在自己机器上发布的私有 `地址:端口`。不能是 `0.0.0.0`（第 12 节） |
+| `XEXAM_PUSH_SUBJECT` | （未设置：自动推出） | *(v3.1，后端)* 推送服务在签名头里看到的联系方式（VAPID 的 `sub`）：`mailto:…` 或 `https://…`，不含空格的可打印 ASCII，最多 200 字节，例如 `https://xexam.example.com`。未设置时：由已配置的 `https` 主机推出，否则用 `mailto:admin@localhost` 并在启动时给出警告（有些推送服务会拒绝它）。见第 3.6 节 |
+| `XEXAM_PUSH_VAPID_KEY` | （未设置：文件 `push-vapid.key`） | *(v3.1，后端)* 推送服务器的私钥：PKCS#8 密钥的 base64url，一行。未设置时：后端在第一次启动时在数据目录里创建 `push-vapid.key`。想在多台主机上用同一把密钥时设置它。值无效时会给出警告并关闭推送，绝不会退回去用文件。见第 3.6 节 |
 
 v0.9 没有新增任何变量，compose 文件也没有改动。改了 `.env` 之后运行 `docker compose up -d`（它会按需重新创建容器）。compose 文件总是传递 `XEXAM_ALLOWED_HOSTS`、`XEXAM_ALLOWED_ORIGINS`、`XEXAM_ALLOW_ANY_HOST` 和 `XEXAM_PARSE_TIMEOUT_SECS`（`.env` 里没有设置时用上面的默认值）；`TZ`、`XEXAM_SQLITE_JOURNAL`、`XEXAM_COOKIE_SECURE`、`XEXAM_LOG` 和 `XEXAM_INTERNAL_TOKEN` 传给后端，`TZ`、`XEXAM_AI_SECRET_KEY`、`XEXAM_INTERNAL_TOKEN`、`XEXAM_AI_LOG`、`XEXAM_AI_SQLITE_JOURNAL` 和 `XEXAM_AI_USER_AGENT_NAME` 传给 ai-service，都只在 `.env` 里设置了时才传递（像 `XEXAM_LOG=` 这样后面什么都没写的一行，会作为空值传递）。Host / Origin 的设置也适用于 AI 路由：Nginx 转发每个 AI 请求之前，后端都会先检查它。`XEXAM_BIND` 由 Compose 自己用来发布端口。`xexam-backend --help` 和 `xexam-ai-service --help` 分别列出各自读取的所有变量。
 
@@ -193,6 +195,17 @@ ai-service 把在 **AI 设置** 里输入的服务商密钥加密保存（见 [s
 
 **眼睛按钮。** 地址和所在地只在**用户**页的眼睛按钮打开时才记录（默认隐藏）。隐藏期间不再记录新的内容，任何路由也不返回已保存的（数据库里仍然保存），打开眼睛即可再次看到。旁边的红色**清除记录**按钮会清除已存的内容。见 [security.md](security.md) 的 5.1 节。
 
+### 3.6 通知：推送密钥和联系方式（v3.1）
+
+通知不需要任何设置就能工作：后端在第一次启动时创建它的推送密钥，用户在设置里自己打开通知。另有两个给特殊情况用的可选变量，还有几件事值得知道：
+
+- **推送密钥**是一对 P-256 密钥。后端把私钥那一半写成一行（PKCS#8 密钥的 base64url），放在数据目录（Docker 里是 `/data`）的 `push-vapid.key` 里，权限 0600；公钥那一半就是浏览器订阅的对象。**它不在数据库里**，所以 `backups/` 下的备份里没有它，但复制整个数据卷会带上它：请像保护数据库一样保护那份拷贝。如果只恢复 `xexam.db`，后端会创建新的密钥，每部手机在下一次打开 App 时重新订阅。
+- **多台主机，或者明确指定密钥**：启动一次后端，把 `push-vapid.key` 里的那一行复制到每台要共用它的主机的 `XEXAM_PUSH_VAPID_KEY`（可以启动一个一次性的后端来生成，或者用任何能生成 P-256 PKCS#8 密钥的工具）。变量设置之后，文件既不读也不写。无法解析的值会在启动时给出警告并关闭推送，而不是退回去用文件，因为两台主机不能最终用上不同的密钥。
+- **更换密钥**：删除 `push-vapid.key`（或修改变量）并重启后端。那次启动时，按旧密钥建立的订阅全部被删除；手机在下一次打开 App 时发现这一点并重新订阅（用户什么都不用做，除非他们在这期间屏蔽了通知）。
+- **联系方式**（`XEXAM_PUSH_SUBJECT`）是写进每个签名请求的联系地址，让推送服务在发送方行为异常时能联系到运营者。请用你自己的 `mailto:` 地址或 `https:` 地址，例如 `https://xexam.example.com`。未设置时，Xexam 从 `XEXAM_ALLOWED_ORIGINS` 和 `XEXAM_ALLOWED_HOSTS` 推出（第一个含点且不是 IP 地址的名字）；没有的话就用 `mailto:admin@localhost` 并写一条警告，因为有些推送服务会拒绝它。
+- **投递需要 xexam-ai-service 容器**在运行，并且接在网络 `egress`（它的互联网出口）上，因为只有 ai-service 会和推送服务通信：`fcm.googleapis.com`、`updates.push.services.mozilla.com`、`web.push.apple.com`、`*.push.apple.com` 和 `*.notify.windows.com`。如果你限制了出站流量，请放行这些地址的 443 端口。别的都不需要：不要变量、不要端口，后端依然不能访问互联网。没有 ai-service 时，排队的通知在有效期过后过期，设置页会告诉管理员当前没有在投递。
+- **浏览器要求 https** 才能安装和使用通知（第 4 节）。
+
 ## 4. 从手机、另一台电脑或互联网打开 Xexam
 
 默认 Xexam 只绑定本机（`127.0.0.1`）：只有运行 Docker 的那台机器自己能打开 <http://localhost:8765>。Xexam 有自己的登录，但能连到这个端口的人就能打开登录页，所以只开放到你需要的程度。
@@ -278,11 +291,21 @@ Nginx 把浏览器（或隧道）发来的 `Host` **原样**转给后端，并�
 - 对**新的技术栈**：`tests/integration/stack_check.py` 用请求头层面的检查验证「经过 Nginx 之后，Host / Origin 守卫仍然有效，`X-Forwarded-*` 不被信任」；`nginx_check.py` 验证 Host 原样透传，并检查限流。
 - **没有**用真正的 Cloudflare 测过。第一次上线时，请按上表「不确定」那一行做，并看页面给出的 403 提示。
 
+### 在手机上安装和使用通知（v3.1）
+
+- **安装应用和通知都需要 https。** 浏览器只在安全上下文里提供这两样：`https://` 地址（例如通过 Cloudflare Tunnel，第 4 节）或 `localhost`。用 `http://192.168.x.x` 打开时，Xexam 照常工作，但设置里的 **安装为应用** 和 **在本设备开启** 是灰的并说明原因，主页上的手机引导也不会出现。
+- **iPhone 和 iPad**：需要 iOS 16.4 或更高版本，并且通知只在从 Safari 或 Chrome 添加到主屏幕的应用里有效（引导会配图展示步骤）。主屏幕应用有**自己的 cookie 和存储**，和 Safari 是分开的：在那里再登录一次，会在登录设备列表里多出第二台设备（在 Safari 里保存的练习不在应用里）。在 Cloudflare Access 后面，这意味着在应用里**再登录一次 Access**，然后再登录一次 Xexam。
+- **在 Cloudflare Access 后面**，升级后请测试两件事：是否出现 **安装** 图标（或 **添加到主屏幕**），以及测试通知能否收到。浏览器在某些情况下取 `/manifest.webmanifest` 和图标时不带 Access 的 cookie；如果没有出现安装图标，请只给这几个静态路径加一条动作为 **Bypass** 的 Access 策略：`/manifest.webmanifest`、`/icon-*.png`、`/apple-touch-icon.png` 和 `/badge-96.png`。**绝不要对 `/api/` 做 Bypass**（`/sw.js` 和网站的其余部分也不要）；这几个路径里没有任何数据。
+- **Android**（Chrome 等）：浏览器自己会提示安装，设置里的 **安装 Xexam** 和引导里的 **安装** 就是用它。在 Samsung Internet 和 Firefox 里，请在浏览器菜单里选“安装”或“添加到主屏幕”。
+- **检查**：设置 → **通知** → **在本设备开启**，再点 **发送测试**。一分钟内没有收到的话，说明 xexam-ai-service 容器没有运行，或者连不上推送服务（`docker compose logs ai-service`）；没有投递员连接时，设置页会告诉管理员。
+- **Nginx**：前端镜像用各自的 `location` 块提供 `/sw.js`（`Cache-Control: no-cache`，带自己的安全头和与页面相同的 Content-Security-Policy）和 `/manifest.webmanifest`（`application/manifest+json`，`no-cache`）。如果你把镜像里的 Nginx 配置换成了自己的，请加上两个等价的 `location = /sw.js` 和 `location = /manifest.webmanifest` 块，每个都要重复写它的响应头（有自己 `add_header` 的 `location` 不继承任何头）。
+
 ## 5. 数据
 
 - 位置：命名卷 `xexam_backend_data` → 容器里的 `/data/xexam.db`。更新、重建或删除容器都不会丢。数据库里有题库、账户、学习记录和设置。
 - 后端运行时，数据库旁边有 SQLite 的 `xexam.db-wal` 和 `xexam.db-shm`（WAL 模式，从 v0.7 起）。正常停止时，后端把所有内容复制进 `xexam.db`，并清空 `xexam.db-wal`；这两个文件可能空着留在旁边，没有害处。
 - 卷里还可能有一个 `/data/backups/` 文件夹，里面是 schema 迁移前写的副本（第 6 节）。程序永远不会删除这些文件。查看它们：`docker run --rm -v xexam_backend_data:/data alpine ls -l /data /data/backups`。
+- **`push-vapid.key`**（v3.1）放在后端卷里 `xexam.db` 的旁边：推送服务器的私钥（第 3.6 节）。它**不在** `xexam.db` 里，也不在 `backups/` 里；复制整个卷会带上它，所以请像保护数据库一样保护这样的拷贝。
 - **AI 服务的数据**（v0.8）在它自己的命名卷 `xexam_ai_data` 里 → `xexam-ai-service` 容器里的 `/data`：`xexam-ai.db`（AI 设置、加密的服务商密钥、安全上限、对话、记忆、用量统计；WAL 模式，带它的 `-wal` / `-shm` 文件）和密钥文件 `secret.key`（第 3.2 节）；从 v0.9 起，它的对话里还包括 AI+ 学习功能的练习、考试和记录总结对话，其中有题目文字和 AI 的回答，卷里还会有一个文件夹 `/data/backups/`，放着 AI schema 升级前写的副本（第 6 节）。后端从不挂载它，ai-service 也从不挂载 `xexam_backend_data`。
 - **ai_auth 卷** `xexam_ai_auth` → `/link` 里只有 `internal.token`（第 3.3 节）；后端以读写方式挂载它，ai-service 以只读方式挂载。
 - **备份**：先停止 Xexam（`docker compose stop`），打包**两个数据卷**，再启动：命令见 [database.md](database.md) 第 5 节和第 8.4 节。后端运行时只复制 `xexam.db`，可能会漏掉还在 `xexam.db-wal` 里的最新修改；不能停止时，请把 `xexam.db`、`xexam.db-wal` 和 `xexam.db-shm` 一起复制（`xexam-ai.db` 也一样）。备份卷时也会备份 `backups/`。`xexam_ai_data` 的备份里有密钥文件，它能解密已保存的 AI 密钥：请像对待密钥一样妥善保管，或者设置 `XEXAM_AI_SECRET_KEY`，让密钥不在卷里。删除了的对话仍然留在你以前做的备份里。`xexam_ai_auth` 不用备份：它为空时后端会写一个新令牌。
@@ -400,6 +423,7 @@ ai-service 机器 ──> 后端机器   （XEXAM_AI_BACKEND_URL：状态汇报�
 - **允许的主机在后端机器上设置。** Host / Origin 校验在后端机器的后端里运行：像第 4 节那样在那里设置 `XEXAM_ALLOWED_HOSTS`（需要时再设 `XEXAM_ALLOWED_ORIGINS`）。
 - **令牌**在两台机器上都是必填（文件里是 `XEXAM_INTERNAL_TOKEN_REQUIRED=1`）；把它当密码对待。
 - **局限**：这种布局下后端机器和其他机器一样可以访问外网（用于可选的 IP 所在地查询）；只有 ai-service 会和 AI 服务商通信。
+- **通知（v3.1）**用的是已有的链路：ai-service 通过 `XEXAM_AI_BACKEND_URL` 从后端取走做好的推送任务（`/internal/ai/push/next` 和 `/push/result`，带内部令牌），所以没有任何新东西需要配置。任务里是加密后的正文和签名后的请求头，没有密钥。推送密钥（`push-vapid.key` 或 `XEXAM_PUSH_VAPID_KEY`）留在后端那台机器上；运行 ai-service 的机器需要能通过互联网访问推送服务（第 3.6 节），其他都不变。
 
 ### 12.3 迁移数据卷
 

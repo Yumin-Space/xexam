@@ -166,6 +166,7 @@ fn content_dump(p: &Path) -> Vec<String> {
                 matches!(
                     (t.as_str(), col),
                     ("users", "last_active_at")
+                        | ("devices", "active_at")
                         | ("sessions", "last_seen_at" | "expires_at" | "started_at")
                 )
             })

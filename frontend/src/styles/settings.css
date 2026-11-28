@@ -161,3 +161,24 @@
 .set-text-hand { font-family: 'Xexam Hand', var(--en); font-size: 1.08em; }
 html:lang(zh-CN) .set-text-hand { font-family: 'Xexam Hand', var(--zh); }
 html:lang(ja) .set-text-hand { font-family: 'Xexam Hand', var(--jp); }
+
+/* ---------- v3.1: Notifications, Install as an app, Signed-in devices ---------- */
+.set-dev-state { margin: 12px 0 0; font-size: 14px; line-height: 1.6; color: var(--ink2); overflow-wrap: anywhere; }
+.set-notify-acts { display: flex; flex-wrap: wrap; gap: 8px 12px; margin-top: 12px; }
+.set-sec .set-note.warn { color: var(--danger); }
+/* "Change the time zone" after the quiet-hours sentence: a text link with a 44 px tall hit area on touch screens */
+.set-quiet-link { color: var(--print); text-decoration: underline; white-space: nowrap; border-radius: 4px; }
+.set-quiet-link:focus-visible { outline: 2px solid var(--print); outline-offset: 1px; }
+@media (pointer: coarse) { .set-quiet-link { display: inline-block; padding: 12px 0; margin: -12px 0; } }
+.set-install-body { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.set-install-body .set-note { margin-top: 0; }
+.set-devlist:focus { outline: none; }
+.set-sec .set-desc + .set-devlist { margin-top: 12px; }
+.set-devlist > .dv-list + .set-notify-acts { margin-top: 12px; }
+.set-dev-err { margin: 0; font-size: 14px; }
+.set-dev-err p { margin: 0 0 10px; }
+@media (max-width: 600px), (orientation: landscape) and (max-height: 500px) { /* PHONE */
+  .set-notify-acts { flex-direction: column; align-items: stretch; }
+  .set-notify-acts .btn, .set-install-body .btn, .set-dev-err .btn { width: 100%; min-height: 44px; }
+}
+@media (pointer: coarse) { .set-notify-acts .btn, .set-install-body .btn { min-height: 44px; } }

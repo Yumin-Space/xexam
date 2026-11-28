@@ -20,7 +20,7 @@
 cd backend
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
-cargo test --all-targets          # 382 个测试
+cargo test --all-targets          # 919 个测试
 cargo run -- serve --data ../data --no-browser     # 监听 127.0.0.1:8765
 ```
 
@@ -43,7 +43,7 @@ AI 服务是 `ai-service/` 里一个单独的 crate（包和可执行程序叫 `
 cd ai-service
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
-cargo test --all-targets          # 383 个测试（以及 1 个文档测试，`cargo test --doc`：提示的提示词不能接受解答）
+cargo test --all-targets          # 1393 个测试（以及 1 个文档测试，`cargo test --doc`：提示的提示词不能接受解答）
 cargo tree -e normal --target all | grep -E 'aws-lc|openssl-sys|native-tls'   # 必须什么都不打印（CI 的 TLS 检查）
 ```
 
@@ -215,8 +215,8 @@ python tools/phone-walk/walk.py --out <dir> --chrome <path>
 |---|---|
 | `check` | `VERSION` 里**正好有一行** `CODE_VERSION=` 和**一行** `RELEASE_VERSION=`，两者都形如 `0.7` 或 `0.6.5`，而且 `RELEASE_VERSION` 不比 `CODE_VERSION` 新；三份更新日志（`docs/en/changelog.md`、`docs/ja/changelog.md`、`docs/zh-CN/changelog.md`）各自最新的条目 = `CODE_VERSION`，三份的 `### vX.Y — 日期` 标题相同、顺序相同；README 里不再有更新日志条目，每份 README 都链接到自己语言的更新日志；每份 README 顶部的发布徽章 = `RELEASE_VERSION`；`backend/Cargo.toml`、`ai-service/Cargo.toml` 和 `frontend/package.json` 写的是 `CODE_VERSION`；文件布局（根目录只有 `README.md`，另外两份 README 在 `README/` 里，compose 文件和 `.env.example` 在 `docker/` 里）、`docker/docker-compose.yml` 从 Docker Hub 拉取三个镜像，以及文档检查（第 9 节）。它输出的 `version`（`CODE_VERSION`）供后面的任务使用 |
 | `frontend · test (x86)` | 类型检查、单元测试、构建 |
-| `backend · test (x86)` | fmt、clippy、382 个测试，以及 `progress.json` 迁移检查；Rust 缓存每次用新的键，并恢复同一份 `Cargo.lock` 最新的缓存 |
-| `ai-service · test (x86)` | fmt、clippy、ai-service 的 383 个测试，以及 TLS 检查：`cargo tree` 里不能有 `aws-lc`、`openssl-sys` 或 `native-tls`；Rust 缓存的处理与 `backend` 相同 |
+| `backend · test (x86)` | fmt、clippy、919 个测试，以及 `progress.json` 迁移检查；Rust 缓存每次用新的键，并恢复同一份 `Cargo.lock` 最新的缓存 |
+| `ai-service · test (x86)` | fmt、clippy、ai-service 的 1393 个测试，以及 TLS 检查：`cargo tree` 里不能有 `aws-lc`、`openssl-sys` 或 `native-tls`；Rust 缓存的处理与 `backend` 相同 |
 | `<component> · image build (x86\|arm64)` | 三个同名的任务：x86 的 frontend 镜像单独一个（这样 `Nginx · test` 在它就绪后就能开始），x86 的 backend 和 ai-service 镜像一个，arm64 的镜像一个。合起来：三个镜像（frontend、backend、ai-service）各自在两种架构上原生构建（x86 用 `ubuntu-latest`，arm64 用 `ubuntu-24.04-arm`，不模拟；最多 60 分钟），在 `check` 之后立即开始，与测试同时进行。每次构建都把镜像层写进 GitHub Actions 缓存，范围是 `<component>-<arch>`（例如 `backend-x86`）；然后启动镜像并检查：后端在 `/api/info` 里报告正确的架构（`x86_64` 或 `aarch64`）和 `CODE_VERSION`，前端响应 `/healthz` 并提供 `index.html`，单独运行的 ai-service 通过它的健康检查（`xexam-ai-service healthcheck`），并在 `/healthz` 里报告同样的内容 |
 | `Nginx · test (x86)` | 在 frontend 的 x86 镜像构建就绪后立即开始（不等另外两个）：用 `frontend-x86` 的缓存再构建一次 `xexam-frontend` 镜像（不再做 npm 的工作），跑 141 项 Nginx 检查 |
 | `end-to-end · test (x86)` | 在三个 x86 镜像都构建好之后：启动完整的 compose 栈（三个镜像通过合并后的 compose 文件和 `crazy-max/ghaction-github-runtime`，用同样的缓存范围 `backend-x86`、`frontend-x86`、`ai-service-x86` 构建，不再重新编译；虚构的 AI 服务商），跑 314 项端到端检查（最多 45 分钟） |
@@ -250,6 +250,7 @@ python tools/phone-walk/walk.py --out <dir> --chrome <path>
 - 每种语言一个文件夹：`docs/en`（英语，原文）、`docs/ja`（日语）和 `docs/zh-CN`（简体中文）。每个文件夹里都有同样的九份文档：`api`、`architecture`、`changelog`（从 v0.9.1 起；以前在 README 里）、`database`、`deployment`、`development`、`migration`、`security`，以及从 v0.7.5 起的 `usage`（怎样使用程序，从 README 移过来的），每个文件夹都有自己的 `screenshots/`。
 - `docs/zh-CN/history/` 里是切换到 Rust 时的旧文档（审计、计划、风险评估）。它们只有中文，不再更新。
 - `docs/en/openapi.yaml` 由所有语言共用；日语和中文的文档链接到 `../en/openapi.yaml`。
+- **数据库图不会再脱节（v3.1）。** `database.md` 里的每一张图（第 3、8.2、9 节）都会在 `cargo test` 里由 `backend/tests/docs_diagrams.rs`（主数据库）和 `ai-service/tests/docs_diagrams.rs`（AI 数据库）对着全新的数据库检查：表、按顺序排列的列、声明的类型、`PK` / `FK` 标记、总览图里的外键，以及三种语言里相同的实体和列。改表或改列时，请在同一次提交里同时改 `docs/en`、`docs/ja` 和 `docs/zh-CN` 的图，否则测试会指出哪个语言、哪一节、哪个实体、哪一列不一致。图里的注释在各语言之间可以不同。
 - README 很短：Xexam 能做什么、快速开始、配置、升级、文档链接，以及指向更新日志（同一语言的 `changelog.md`）的链接。怎样使用程序、Excel 格式和导入规则在 `usage.md` 里；部署细节、备份、安全、架构和开发各有自己的文档。一个细节只写在一个地方，其他地方链接过去。
 - 每份文档开头都有一条语言栏，链接到另外两个文件夹里的同一份文档。链接相对于文件自己所在的文件夹：仓库根目录是 `../../`。
 - 先改英语的文档，再在同一次修改里改日语和中文的。界面上的标签用粗体，写法和那种语言的文字目录完全一样；题目语言的切换按钮总是写成 **English** / **中文** / **日本語**。
@@ -257,7 +258,7 @@ python tools/phone-walk/walk.py --out <dir> --chrome <path>
 
 ### 9.1 截图
 
-README 和文档里的图片（`docs/<lang>/screenshots`，每种语言 28 张电脑截图和 10 张 iPhone 截图，从 v2.6 起一共 38 张）由在仓库根目录运行的 `python tools/screenshots/retake.py` 生成。它用 `backend/Dockerfile` 和 `ai-service/Dockerfile` 以唯一的标签（`xexam-shots-backend:<十六进制>`、`xexam-shots-ai-service:<十六进制>`）构建后端和 ai-service 的镜像，在一个新的 Docker 网络上用新卷（各自的 `/data`，以及一个共用的链接卷，对 ai-service 是只读的）和 `TZ=UTC` 运行它们，旁边运行虚构的 AI 服务商 `tests/integration/ai_stub.py`（网络名 `ai-stub`）。它用 Vite 构建前端，在一个空闲端口上用 `vite preview` 提供它（认证插件和 Nginx 一样，用后端检查每个 AI 请求），然后通过 API 往这个实例里填入虚构的演示题库、用户和记录，并用虚构的服务商和虚构的密钥设置好 AI，这都是通过 API 完成的；之后才给 sam 和 alex 开启 AI+ 功能（AI+ 功能不可用时后端会拒绝这一步），并暂停 alex 的 AI+ 功能，所以图片里有亮色、暗色和没有徽章的三种，也有一行 **使用中** 和一行 **已暂停**。重启之后，它会等到 `GET /api/users` 回答 `aiAvailable: true`。它会重启后端，让系统日志里只有短短一段登录和用户修改，然后为每种语言在无头 Chrome 里操作真正的界面：AI 对话的场景先打开管理员的自由模式（这样会显示绿色的 **自由模式** 标签），开始一个对话，通过页面发送第二个问题（用这次运行的语言，所以回答也是这种语言），之后删除这个对话并关闭自由模式，v0.9 的学习场景则打开一道练习题的 AI 提示窗口、一张考试成绩卡片的 AI 解析窗口和一条学习记录的 AI 总结窗口（`desktop-17-ai-hint`、`desktop-18-ai-result`、`desktop-19-ai-summary`、`iphone-5-ai-hint`），里面是虚构服务商的文字；同一次运行还会检查布局（检查失败就会停下）：练习的操作栏在 390 px 宽时最多两行，学习记录在 800 px 宽时（英语和日语）用卡片布局，没有横向滚动；AI 设置的场景按下 **测试**，并用两张图片显示这个页面（设置部分和带 AI+ 功能一列的 AI+ 用户；然后是用量、对话保留和安全上限），所以各种语言的用量数字会略有不同。图片在不会切断文字或卡片的地方裁开，并去掉 PNG 元数据。容器、卷、网络、镜像标签、临时文件夹和进程在最后都会删掉，出错时也一样。
+README 和文档里的图片（`docs/<lang>/screenshots`，每种语言 30 张电脑截图和 12 张 iPhone 截图，从 v3.1 起一共 42 张）由在仓库根目录运行的 `python tools/screenshots/retake.py` 生成。它用 `backend/Dockerfile` 和 `ai-service/Dockerfile` 以唯一的标签（`xexam-shots-backend:<十六进制>`、`xexam-shots-ai-service:<十六进制>`）构建后端和 ai-service 的镜像，在一个新的 Docker 网络上用新卷（各自的 `/data`，以及一个共用的链接卷，对 ai-service 是只读的）和 `TZ=UTC` 运行它们，旁边运行虚构的 AI 服务商 `tests/integration/ai_stub.py`（网络名 `ai-stub`）。它用 Vite 构建前端，在一个空闲端口上用 `vite preview` 提供它（认证插件和 Nginx 一样，用后端检查每个 AI 请求），然后通过 API 往这个实例里填入虚构的演示题库、用户和记录，并用虚构的服务商和虚构的密钥设置好 AI，这都是通过 API 完成的；之后才给 sam 和 alex 开启 AI+ 功能（AI+ 功能不可用时后端会拒绝这一步），并暂停 alex 的 AI+ 功能，所以图片里有亮色、暗色和没有徽章的三种，也有一行 **使用中** 和一行 **已暂停**。重启之后，它会等到 `GET /api/users` 回答 `aiAvailable: true`。它会重启后端，让系统日志里只有短短一段登录和用户修改，然后为每种语言在无头 Chrome 里操作真正的界面：AI 对话的场景先打开管理员的自由模式（这样会显示绿色的 **自由模式** 标签），开始一个对话，通过页面发送第二个问题（用这次运行的语言，所以回答也是这种语言），之后删除这个对话并关闭自由模式，v0.9 的学习场景则打开一道练习题的 AI 提示窗口、一张考试成绩卡片的 AI 解析窗口和一条学习记录的 AI 总结窗口（`desktop-17-ai-hint`、`desktop-18-ai-result`、`desktop-19-ai-summary`、`iphone-5-ai-hint`），里面是虚构服务商的文字；同一次运行还会检查布局（检查失败就会停下）：练习的操作栏在 390 px 宽时最多两行，学习记录在 800 px 宽时（英语和日语）用卡片布局，没有横向滚动；AI 设置的场景按下 **测试**，并用两张图片显示这个页面（设置部分和带 AI+ 功能一列的 AI+ 用户；然后是用量、对话保留和安全上限），所以各种语言的用量数字会略有不同。图片在不会切断文字或卡片的地方裁开，并去掉 PNG 元数据。容器、卷、网络、镜像标签、临时文件夹和进程在最后都会删掉，出错时也一样。
 
 选项：`--lang en|ja|zh-CN|all`、`--out DIR`（写到 `DIR/<lang>/`，这样可以在动 `docs/` 之前先比较）、`--only desktop-13-logs.png,...`、`--chrome PATH`（或 `XEXAM_CHROME` / `CHROME_PATH`），以及没有 Docker 时用的 `--backend cargo`（这样运行会跳过系统日志的图片）。它需要带 `openpyxl` 的 Python 3.8+、Node.js、Docker 以及 Chrome 或 Chromium；见 `tools/screenshots/README.md`。用 `--backend cargo` 时，它用 cargo 构建 `backend/` 和 `ai-service/`，并把虚构的服务商作为本地的 Python 进程运行。有两个页面在页面本身里被缩短，好让卡片在图片里结束：题库管理显示的格式说明打开后只有前两部分，关于页面只显示最新版本的前几点。可以同时运行两三次（被别的运行先占用的端口会换一个新的重试，`npm ci` 在一个锁文件后面运行）。请用 `python tools/screenshots/retake.py` 启动它，不要用 `python -I`：`-I` 会隐藏通常装着 `openpyxl` 的用户 site-packages。改了界面或版本之后重新截图，先看一遍，然后才写进 `docs/`。
 

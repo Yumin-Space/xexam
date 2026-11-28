@@ -408,8 +408,8 @@ fn sqlite_master(path: &Path) -> Vec<Value> {
     .collect()
 }
 
-/// The type and name of every object a schema-12 database has, in `sqlite_master` rowid order (v2.0; v2.6 adds the last one).
-const SCHEMA_12_OBJECTS: [(&str, &str); 42] = [
+/// The type and name of every object a schema-13 database has, in `sqlite_master` rowid order (v2.0; v2.6 and v3.1 append).
+const SCHEMA_13_OBJECTS: [(&str, &str); 56] = [
     ("table", "meta"),
     ("index", "sqlite_autoindex_meta_1"),
     ("table", "sqlite_sequence"),
@@ -429,7 +429,6 @@ const SCHEMA_12_OBJECTS: [(&str, &str); 42] = [
     ("index", "idx_banks_ai_job"),
     ("table", "questions"),
     ("index", "sqlite_autoindex_questions_1"),
-    ("index", "idx_questions_sheet"),
     ("index", "idx_questions_bank"),
     ("index", "idx_questions_layout"),
     ("table", "imports"),
@@ -452,10 +451,25 @@ const SCHEMA_12_OBJECTS: [(&str, &str); 42] = [
     ("index", "sqlite_autoindex_user_banks_1"),
     ("index", "idx_user_banks_bank"),
     ("index", "idx_users_display_name"),
+    ("table", "bank_categories"),
+    ("index", "sqlite_autoindex_bank_categories_1"),
+    ("index", "idx_banks_category"),
+    ("table", "devices"),
+    ("index", "sqlite_autoindex_devices_1"),
+    ("index", "idx_sessions_device"),
+    ("table", "push_subscriptions"),
+    ("index", "sqlite_autoindex_push_subscriptions_1"),
+    ("index", "sqlite_autoindex_push_subscriptions_2"),
+    ("table", "saved_sessions"),
+    ("index", "sqlite_autoindex_saved_sessions_1"),
+    ("index", "idx_saved_sessions_device"),
+    ("table", "push_outbox"),
+    ("index", "idx_push_outbox_sub"),
+    ("index", "idx_push_outbox_due"),
 ];
 
 #[test]
-fn schema_12_is_the_same_for_a_fresh_file_and_the_python_sample() {
+fn schema_13_is_the_same_for_a_fresh_file_and_the_python_sample() {
     // tests/baseline/fixtures/sample.db was built by the old Python implementation (schema 1). Since v2.0 (schema 11) the
     // "v1 text identical to the Python version" guarantee is given up: the v1 text is only the start of the upgrade chain, and
     // nine tables are rebuilt with foreign keys. A fresh database and the migrated Python sample must still end up with
@@ -493,7 +507,7 @@ fn schema_12_is_the_same_for_a_fresh_file_and_the_python_sample() {
         .iter()
         .map(|r| (r[0].as_str().expect("type"), r[1].as_str().expect("name")))
         .collect();
-    assert_eq!(objects, SCHEMA_12_OBJECTS);
+    assert_eq!(objects, SCHEMA_13_OBJECTS);
     let sql_of = |name: &str| -> String {
         fresh
             .iter()
@@ -502,18 +516,43 @@ fn schema_12_is_the_same_for_a_fresh_file_and_the_python_sample() {
             .unwrap_or_else(|| panic!("no sql for {name}"))
             .to_string()
     };
-    // Each rebuilt table is stored as CREATE TABLE "<t>" followed by the body of its `create` text
+    // Each rebuilt table is stored as CREATE TABLE "<t>" followed by the body of its `create` text. `banks` and `sessions` got v13
+    // columns by ALTER TABLE afterwards: SQLite appends the definition before the final `)`
     for r in &xexam_backend::database::schema::V11_REBUILDS {
         let body = r
             .create
             .strip_prefix(&format!("CREATE TABLE new_{} ", r.table))
             .expect("create text starts with the new_ name");
-        assert_eq!(
-            sql_of(r.table),
-            format!("CREATE TABLE \"{}\" {body}", r.table),
-            "{}",
-            r.table
-        );
+        let expected = format!("CREATE TABLE \"{}\" {body}", r.table);
+        let appended: Vec<&str> = match r.table {
+            "banks" => xexam_backend::database::schema::V13_BANK_COLUMNS
+                .iter()
+                .map(|c| c.2)
+                .collect(),
+            "sessions" => xexam_backend::database::schema::V13_SESSION_COLUMNS
+                .iter()
+                .map(|c| c.2)
+                .collect(),
+            _ => Vec::new(),
+        };
+        if appended.is_empty() {
+            assert_eq!(sql_of(r.table), expected, "{}", r.table);
+        } else {
+            let open = expected.trim_end().strip_suffix(')').expect("ends with )");
+            let stored = sql_of(r.table);
+            assert!(
+                stored.starts_with(open),
+                "{} keeps the rebuild text",
+                r.table
+            );
+            let tail = &stored[open.trim_end().len()..];
+            let want: String = appended
+                .iter()
+                .map(|d| format!(", {d}"))
+                .collect::<String>()
+                + ")";
+            assert_eq!(tail.trim(), want, "{} v13 columns", r.table);
+        }
     }
     // The users table is the v3 text with the later columns appended by ALTER TABLE; it is not rebuilt
     let users = sql_of("users");

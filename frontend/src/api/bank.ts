@@ -5,7 +5,9 @@ import { getFile, getJson, postJson, type FileDownload } from './client.ts';
 export const fetchInfo = (): Promise<Info> => getJson<Info>('/api/info');
 /** All active questions of all banks (each question carries its `bank` id) */
 export const fetchBank = (): Promise<Bank> => getJson<Bank>('/api/bank');
-export const fetchBanks = async (): Promise<BankSummary[]> => (await getJson<BanksResponse>('/api/banks')).banks;
+/** v3.1: the bank list together with the categories */
+export const fetchBanksFull = (): Promise<BanksResponse> => getJson<BanksResponse>('/api/banks');
+export const fetchBanks = async (): Promise<BankSummary[]> => (await fetchBanksFull()).banks;
 /** Delete a bank. withRecords also deletes its study data (stats, per-question detail, records that only contain this bank). */
 export const deleteBank = (id: number, withRecords: boolean): Promise<BankDeleted> =>
   postJson<BankDeleted>('/api/banks/delete', { id, withRecords });

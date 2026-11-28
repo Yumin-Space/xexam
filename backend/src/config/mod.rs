@@ -35,6 +35,9 @@ pub struct Config {
     pub peer_warnings: Vec<String>,
     /// `XEXAM_INTERNAL_TOKEN_REQUIRED=1` (v1.9): start only when `XEXAM_INTERNAL_TOKEN` is set and valid.
     pub internal_token_required: bool,
+    /// `XEXAM_PUSH_SUBJECT` (v3.1): the `sub` claim of the web push VAPID signature, a `mailto:` or `https:` address. Kept as
+    /// typed (trimmed, empty = unset); the push start-up validates it and falls back to a derived default with a warning.
+    pub push_subject: Option<String>,
 }
 
 pub const MAX_UPLOAD: usize = 20 * 1024 * 1024;
@@ -153,6 +156,9 @@ impl Config {
             frontend_peers,
             peer_warnings,
             internal_token_required: flag("XEXAM_INTERNAL_TOKEN_REQUIRED"),
+            push_subject: get("XEXAM_PUSH_SUBJECT")
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty()),
         }
     }
 
@@ -193,6 +199,18 @@ mod link_dir_tests {
         ]);
         assert_eq!(c.frontend_peers.len(), 1);
         assert!(c.internal_token_required);
+    }
+
+    #[test]
+    fn the_push_subject_is_kept_as_typed_and_empty_means_unset() {
+        assert_eq!(cfg(&[]).push_subject, None);
+        assert_eq!(cfg(&[("XEXAM_PUSH_SUBJECT", "  ")]).push_subject, None);
+        assert_eq!(
+            cfg(&[("XEXAM_PUSH_SUBJECT", " mailto:admin@xexam.example.com ")])
+                .push_subject
+                .as_deref(),
+            Some("mailto:admin@xexam.example.com")
+        );
     }
 
     #[test]

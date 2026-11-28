@@ -9,7 +9,8 @@ use rusqlite::{params, Connection};
 use serde_json::{Map, Value};
 use std::collections::HashMap;
 
-/// `{"theme", "uiLang", "autoAdvance", "questionLang", "answerFx"}` in that order.
+/// `{"theme", "uiLang", "autoAdvance", "questionLang", "answerFx", "push", "tz"}` in that order (the seven keys of
+/// `SETTING_KEYS`; v3.1 appended `push` and `tz`).
 fn settings_json(c: &Connection, user: i64) -> Result<Value, DbError> {
     let stored: HashMap<String, String> = {
         let mut st = c.prepare("SELECT key, value FROM user_settings WHERE user_id=?1")?;

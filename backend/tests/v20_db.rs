@@ -158,7 +158,7 @@ fn sequences(c: &Connection) -> BTreeMap<String, i64> {
     out
 }
 
-const TABLES_FOR_COUNTS: [&str; 12] = [
+const TABLES_FOR_COUNTS: [&str; 17] = [
     "banks",
     "questions",
     "imports",
@@ -171,6 +171,11 @@ const TABLES_FOR_COUNTS: [&str; 12] = [
     "users",
     "stats",
     "settings",
+    "bank_categories",
+    "devices",
+    "push_subscriptions",
+    "saved_sessions",
+    "push_outbox",
 ];
 
 /// What the planted orphans must do (empty for a file without any).
@@ -346,13 +351,20 @@ fn plant_orphans(c: &Connection, n: u32) -> Planted {
     p
 }
 
-/// The expected `(table, from, parent, to)` of every foreign key of schema 11.
-const FKS: [(&str, &str, &str, &str); 10] = [
+/// The expected `(table, from, parent, to)` of every foreign key of schema 13 (the ten of schema 11 plus the v13 ones).
+const FKS: [(&str, &str, &str, &str); 17] = [
     ("attempt_items", "attempt_id", "attempts", "id"),
     ("attempts", "user_id", "users", "id"),
+    ("banks", "category_id", "bank_categories", "id"),
     ("banks", "owner_id", "users", "id"),
+    ("devices", "user_id", "users", "id"),
     ("imports", "bank_id", "banks", "id"),
+    ("push_outbox", "subscription_id", "push_subscriptions", "id"),
+    ("push_subscriptions", "device_id", "devices", "id"),
     ("questions", "bank_id", "banks", "id"),
+    ("saved_sessions", "device_id", "devices", "id"),
+    ("saved_sessions", "user_id", "users", "id"),
+    ("sessions", "device_id", "devices", "id"),
     ("sessions", "user_id", "users", "id"),
     ("user_banks", "bank_id", "banks", "id"),
     ("user_banks", "user_id", "users", "id"),
@@ -376,6 +388,11 @@ fn assert_foreign_keys(c: &Connection) {
         "user_stats",
         "user_settings",
         "user_banks",
+        "bank_categories",
+        "devices",
+        "push_subscriptions",
+        "saved_sessions",
+        "push_outbox",
     ] {
         for r in rows(
             c,
@@ -521,7 +538,7 @@ fn run_case(case: Case, with_orphans: bool) {
 
     let c = Connection::open(&db).expect("open");
     c.execute_batch("PRAGMA foreign_keys=ON").expect("fk on");
-    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "12");
+    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "13");
     assert_clean(&c);
     assert_foreign_keys(&c);
     // ---- counts: seeded minus planted orphans
@@ -611,7 +628,7 @@ fn run_case(case: Case, with_orphans: bool) {
     };
     let detail: Value = serde_json::from_str(detail).expect("json");
     assert_eq!(detail["from"], n);
-    assert_eq!(detail["to"], 12);
+    assert_eq!(detail["to"], 13);
     match planted.removed_total() {
         0 => assert!(detail.get("orphansRemoved").is_none(), "{label}: {detail}"),
         k => assert_eq!(detail["orphansRemoved"], k, "{label}"),
@@ -761,7 +778,7 @@ fn orphans_follow_the_rules() {
     );
     let v: Value = serde_json::from_str(&detail).expect("json");
     assert_eq!(v["orphansRemoved"], 8);
-    assert_eq!((v["from"].clone(), v["to"].clone()), (10.into(), 12.into()));
+    assert_eq!((v["from"].clone(), v["to"].clone()), (10.into(), 13.into()));
     // the backup holds every removed row
     let b = Connection::open(&backups(dir.path())[0]).expect("backup");
     assert_eq!(count(&b, "SELECT COUNT(*) FROM attempts WHERE id = 50"), 1);
@@ -921,7 +938,7 @@ fn duplicate_uids_skip_the_unique_index() {
     );
     drop(s);
     let c = raw_on(&db);
-    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "12");
+    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "13");
     assert_eq!(
         count(
             &c,
@@ -1038,7 +1055,7 @@ fn a_failed_rebuild_changes_nothing() {
     let s = open_fixed(&db);
     drop(s);
     let c = raw_on(&db);
-    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "12");
+    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "13");
     assert_clean(&c);
     assert_eq!(backups(dir.path()).len(), 2);
 
@@ -1062,7 +1079,7 @@ fn a_failed_rebuild_changes_nothing() {
     drop(open_fixed(&db));
     assert_eq!(
         text(&raw_on(&db), "SELECT value FROM meta WHERE key='schema'"),
-        "12"
+        "13"
     );
 
     // (c) a trigger on a rebuilt table would be dropped with the old table: stop instead
@@ -1121,6 +1138,7 @@ fn session(s: &Store, user: i64, token: &str) {
         remember: true,
         ip: None,
         ua: None,
+        device_id: None,
     })
     .expect("session");
 }
@@ -1298,7 +1316,7 @@ fn fresh_is_schema_11() {
     drop(s);
     assert!(backups(dir.path()).is_empty(), "no backup for a new file");
     let c = raw_on(&db);
-    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "12");
+    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "13");
     assert_eq!(
         count(
             &c,
@@ -1374,7 +1392,7 @@ fn fresh_is_schema_11() {
         meta,
         vec![
             ("banks_known".to_string(), "0".to_string()),
-            ("schema".to_string(), "12".to_string()),
+            ("schema".to_string(), "13".to_string()),
             ("users_known".to_string(), "1".to_string())
         ]
     );

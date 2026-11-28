@@ -24,6 +24,10 @@ pub use throttle::{
 
 /// Name of the session cookie.
 pub const SESSION_COOKIE: &str = "xexam_session";
+/// Name of the cookie that identifies a browser (v3.1): a random value; the database stores only its SHA-256.
+pub const DEVICE_ID_COOKIE: &str = "xexam_did";
+/// Lifetime of the browser-id cookie: 400 days.
+pub const DEVICE_ID_TTL_SECS: i64 = 400 * 24 * 3600;
 /// Name of the cookie that marks a browser where the user signed in before (see [`device_tag`]).
 pub const DEVICE_COOKIE: &str = "xexam_device";
 /// Lifetime of the known-browser cookie: 400 days (the longest browsers keep a cookie).
@@ -405,6 +409,11 @@ pub fn new_session_token() -> String {
     base64url_nopad(&buf)
 }
 
+/// A new browser id (v3.1): the same shape as a session token (43 characters of base64url).
+pub fn new_device_id() -> String {
+    new_session_token()
+}
+
 /// What the database stores for a token: the SHA-256 of the cookie value, as 64 lower-case hex digits.
 pub fn token_hash(token: &str) -> String {
     let digest = Sha256::digest(token.as_bytes());
@@ -439,6 +448,19 @@ fn token_cookie(headers: &axum::http::HeaderMap, cookie: &str) -> Option<String>
         }
     }
     None
+}
+
+/// The browser id from the `Cookie` header(s): the first `xexam_did` value that has the shape of a token.
+pub fn device_id_token(headers: &axum::http::HeaderMap) -> Option<String> {
+    token_cookie(headers, DEVICE_ID_COOKIE)
+}
+
+/// `Set-Cookie` value of the browser-id cookie (always refreshed to the full 400 days when it is sent).
+pub fn device_id_cookie(value: &str, secure: bool) -> String {
+    format!(
+        "{DEVICE_ID_COOKIE}={value}; HttpOnly; SameSite=Strict; Path=/; Max-Age={DEVICE_ID_TTL_SECS}{}",
+        if secure { "; Secure" } else { "" }
+    )
 }
 
 /// The session token from the `Cookie` header(s): the first `xexam_session` value that has the shape of a token.
@@ -589,6 +611,45 @@ pub fn unix_now() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn device_id_cookie_has_the_contract_attributes() {
+        let v = new_device_id();
+        assert_eq!(v.len(), TOKEN_LEN);
+        assert_eq!(
+            device_id_cookie(&v, false),
+            format!("xexam_did={v}; HttpOnly; SameSite=Strict; Path=/; Max-Age=34560000")
+        );
+        assert!(device_id_cookie(&v, true).ends_with("; Max-Age=34560000; Secure"));
+        assert_eq!(DEVICE_ID_TTL_SECS, 34_560_000);
+        // two ids are never equal and the stored hash is the SHA-256 of the value
+        assert_ne!(new_device_id(), new_device_id());
+        assert_eq!(token_hash(&v).len(), 64);
+    }
+
+    #[test]
+    fn device_id_token_reads_the_first_token_shaped_value() {
+        use axum::http::{header, HeaderMap, HeaderValue};
+        let good = new_device_id();
+        let mut h = HeaderMap::new();
+        h.append(
+            header::COOKIE,
+            HeaderValue::from_str(&format!(
+                "xexam_did=short; xexam_session=zzz; xexam_did={good}"
+            ))
+            .expect("header"),
+        );
+        assert_eq!(device_id_token(&h).as_deref(), Some(good.as_str()));
+        // the session cookie reader ignores it and the other way round
+        assert_eq!(session_token(&h), None);
+        let mut none = HeaderMap::new();
+        none.append(
+            header::COOKIE,
+            HeaderValue::from_static("xexam_did=has space and is not 43 chars"),
+        );
+        assert_eq!(device_id_token(&none), None);
+        assert_eq!(device_id_token(&HeaderMap::new()), None);
+    }
 
     #[test]
     fn display_name_rule() {

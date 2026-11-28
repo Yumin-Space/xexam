@@ -599,7 +599,9 @@ pub(super) async fn dispatch(
             | "/internal/ai/import/check"
             | "/internal/ai/geo/next"
             | "/internal/ai/geo/result"
-            | "/internal/ai/geo/source",
+            | "/internal/ai/geo/source"
+            | "/internal/ai/push/next"
+            | "/internal/ai/push/result",
         ) => {
             if !st.0.ai_link.accepts(headers) {
                 body::drain(&mut body, 0, MAX_BODY.saturating_mul(4)).await;
@@ -641,6 +643,8 @@ pub(super) async fn dispatch(
                 "/internal/ai/geo/next" => geo_next(st, &data).await,
                 "/internal/ai/geo/result" => geo_result(st, &data).await,
                 "/internal/ai/geo/source" => geo_source(st, &data).await,
+                "/internal/ai/push/next" => push_next(st, &data).await,
+                "/internal/ai/push/result" => push_result(st, &data).await,
                 _ => log_lines(st, &data),
             };
             match answer {
@@ -1239,11 +1243,182 @@ async fn geo_result(
                     store.geo_fill_all(&c.ip, &c.place)?;
                 } else {
                     store.geo_apply(&c.ip, &c.place, c.since, &c.signin_users, &c.active_users)?;
+                    // v3.1: the device records of the same sign-ins and requests
+                    store.geo_apply_devices(
+                        &c.ip,
+                        &c.place,
+                        c.since,
+                        &c.signin_devices,
+                        &c.active_devices,
+                    )?;
                 }
             }
             Ok(())
         })
         .await?;
+    }
+    Ok(json!({ "ok": true }))
+}
+
+/// Longest wait of one `POST /internal/ai/push/next` (milliseconds).
+const PUSH_WAIT_MAX_MS: u64 = 20_000;
+/// A courier poll never sleeps less than this between two lease attempts (milliseconds): no hot loop on odd rows.
+const PUSH_MIN_SLEEP_MS: u64 = 1_000;
+
+/// `POST /internal/ai/push/next` `{"waitMs": 0..=20000}` → `{"jobs": [Job]}` (0 to 20 jobs, contracts B.11). A long poll: the
+/// answer comes at once when messages are due, else when one becomes due, when `waitMs` has passed or when the backend shuts
+/// down (empty). Every call records the poll time (courier presence). The messages are encrypted and signed here, at lease
+/// time; the courier sees neither the keys of the subscription nor the plaintext.
+async fn push_next(
+    st: &AppState,
+    data: &serde_json::Map<String, Value>,
+) -> Result<Value, AppError> {
+    exact_keys(data, &["waitMs"])?;
+    let wait = match data.get("waitMs").and_then(Value::as_u64) {
+        Some(w) if w <= PUSH_WAIT_MAX_MS => w,
+        _ => return Err(bad_request()),
+    };
+    let started = Instant::now();
+    let limit = Duration::from_millis(wait);
+    loop {
+        let now = st.0.store.unix_now();
+        st.0.push.note_poll(now);
+        if let Some(key) = st.0.push.key() {
+            let subject = st.0.push.subject();
+            let store = st.0.store.clone();
+            // A read-only look first: a poll with nothing due takes no write transaction
+            let jobs = super::blocking(move || {
+                if !store.push_due(now)? {
+                    return Ok(Vec::new());
+                }
+                store.push_lease(now, crate::database::store::LEASE_BATCH, &key, &subject)
+            })
+            .await?;
+            if !jobs.is_empty() {
+                return Ok(json!({
+                    "jobs": jobs
+                        .into_iter()
+                        .map(|j| json!({
+                            "id": j.id,
+                            "tries": j.tries,
+                            "endpoint": j.endpoint,
+                            "ttl": j.ttl,
+                            "urgency": j.urgency,
+                            "topic": j.topic,
+                            "authorization": j.authorization,
+                            "body": j.body,
+                        }))
+                        .collect::<Vec<_>>(),
+                }));
+            }
+        }
+        let left = limit.saturating_sub(started.elapsed());
+        if st.0.push.is_closed() || left.is_zero() {
+            return Ok(json!({ "jobs": [] }));
+        }
+        // Sleep until the next row is due, at most until the wait ends; a wake-up (something became due) or the shutdown
+        // ends the sleep early
+        // Without a loaded VAPID key nothing can be leased, so due rows must not shorten the sleep (no polling loop)
+        let next = if st.0.push.key().is_some() {
+            let store = st.0.store.clone();
+            super::blocking(move || store.push_next_due(now)).await?
+        } else {
+            None
+        };
+        let until_due = next.map_or(left, |t| Duration::from_secs((t - now).max(0) as u64));
+        let sleep = until_due
+            .max(Duration::from_millis(PUSH_MIN_SLEEP_MS))
+            .min(left);
+        st.0.push.wait(sleep).await;
+    }
+}
+
+/// One validated entry of `POST /internal/ai/push/result`.
+fn parse_push_result(v: &Value) -> Result<crate::database::store::PushJobResult, AppError> {
+    let Value::Object(m) = v else {
+        return Err(bad_request());
+    };
+    exact_keys(m, &["id", "tries", "outcome", "status", "retryAfter"])?;
+    let int = |k: &str| m.get(k).and_then(Value::as_i64);
+    let (Some(id), Some(tries)) = (int("id"), int("tries")) else {
+        return Err(bad_request());
+    };
+    if id < 1 || tries < 1 {
+        return Err(bad_request());
+    }
+    let outcome = m
+        .get("outcome")
+        .and_then(Value::as_str)
+        .and_then(crate::database::store::PushOutcome::parse)
+        .ok_or_else(bad_request)?;
+    let status = match m.get("status") {
+        Some(Value::Null) => None,
+        Some(Value::Number(_)) => match int("status") {
+            Some(s) if (0..=999).contains(&s) => Some(s),
+            _ => return Err(bad_request()),
+        },
+        _ => return Err(bad_request()),
+    };
+    let retry_after = match m.get("retryAfter") {
+        Some(Value::Null) => None,
+        Some(Value::Number(_)) => match int("retryAfter") {
+            Some(s) if (1..=3600).contains(&s) => Some(s),
+            _ => return Err(bad_request()),
+        },
+        _ => return Err(bad_request()),
+    };
+    Ok(crate::database::store::PushJobResult {
+        id,
+        tries,
+        outcome,
+        status,
+        retry_after,
+    })
+}
+
+/// `POST /internal/ai/push/result` `{"results": [R, ...]}` (1 to 20) → `{"ok": true}`. `R` is `{"id", "tries", "outcome",
+/// "status", "retryAfter"}`. The whole batch is refused (400) on the first bad entry; a result for a row that is not leased
+/// with that try number is ignored (late or duplicate). When every result of a call of two or more is `auth`, one
+/// `system.pushAuth` record per push-service host is written, at most once an hour per host.
+async fn push_result(
+    st: &AppState,
+    data: &serde_json::Map<String, Value>,
+) -> Result<Value, AppError> {
+    exact_keys(data, &["results"])?;
+    let Some(Value::Array(list)) = data.get("results") else {
+        return Err(bad_request());
+    };
+    if list.is_empty() || list.len() > 20 {
+        return Err(bad_request());
+    }
+    let results = list
+        .iter()
+        .map(parse_push_result)
+        .collect::<Result<Vec<_>, _>>()?;
+    let all_auth = results.len() >= 2
+        && results
+            .iter()
+            .all(|r| r.outcome == crate::database::store::PushOutcome::Auth);
+    let key_id = st.0.push.key().map(|k| k.key_id());
+    let store = st.0.store.clone();
+    let now = store.unix_now();
+    let effects = super::blocking(move || {
+        results
+            .iter()
+            .map(|r| store.push_result(now, r, key_id.as_deref()))
+            .collect::<Result<Vec<_>, _>>()
+    })
+    .await?;
+    if all_auth {
+        let hosts: BTreeSet<String> = effects.into_iter().filter_map(|e| e.host).collect();
+        for host in hosts {
+            if st.0.push.auth_note_allowed(&host, now) {
+                st.0.activity.record(crate::activity::Entry::system(
+                    "system.pushAuth",
+                    Some(json!({ "host": host })),
+                ));
+            }
+        }
     }
     Ok(json!({ "ok": true }))
 }

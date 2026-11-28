@@ -31,6 +31,7 @@ const FILE_SKIPS: Record<string, string> = {
   'main.rs': 'console output of the command-line program; never sent to the browser',
   'database/schema.rs': 'SQL schema text (its comments are Chinese); not a message',
   'export/docx.rs': 'v1.6 Word download: document labels and headings written into the file; not a message',
+  'push/texts.rs': 'v3.1 notification texts rendered on the server in the user\'s language; never shown by the frontend',
   'export/xlsx.rs': 'v1.6 Excel download: the header row and answer headings written into the file; not a message',
 };
 

@@ -80,6 +80,7 @@ fn app() -> App {
         ai_link: Default::default(),
         activity: Default::default(),
         gates: Default::default(),
+        push: Default::default(),
     }));
     App {
         router: build_router(state),
@@ -1067,7 +1068,7 @@ async fn a_plain_user_sees_only_their_banks_on_every_route() {
     );
     assert_eq!(
         get(&a, "/api/banks", &nc).await.json(),
-        json!({"banks": []})
+        json!({"banks": [], "categories": []})
     );
 
     // /api/bank and /api/banks: only Herbs
@@ -1400,7 +1401,7 @@ async fn a_bank_manager_imports_updates_and_deletes_only_their_own_banks() {
     // bob sees nothing of it
     assert_eq!(
         get(&a, "/api/banks", &bc).await.json(),
-        json!({"banks": []})
+        json!({"banks": [], "categories": []})
     );
 
     // updating: her own bank yes; the administrator's bank, another user's bank or the legacy bank no (before any parse)
@@ -1506,7 +1507,7 @@ async fn a_bank_manager_imports_updates_and_deletes_only_their_own_banks() {
     );
     assert_eq!(
         get(&a, "/api/banks", &ac).await.json(),
-        json!({"banks": []})
+        json!({"banks": [], "categories": []})
     );
     post(
         &a,

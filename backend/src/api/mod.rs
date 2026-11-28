@@ -51,12 +51,16 @@ use std::time::Duration;
 pub mod activity;
 pub mod attempt;
 pub mod auth;
+mod categories;
+mod devices;
 pub mod guard;
 pub mod internal;
 mod internal_gen;
 mod internal_study;
 pub mod json;
+mod push;
 pub mod response;
+mod saved;
 
 use auth::Authed;
 use json::{parse_py_json, PyVal};
@@ -109,6 +113,8 @@ pub struct Inner {
     pub activity: crate::activity::Sink,
     /// v1.3: in-memory gates that keep requests read-only (session touch, last-active minute, cookie re-send)
     pub gates: crate::auth::SessionGates,
+    /// v3.1: web push state in memory (the VAPID key, courier presence, the wake-up of the courier's long poll)
+    pub push: crate::push::Push,
 }
 
 impl AppState {
@@ -153,6 +159,7 @@ impl AppState {
             ai_link: Default::default(),
             activity,
             gates: Default::default(),
+            push: crate::push::Push::new(),
         }))
     }
 }
@@ -698,6 +705,16 @@ async fn get_route(
     if path == "/api/banks/download" {
         return download_bank(st, query, head_only, authed).await;
     }
+    if path == "/api/devices" || path == "/api/users/devices" || path == "/api/push/config" {
+        // v3.1: signed-in routes (the admin route is checked by `auth::ROUTES`); the handlers need the whole session
+        let a = authed.ok_or(AppError::Status(401, response::MSG_SIGN_IN_REQUIRED))?;
+        let resp = match path {
+            "/api/devices" => devices::list(st, a).await?,
+            "/api/users/devices" => devices::admin_list(st, a, query).await?,
+            _ => push::config(st, a).await?,
+        };
+        return Ok(resp);
+    }
     let user = user_of(authed)?;
     let eng = st.0.engine.clone();
     let value: Value = match path {
@@ -898,6 +915,16 @@ async fn post_body(
         "/api/users/geo-source" => activity::geo_source(st, a, &data).await,
         "/api/activity/settings" => activity::update_settings(st, a, &data).await,
         "/api/activity/visit" => activity::visit(st, a, &data).await,
+        "/api/devices/hello" => devices::hello(st, a, &data).await,
+        "/api/devices/signout" => devices::signout(st, a, &data).await,
+        "/api/devices/signout-others" => devices::signout_others(st, a).await,
+        "/api/users/devices/signout" => devices::admin_signout(st, a, &data).await,
+        "/api/push/subscribe" => push::subscribe(st, a, &data).await,
+        "/api/push/test" => push::test(st, a).await,
+        "/api/study/saved" => saved::report(st, a, &data).await,
+        "/api/study/saved/discard" => saved::discard(st, a, &data).await,
+        "/api/banks/categories" => categories::edit(st, a, &data).await,
+        "/api/banks/category" => categories::move_banks(st, a, &data).await,
         "/api/import/confirm" => confirm(st, a, &data).await,
         "/api/import/cancel" => {
             // Only the caller's own staged upload: another user's preview is never touched
@@ -916,8 +943,16 @@ async fn post_body(
                 "correct": attempt.results.iter().filter(|r| r.correct).count(),
                 "end": attempt.end.map(|e| e.as_str()),
             });
+            let saved_key = tag.key.clone();
             let progress =
                 blocking(move || eng.record_attempt_tagged(&v, &attempt, &answers, &tag)).await?;
+            // v3.1: the answer finished the saved practice / exam of this session (never fails the answer)
+            if let Some(key) = saved_key {
+                let store = st.0.store.clone();
+                if let Err(e) = blocking(move || store.saved_done(user, &key)).await {
+                    tracing::warn!("clearing the saved-session marker failed: {e:?}");
+                }
+            }
             Ok(crate::activity::with_note(
                 json_resp(StatusCode::OK, &progress, false),
                 None,

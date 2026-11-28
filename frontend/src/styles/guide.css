@@ -1,0 +1,65 @@
+/* The phone setup guide card (v3.1): Home, and Settings → "Show the setup guide". One calm column; on phones the buttons are
+   full width and every touch target is at least 44 px. Colours come from the theme tokens, so light and dark follow. */
+.gd-card { margin: 0 0 16px; padding: 16px 18px 18px; position: relative; }
+.gd-head { display: flex; align-items: flex-start; gap: 8px; }
+.gd-headtext { flex: 1 1 auto; min-width: 0; }
+.gd-card .gd-title { margin: 2px 0 0; font-size: 16.5px; font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
+.gd-count { margin: 2px 0 0; font-size: 13px; color: var(--ink3); }
+/* The close button: a 44 x 44 hit area, the icon itself stays small and sits in the corner */
+.gd-close {
+  flex: none; display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; margin: -8px -10px 0 0;
+  padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--ink3); cursor: pointer;
+}
+.gd-close:focus-visible { outline: 2px solid var(--print); outline-offset: -2px; }
+@media (hover: hover) { .gd-close:hover { background: var(--hover); color: var(--ink); } }
+.gd-close-ico { width: 18px; height: 18px; }
+
+/* The three steps: a dot and a short label each, the current one in the print blue, the finished ones filled */
+.gd-steps { display: flex; gap: 6px; margin: 12px 0 0; padding: 0; list-style: none; }
+.gd-step { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--ink3); }
+.gd-dot { display: block; height: 4px; border-radius: 2px; background: var(--line); }
+.gd-step.is-done .gd-dot { background: var(--print); opacity: .55; }
+.gd-step.is-on .gd-dot { background: var(--print); }
+.gd-step.is-on { color: var(--ink); font-weight: 600; }
+.gd-step-l { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.gd-body { margin-top: 12px; }
+.gd-text { margin: 0 0 12px; font-size: 14.5px; line-height: 1.6; color: var(--ink2); overflow-wrap: anywhere; }
+.gd-note { color: var(--ink3); font-size: 13.5px; }
+.gd-acts { display: flex; flex-wrap: wrap; gap: 8px; }
+.gd-card .btn { min-height: 44px; }
+.gd-err { margin: 12px 0 0; font-size: 13.5px; line-height: 1.5; color: var(--danger); overflow-wrap: anywhere; }
+
+/* The iPhone / iPad steps: a number, the sentence, and the drawing under it */
+.gd-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 18px; }
+.gd-item { display: flex; align-items: flex-start; gap: 10px; }
+.gd-item-n {
+  flex: none; width: 24px; height: 24px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+  background: var(--print-soft); color: var(--print); font-size: 13px; font-weight: 600; margin-top: 1px;
+}
+.gd-item-body { flex: 1 1 auto; min-width: 0; }
+.gd-item-t { margin: 0 0 8px; font-size: 14.5px; line-height: 1.55; color: var(--ink2); overflow-wrap: anywhere; }
+.gd-art-box { display: flex; justify-content: center; padding: 8px; border-radius: 10px; background: var(--fill); }
+.gd-art { display: block; width: 100%; max-width: 240px; height: auto; }
+
+/* The drawings (components/guide-art.ts): strokes and fills from the tokens */
+.ga-frame { fill: var(--card); stroke: var(--field-line); stroke-width: 1.5; }
+.ga-bar { fill: var(--line); }
+.ga-fill { fill: var(--fill); }
+.ga-toolbar { fill: var(--fill); stroke: var(--line); stroke-width: 1; }
+.ga-dot { fill: var(--line); }
+.ga-icon { fill: var(--print-soft); stroke: var(--print); stroke-width: 1.2; }
+.ga-hi { fill: var(--print-soft); stroke: var(--print); stroke-width: 1.6; }
+.ga-glyph { fill: none; stroke: var(--ink3); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.ga-glyph-hi { stroke: var(--print); }
+.ga-glyph-dim { stroke: var(--line); }
+.ga-text { fill: var(--ink); }
+
+/* PHONE: full-width buttons, a little less padding */
+@media (max-width: 600px), (orientation: landscape) and (max-height: 500px) {
+  .gd-card { padding: 14px 14px 16px; }
+  .gd-acts { flex-direction: column; }
+  .gd-acts .btn { width: 100%; }
+  .gd-art { max-width: 100%; }
+}
+@media (prefers-reduced-motion: reduce) { .gd-close { transition: none; } }

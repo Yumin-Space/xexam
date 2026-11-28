@@ -4,6 +4,7 @@
 
 > This document covers every upgrade path, newest first:
 >
+> - **v3.0 → v3.1** (section 000000000000000000): `docker compose pull` and `docker compose up -d`, nothing else is required. The main database moves to schema 13 on start after the copy `backups/xexam-schema12-<date-time>.db` (five new tables and three new columns: question bank categories, signed-in devices, notifications and the markers of unfinished practices); the AI database stays at schema 11. Two optional new variables (`XEXAM_PUSH_SUBJECT`, `XEXAM_PUSH_VAPID_KEY`), no required `docker-compose.yml` or Nginx change for a standard install. Rolling back to v3.0 works without a restore; deleting a user afterwards needs the SQL of section 000000000000000000.4.
 > - **v2.9 → v3.0** (section 00000000000000000): nothing to do besides `docker compose pull` and `docker compose up -d`. No database change (main schema 12, AI schema 11), no new variable, no `docker-compose.yml` or Nginx change. Rolling back to v2.9 needs no restore.
 > - **v2.8 → v2.9** (section 0000000000000000): nothing to do besides `docker compose pull` and `docker compose up -d`. No database change (main schema 12, AI schema 11), no new variable, no `docker-compose.yml` or Nginx change. Rolling back to v2.8 needs no restore.
 > - **v2.7 → v2.8** (section 000000000000000): nothing to do besides `docker compose pull` and `docker compose up -d`. No database change (main schema 12, AI schema 11), no new variable, no `docker-compose.yml` or Nginx change. Rolling back to v2.7 needs no restore.
@@ -34,6 +35,39 @@
 > **Going straight to v1.0 from an older version** applies every step of the sections below in one go with the current images: one backup named after the schema the database had, then the migration to the current schema (6 for the main database, 4 for the AI database). The sections below are written for the version they lead to, so where one says schema 5, v1.0 ends at schema 6, the log says `Upgraded the database to schema 6`, `/api/info` shows `1.0` and ai-service creates its database at schema 4.
 >
 > **Every upgrade from v0.6 or older retires all your questions.** Since v0.7 only the six-column Excel layout can be imported, and every start retires the questions that were imported from the three- and four-column layouts of earlier versions; every question of v0.6 and older is in one of those. The banks, the study records and the statistics stay. Prepare a six-column version of each workbook before you upgrade (section 12 of [usage.md](usage.md)), and update each bank with it afterwards (section 2.4).
+
+## 000000000000000000. Upgrading from v3.0 to v3.1
+
+This section is numbered 000000000000000000 because it is the newest one. The older sections keep their numbers.
+
+### 000000000000000000.1 What changes
+
+- **The main database** moves from schema 12 to **schema 13**, once, on the first start of the v3.1 backend, after the copy `backups/xexam-schema12-<date-time>.db` (only when the file holds data; from an older schema the upgrade goes straight to 13 with the one backup of that older schema). The step only adds: the tables `bank_categories`, `devices`, `push_subscriptions`, `saved_sessions` and `push_outbox`, the columns `banks.category_id`, `banks.sort` and `sessions.device_id`, and five indexes; it drops one unused index (`idx_questions_sheet`). No row is changed. Keep free disk space of about the size of the database for the copy. Details: section 6.21 of [database.md](database.md).
+- **The AI database** stays at **schema 11**; nothing changes in it. The heartbeat between the services is unchanged, so a v3.0 backend with a v3.1 ai-service, and the other way round, still work (without notifications; section 5 of [architecture.md](architecture.md)).
+- **Notifications** need three things: the new xexam-ai-service (it delivers them), an `https` address of Xexam (a Cloudflare Tunnel or `localhost`; on a plain LAN address the buttons are disabled with the reason), and every user switching them on once per device. The server creates its VAPID key at the first start in `push-vapid.key` next to `xexam.db`; it is not in the database or in the backups, so **a copy of the whole data volume contains it** and a restore of only `xexam.db` does not (devices then subscribe again). Two optional variables: `XEXAM_PUSH_SUBJECT` and `XEXAM_PUSH_VAPID_KEY` (section 3 of [deployment.md](deployment.md)). The version push of the first start reaches nobody (no device has a subscription yet); the first useful one is v3.1 → the next version.
+- **Devices**: every existing session is linked to a device at the next request of its browser (the app does this by itself at its start). Until then the device list does not show it. Nothing signs anyone out.
+- **Network**: ai-service now also connects to the push services (`fcm.googleapis.com`, `updates.push.services.mozilla.com`, `web.push.apple.com`, `*.push.apple.com`, `*.notify.windows.com`). If you restrict its outbound traffic, allow these; without them notifications are queued and expire after their lifetime, nothing else breaks.
+- **Nginx**: the frontend image serves `/sw.js` and `/manifest.webmanifest` with their own headers. If you replaced the Nginx configuration of the image with your own, add the two `location` blocks (section 4 of [deployment.md](deployment.md)). Behind Cloudflare Access, test the install icon and, if it is missing, add an Access bypass for the static paths (never for `/api/`).
+- **Scripts that call the API**: `GET /api/banks` has `categories` and the keys `categoryId` and `sort` per bank; `GET /api/auth/state` has `categories`; `GET /api/users` rows have `devices`; `GET` / `POST /api/settings` have the keys `push` and `tz`; thirteen new routes. See "Changes in v3.1" in section 7 of [api.md](api.md).
+
+### 000000000000000000.2 Upgrade
+
+`docker compose pull`, then `docker compose up -d`. The data volumes stay as they are. The backend log says `Upgraded the database to schema 13. A copy of the previous version was saved first: /data/backups/xexam-schema12-….db …` and, at the same start, `push: …` lines about the key.
+
+### 000000000000000000.3 Check
+
+The app menu shows **Xexam v3.1**. **Settings** has **Notifications**, **Install as an app** (phones and tablets only) and **Signed-in devices** (this device first); **Profile** has **Time zone**; the **Banks** page of an administrator has **Manage categories**; **User management** has a devices icon in every row. On a phone, Home shows the setup guide once. With notifications enabled, **Send a test** shows a notification within a minute (if it does not, the xexam-ai-service container is not running or cannot reach the push service: check `docker compose logs ai-service`).
+
+### 000000000000000000.4 Going back to v3.0
+
+Change `:latest` to `:v3.0` for the three images and run `docker compose up -d`. **No restore is needed**: a v3.0 backend opens the schema-13 file as it is (it treats a newer schema as current, ignores the new tables and columns, and the sessions it creates have no device). New banks it creates are uncategorised; the settings keys `push` and `tz` are ignored. The only thing that fails afterwards is **deleting a user who has rows in `devices`, `push_subscriptions` or `saved_sessions`** (FOREIGN KEY constraint failed; the transaction rolls back and nothing is lost). Run this once, then delete again (stop the backend, or run it with `sqlite3` while it runs):
+
+```sql
+DELETE FROM push_outbox; DELETE FROM push_subscriptions; DELETE FROM saved_sessions;
+UPDATE sessions SET device_id = NULL; DELETE FROM devices;
+```
+
+To get back the exact state from before the upgrade instead, stop the backend and restore `backups/xexam-schema12-<date-time>.db` (everything written since is lost). Upgrading to v3.1 again is a normal open: the file is already schema 13, devices register again at their next request and phones subscribe again at their next app open. The file `push-vapid.key` stays in the volume; v3.0 ignores it.
 
 ## 00000000000000000. Upgrading from v2.9 to v3.0
 

@@ -2,9 +2,25 @@
 
 # 数据库
 
-> 数据库是 SQLite，**只有一个文件 `xexam.db`**。Rust 后端从旧 Python 版的数据库起步：原来的建表语句（schema v1）一字不差地保留，直到 v10 的每个 schema 都只是往上加东西（新表和新列）：**schema v2**（v0.5：题库、考试详情、设置）、**schema v3**（v0.6：用户和登录）、**schema v4**（v0.7：按用户设置题库、题库所有者、练习记录）、**schema v5**（v0.8：每个用户的 AI+ 功能授权和一个身份标记）和 **schema v6**（v0.9：一条记录是从哪次练习或考试会话保存的，即那次会话的 key 和开始时间）。*v1.6* 起主数据库是 schema **10**（每用户的题库下载权限，第 6.16 节），*v2.0* 起是 schema **11**（数据库整理：九张表带外键重建，旧表删除，第 6.17 节），*v2.6* 起是 schema **12**（用户的显示名 `users.display_name`，第 6.19 节）。新版本第一次启动时，会先写一份备份副本，再自动迁移已有的数据库（第 6 节）。从 v0.7 起，数据库以 **WAL 模式**运行（第 2 节）。
-> 从 v0.8 起，ai-service 有**第二个、独立的数据库** `xexam-ai.db`，放在它自己的卷里（第 8 节）；从 v2.1 起它的 schema 是 **11**（v2.0 是 10，v1.9 是 9，v1.4 是 8，v1.3 是 7，v1.1 是 6，v1.0 是 4，v0.9 是 3）。两个服务从不打开对方的数据库。**v1.1 把主数据库升级到 schema v7**（第 6 节）；AI 数据库不影响它。
-> 依据：[audit/database.md](history/audit/database.md)；黄金测试：`backend/tests/db_golden.rs`（对着 `tests/baseline/fixtures/sample.db`（由旧的 Python 实现生成）和已提交的快照运行）。迁移和它们的备份在 `backend/tests/v05_banks_records_settings.rs`（v2）、`v06_users_and_sign_in.rs`（v3）、`v065_bank_access_and_practice.rs`（v4）、`v07_bank_access_and_layouts.rs`（v4 的题库权限、预发布版数据库的转换、旧格式题目的下架）、`v07_wal_and_logs.rs`（WAL 模式）、`v08_ai_link.rs`（v5）、`v09_ai_study.rs`（v6，后端的学习路由）和 `v20_db.rs`（v11，整理）里测试；AI 数据库在 `ai-service/tests/`（schema 3 见 `v09_store.rs`，schema 10 见 `v20_schema.rs`）和 `ai-service/src/store/` 的单元测试里测试。
+> 数据库是 SQLite，**只有一个文件 `xexam.db`**。Rust 后端从旧 Python 版的数据库起步：原来的建表语句（schema v1）一字不差地保留，之后的每个 schema 都只是往上加东西（新表和新列）；schema 11 还把九张表带外键重建了一遍。已有的数据库会在新版本第一次启动时自动迁移，迁移前先写一份备份（第 6 节）。从 v0.7 起数据库运行在 **WAL 模式**（第 2 节）。schema 编号存在 `meta`（`schema`）里；哪个版本带来哪个 schema，见下表。
+> 从 v0.8 起，ai-service 有**第二个、独立的数据库** `xexam-ai.db`，放在它自己的卷里（第 8 节）；从 v2.1 起它的 schema 是 **11**。两个服务从不打开对方的数据库。
+> 依据：[audit/database.md](history/audit/database.md)；黄金测试：`backend/tests/db_golden.rs`（对着 `tests/baseline/fixtures/sample.db`（由旧的 Python 实现生成）和已提交的快照运行）。迁移和它们的备份在 `backend/tests/v05_banks_records_settings.rs`（v2）、`v06_users_and_sign_in.rs`（v3）、`v065_bank_access_and_practice.rs`（v4）、`v07_bank_access_and_layouts.rs`（v4 的题库权限、发布前数据库的转换、旧版式题目的下架）、`v07_wal_and_logs.rs`（WAL 模式）、`v08_ai_link.rs`（v5）、`v09_ai_study.rs`（v6，后端的学习路由）、`v20_db.rs`（v11 的整理，以及所有旧 schema 最后都升到 13）和 `v31_migrate.rs`（v13）里测试；AI 数据库在 `ai-service/tests/`（`v09_store.rs` 测 schema 3，`v20_schema.rs` 测 schema 10）和 `ai-service/src/store/` 的单元测试里测试。**第 3、8.2、9 节的每一张图都由 `backend/tests/docs_diagrams.rs` 和 `ai-service/tests/docs_diagrams.rs` 对着全新的数据库检查**（表、列、类型、主键和外键，以及三种语言一致），所以图不会和代码脱节。
+
+| Schema | 应用版本 | 新增了什么 |
+|---|---|---|
+| 1 | v0.4 及更早（Python 版） | 原来的表：questions、attempts、stats、imports、meta |
+| 2 | v0.5 | 题库、考试详情、设置 |
+| 3 | v0.6 | 用户和登录 |
+| 4 | v0.7 | 每个用户可见的题库、题库所有者、练习记录 |
+| 5 | v0.8 | 每个用户的 AI+ 授权和身份戳 |
+| 6 | v0.9 | 保存记录的那次会话的 key 和开始时间 |
+| 7 | v1.1 | 考试的时间限制和结束方式，AI 生成的题库 |
+| 8 | v1.3 | 会话、活动日志、系统设置 |
+| 9 | v1.4 | 最近活动的各列 |
+| 10 | v1.6 | 每个用户的下载题库权限 |
+| 11 | v2.0 | 整理：九张表带外键重建，删除旧表 |
+| 12 | v2.6 | 用户的显示名 |
+| 13 | v3.1 | 分类、设备、推送、暂存会话的标记 |
 
 ## 1. 文件在哪里
 
@@ -19,12 +35,14 @@
 
 - **`xexam.db-wal` 和 `xexam.db-shm`** 在后端运行时存在（WAL 模式，第 2 节）。`-wal` 文件里是最近提交的修改，直到 SQLite 把它们复制进 `xexam.db`。后端正常停止时，所有内容都复制进 `xexam.db`，`xexam.db-wal` 被清空；这两个文件可能空着留下，没有害处。它们是数据库的一部分：后端运行时千万不要删，复制时要和 `xexam.db` 一起复制（第 5 节）。
 - **`backups/`** 存放 schema 迁移前写的副本（第 6 节），例如 `/data/backups/xexam-schema3-20261111-140501.db`。程序永远不会删除这些文件；不再需要时请自己删掉。
+- **`push-vapid.key`**（v3.1）是 Web 推送服务器的私钥（第 4.12 节）。它只有一行，权限 0600，第一次启动时创建，**不在**数据库里：迁移备份里没有它，复制整个数据目录会带上它，只恢复 `xexam.db` 则带不回来（手机之后会重新订阅）。
 
 什么存在哪里：
 
 | 位置 | 内容 |
 |---|---|
 | 卷里的 `xexam.db`（运行时还有 `-wal` / `-shm`） | 题库及其所有者和题目（包括已下架的）、导入记录、用户（只存密码哈希）、他们的会话和每个用户能看到哪些题库、每个用户每道题的答题统计（错题本）、学习记录（考试和练习）和每道题的作答详情（从 v0.9 起还有每条记录是从哪次会话保存的，即那次会话的 key 和开始时间），以及设置（主题、界面语言、答完自动跳到下一题、题目语言） |
+| `xexam.db` 旁边的 `push-vapid.key`（v3.1） | Web 推送服务器的私钥（VAPID）。不属于数据库，也不在它的备份里 |
 | 卷里的 `backups/` | 每次 schema 迁移前写的数据库副本（从 `xexam-schema1-…` 到 `xexam-schema5-…`） |
 | 只在后端的内存里 | 系统日志、登录锁定和导入预览；重启后都从空的开始 |
 | 卷 `xexam_ai_auth`（v0.8） | 只有 `internal.token`，后端和 ai-service 共用的令牌；后端写入，ai-service 读取。没有数据库 |
@@ -56,18 +74,20 @@
 
 ## 3. 表
 
+共十八张表，分五个区域画图。每张图都画出**每一列，和 `sqlite_master` 里存的完全一致**（声明的类型；`PK` 主键，`FK` 外键，`UK` 唯一），图后面跟一张键和索引的表，因为图画不出部分索引、唯一索引和 `COLLATE NOCASE`。图里用到的别的区域的表画成空盒子。实线是外键（`|o--o{` 表示外键可以是 NULL）；虚线是故意不加外键的软引用。每张表还带有限定范围和枚举的 `CHECK` 约束，完整的语句在 `backend/src/database/schema.rs` 里。列清单说不清的事在第 4 节；每个 schema 的历史在第 6 节；整个数据库的关系合在一页上的图在第 9.1 节。
+
+### 3.1 题库与分类
+
+一个题库就是一个导入的工作簿（或一个 AI 生成的题库）；从工作簿里消失的题目是下架，不是删除（第 4.2 节）。从 v3.1 起，管理员可以把题库放进一层分类（`bank_categories`、`banks.category_id`、`banks.sort`；第 4.11 节）。
+
 ```mermaid
 erDiagram
-    questions {
-        TEXT id PK "题目身份（第 4.1 节）"
-        TEXT sheet "工作表名（索引：sheet, active）"
-        INTEGER row_no "在 Excel 里的行号（只用于显示）"
-        INTEGER seq "在题库里的顺序"
-        TEXT data "整道题的 JSON（第 4.7 节）"
-        INTEGER active "1 上架 · 0 下架"
-        TEXT added_at "第一次进入题库的时间"
-        TEXT updated_at "最近一次导入或下架的时间"
-        INTEGER bank_id "banks.id（v2）"
+    bank_categories {
+        INTEGER id PK "自增，不复用（v13）"
+        TEXT name UK "1-60 个字符，忽略大小写唯一"
+        INTEGER sort "分类的排列位置，0..n-1"
+        INTEGER created_at "Unix 秒"
+        INTEGER updated_at "Unix 秒，改名时更新"
     }
     banks {
         INTEGER id PK "自增，永不重复使用（v2）"
@@ -76,7 +96,22 @@ erDiagram
         INTEGER legacy_ids "1 = 旧题库（题目 id 不限定在题库内）"
         TEXT created_at "题库的创建时间"
         TEXT updated_at "最近一次导入这个题库的时间"
-        INTEGER owner_id "把它作为新题库导入的用户的 users.id（v4）"
+        INTEGER owner_id FK "把它作为新题库导入的用户的 users.id（v4）"
+        TEXT ai_job UK "AI 生成题库的任务键，其他为 NULL（v7）"
+        TEXT ai_meta "AI 生成题库的 JSON 信息（v7）"
+        INTEGER category_id FK "bank_categories.id，NULL = 未分类（v13）"
+        INTEGER sort "在所属分组内的位置 1..n；0 = 尚未排位（v13）"
+    }
+    questions {
+        TEXT id PK "题目身份（第 4.1 节）"
+        TEXT sheet "Sheet 名称"
+        INTEGER row_no "在 Excel 里的行号（只用于显示）"
+        INTEGER seq "在题库里的顺序"
+        TEXT data "整道题的 JSON（第 4.7 节）"
+        INTEGER active "1 上架 · 0 下架"
+        TEXT added_at "第一次进入题库的时间"
+        TEXT updated_at "最近一次导入或下架的时间"
+        INTEGER bank_id FK "banks.id（v2）"
     }
     imports {
         INTEGER id PK "自增"
@@ -88,35 +123,27 @@ erDiagram
         INTEGER restored "恢复"
         INTEGER skipped "读不出来"
         INTEGER total "导入后上架的题数"
-        INTEGER bank_id "banks.id（v2）"
+        INTEGER bank_id FK "banks.id（v2）"
     }
-    users {
-        INTEGER id PK "自增，永不重复使用（v3）"
-        TEXT username "唯一，不区分大小写"
-        TEXT password_hash "Argon2id，PHC 字符串"
-        TEXT role "admin · user"
-        INTEGER disabled "1 = 不能登录"
-        TEXT created_at "本地时间"
-        TEXT last_login_at "本地时间，可为空"
-        TEXT password_changed_at "本地时间"
-        INTEGER must_change_password "1 = 必须先设置新密码"
-        INTEGER new_banks "1 = 以后新建的每个题库都给他（v4）"
-        INTEGER can_manage_banks "1 = 可管理题库（v4）"
-        INTEGER ai_enabled "1 = 开启了 AI+ 功能（v5）"
-        TEXT uid "身份标记，32 位十六进制，永不改变（v5）"
-        TEXT display_name "别人看到的用户名，NULL = 还没设置；不区分大小写地唯一（v12）"
-    }
-    sessions {
-        TEXT token_hash PK "Cookie 值的 SHA-256（v3）"
-        INTEGER user_id "users.id（有索引）"
-        TEXT created_at "本地时间"
-        INTEGER last_seen_at "Unix 秒"
-        INTEGER expires_at "Unix 秒"
-    }
-    user_banks {
-        INTEGER user_id PK "users.id（v4）"
-        INTEGER bank_id PK "banks.id（有索引）"
-    }
+    bank_categories |o--o{ banks : "category_id"
+    users |o--o{ banks : "owner_id"
+    banks |o--o{ questions : "bank_id"
+    banks |o--o{ imports : "bank_id"
+```
+
+| 表 | 主键和唯一约束 | 外键（全部 ON DELETE NO ACTION） | 索引 |
+|---|---|---|---|
+| `bank_categories` | PK `id`; UNIQUE `(name NOCASE)` | — | — |
+| `banks` | PK `id` | `category_id` → `bank_categories(id)`; `owner_id` → `users(id)` | `idx_banks_category (category_id, sort)`<br>唯一 `idx_banks_ai_job (ai_job) WHERE ai_job IS NOT NULL`<br>`idx_banks_owner (owner_id)` |
+| `questions` | PK `id` | `bank_id` → `banks(id)` | `idx_questions_layout (bank_id, sheet, active, seq)`<br>`idx_questions_bank (bank_id, active)` |
+| `imports` | PK `id` | `bank_id` → `banks(id)` | `idx_imports_bank (bank_id)` |
+
+### 3.2 学习
+
+学习记录（`attempts`，每道题的作答在 `attempt_items`）、错题本背后每个用户的统计（`user_stats`），以及从 v3.1 起在服务器上标记“有一场练习或考试没做完”的 `saved_sessions`（第 4.13 节）。
+
+```mermaid
+erDiagram
     attempts {
         INTEGER id PK "自增"
         TEXT at "交卷时间"
@@ -127,20 +154,22 @@ erDiagram
         INTEGER percent "百分比（四舍六入五成双）"
         INTEGER seconds "用时（秒）"
         TEXT banks "题库的 JSON 快照（v2）"
-        INTEGER user_id "users.id（v3，有索引）"
+        INTEGER user_id FK "users.id（v3，有索引）"
         TEXT kind "exam · practice（v4）"
         TEXT session_key "练习 / 考试会话的 32 位十六进制数字，旧记录为 NULL（v6）"
         INTEGER started_at "会话开始时间，Unix 秒，和 session_key 一样可为 NULL（v6）"
+        INTEGER time_limit "考试时限（秒），没有则为 NULL（v7）"
+        TEXT ended "限时考试的结束方式（v7）"
     }
     attempt_items {
-        INTEGER attempt_id PK "attempts.id（v2）"
+        INTEGER attempt_id PK,FK "attempts.id（v2）"
         INTEGER seq PK "在这场考试里的位置"
         TEXT question_id "有索引"
         TEXT answer "提交的 JSON 数组，NULL = 未作答"
         INTEGER correct "1 · 0"
     }
     user_stats {
-        INTEGER user_id PK "users.id（v3）"
+        INTEGER user_id PK,FK "users.id（v3）"
         TEXT question_id PK "questions.id（无约束）"
         INTEGER attempts "答过几次"
         INTEGER correct "答对几次"
@@ -149,25 +178,182 @@ erDiagram
         INTEGER last "上一次的对错，可为空"
         TEXT at "最近一次作答的时间，可为空"
     }
+    saved_sessions {
+        INTEGER user_id PK,FK "users.id"
+        TEXT session_key PK "练习或考试会话的 32 位十六进制（之后的 attempts.session_key）"
+        INTEGER device_id FK "保存它的设备的 devices.id"
+        TEXT kind "exam · practice"
+        INTEGER answered "已回答的题数"
+        INTEGER total "会话的题数"
+        INTEGER started_at "会话开始，浏览器时钟，Unix 秒"
+        INTEGER time_left "仅限时考试：最近一次保存时剩余的秒数；0 = 时间已到"
+        INTEGER saved_at "最近一次被接受的上报的服务器时间"
+        INTEGER remind_at "下一次提醒时间，NULL = 不再提醒"
+        INTEGER reminders "已发出的提醒次数，0..3"
+    }
+    users |o--o{ attempts : "user_id"
+    attempts ||--o{ attempt_items : "attempt_id"
+    users ||--o{ user_stats : "user_id"
+    users ||--o{ saved_sessions : "user_id"
+    devices |o--o{ saved_sessions : "device_id"
+    questions |o..o{ attempt_items : "question_id (软引用，没有外键)"
+    questions |o..o{ user_stats : "question_id (软引用，没有外键)"
+    attempts |o..o{ saved_sessions : "session_key (软引用，没有外键)"
+    banks |o..o{ attempts : "banks (软引用, JSON)"
+```
+
+| 表 | 主键和唯一约束 | 外键（全部 ON DELETE NO ACTION） | 索引 |
+|---|---|---|---|
+| `attempts` | PK `id` | `user_id` → `users(id)` | `idx_attempts_session (user_id, session_key) WHERE session_key IS NOT NULL`<br>`idx_attempts_user (user_id)` |
+| `attempt_items` | PK `(attempt_id, seq)` | `attempt_id` → `attempts(id)` | `idx_attempt_items_question (question_id)` |
+| `user_stats` | PK `(user_id, question_id)` | `user_id` → `users(id)` | `idx_user_stats_question (question_id)` |
+| `saved_sessions` | PK `(user_id, session_key)` | `device_id` → `devices(id)`; `user_id` → `users(id)` | `idx_saved_sessions_device (device_id)` |
+
+### 3.3 用户与权限
+
+账号、登录会话，从 v3.1 起还有用户登录过的浏览器（`devices`；第 4.10 节）、普通用户能看到哪些题库（第 4.17 节）和每个用户的设置（第 4.14 节）。
+
+```mermaid
+erDiagram
+    users {
+        INTEGER id PK "自增，永不重复使用（v3）"
+        TEXT username UK "唯一，不区分大小写"
+        TEXT password_hash "Argon2id，PHC 字符串"
+        TEXT role "admin · user"
+        INTEGER disabled "1 = 不能登录"
+        TEXT created_at "本地时间"
+        TEXT last_login_at "本地时间，可为空"
+        TEXT password_changed_at "本地时间"
+        INTEGER must_change_password "1 = 必须先设置新密码"
+        INTEGER new_banks "1 = 以后新建的每个题库都给他（v4）"
+        INTEGER can_manage_banks "1 = 可管理题库（v4）"
+        INTEGER ai_enabled "1 = 开启了 AI+ 功能（v5）"
+        TEXT uid UK "身份标记，32 位十六进制，永不改变（v5）"
+        TEXT last_active_at "最近一次请求，本地时间"
+        TEXT last_login_ip "最近一次登录的地址、地点和 User-Agent（登录信息，v1.3）"
+        TEXT last_login_country
+        TEXT last_login_region
+        TEXT last_login_city
+        TEXT last_active_ip "最近一次请求的地址、地点和 User-Agent（v1.4）"
+        TEXT last_active_country
+        TEXT last_active_region
+        TEXT last_active_city
+        TEXT last_active_ua
+        INTEGER can_download_banks
+        TEXT display_name UK "别人看到的用户名，NULL = 还没设置；不区分大小写地唯一（v12）"
+    }
+    sessions {
+        TEXT token_hash PK "Cookie 值的 SHA-256（v3）"
+        INTEGER user_id FK "users.id（有索引）"
+        TEXT created_at "本地时间"
+        INTEGER last_seen_at "Unix 秒"
+        INTEGER expires_at "Unix 秒"
+        INTEGER started_at "登录时间，Unix 秒（v8）"
+        INTEGER remember "1 = 记住这个浏览器"
+        TEXT ip "登录时的地址（登录信息的眼睛打开时）"
+        TEXT ua "清理后的 User-Agent"
+        INTEGER device_id FK "devices.id，NULL = v3.1 之前创建，下次请求时关联（v13）"
+    }
+    devices {
+        INTEGER id PK "自增，不复用（v13）"
+        INTEGER user_id FK "users.id（一台设备只属于一个用户）"
+        TEXT cookie_hash "xexam_did Cookie 的 SHA-256（十六进制）；每个用户内唯一"
+        INTEGER created_at "首次出现，Unix 秒"
+        INTEGER active_at "最近一次请求，Unix 秒；用于 30 天规则"
+        TEXT active_ip "最近一次请求的地址（登录信息的眼睛打开时）"
+        TEXT active_country "该地址的地点"
+        TEXT active_region "该地址的地点"
+        TEXT active_city "该地址的地点"
+        INTEGER signin_at "这台设备上最近一次成功登录"
+        TEXT signin_ip "那次登录的地址"
+        TEXT signin_country "该地址的地点"
+        TEXT signin_region "该地址的地点"
+        TEXT signin_city "该地址的地点"
+        TEXT ua "清理后的 User-Agent，最多 256 个字符"
+        INTEGER app "1 = 以已安装的应用打开"
+        TEXT tz "设备上报的 IANA 时区，没有则为 NULL"
+        INTEGER signed_out_at "显式退出时设置，下次登录时清除"
+    }
+    user_banks {
+        INTEGER user_id PK,FK "users.id（v4）"
+        INTEGER bank_id PK,FK "banks.id（有索引）"
+    }
     user_settings {
-        INTEGER user_id PK "users.id（v3）"
-        TEXT key PK "theme · uiLang · autoAdvance · questionLang · answerFx"
+        INTEGER user_id PK,FK "users.id（v3）"
+        TEXT key PK "theme · uiLang · autoAdvance · questionLang · answerFx · push · tz"
         TEXT value "值的 JSON 文本"
     }
+    users ||--o{ sessions : "user_id"
+    users ||--o{ devices : "user_id"
+    devices |o--o{ sessions : "device_id"
+    users ||--o{ user_banks : "user_id"
+    banks ||--o{ user_banks : "bank_id"
+    users ||--o{ user_settings : "user_id"
+```
+
+| 表 | 主键和唯一约束 | 外键（全部 ON DELETE NO ACTION） | 索引 |
+|---|---|---|---|
+| `users` | PK `id`; UNIQUE `(username NOCASE)` | — | 唯一 `idx_users_display_name (display_name COLLATE NOCASE) WHERE display_name IS NOT NULL`<br>唯一 `idx_users_uid (uid) WHERE uid <> ''` |
+| `sessions` | PK `token_hash` | `device_id` → `devices(id)`; `user_id` → `users(id)` | `idx_sessions_device (device_id)`<br>`idx_sessions_user (user_id)` |
+| `devices` | PK `id`; UNIQUE `(user_id, cookie_hash)` | `user_id` → `users(id)` | — |
+| `user_banks` | PK `(user_id, bank_id)` | `bank_id` → `banks(id)`; `user_id` → `users(id)` | `idx_user_banks_bank (bank_id)` |
+| `user_settings` | PK `(user_id, key)` | `user_id` → `users(id)` | — |
+
+### 3.4 通知（v3.1）
+
+Web 推送（v3.1）：每台设备一个订阅，以及发件箱——它既是队列，也是保留 7 天的投递日志。设置 `push` 和 `tz` 在 `user_settings` 里（第 4.14 节），触发器的标记在 `meta` 里（第 4.15 节）。工作方式见第 4.12 节。
+
+```mermaid
+erDiagram
+    push_subscriptions {
+        INTEGER id PK "自增"
+        INTEGER device_id FK,UK "devices.id；每台设备最多一个订阅"
+        TEXT endpoint UK "推送服务的 https 地址；唯一，归最后确认它的设备"
+        TEXT p256dh "浏览器公钥，65 字节的 base64url（87 个字符）"
+        TEXT auth "认证密钥，16 字节的 base64url（22 个字符）"
+        TEXT key_id "订阅时服务器密钥 SHA-256 的前 16 位十六进制"
+        INTEGER created_at "Unix 秒"
+        INTEGER confirmed_at "应用最近一次订阅或重新确认"
+        INTEGER expires_at "浏览器给出的 expirationTime，没有则为 NULL"
+        INTEGER last_ok_at "推送服务最近一次接受的投递"
+        INTEGER last_fail_at "最近一次失败的投递"
+        INTEGER last_status "推送服务最近一次的 HTTP 状态；0 = 网络错误"
+        INTEGER failures "连续失败次数，成功后清零"
+    }
+    push_outbox {
+        INTEGER id PK "自增"
+        INTEGER subscription_id FK "push_subscriptions.id"
+        TEXT kind "remind · bank · version · test"
+        TEXT topic "合并用的键，也是 Topic 头（最多 32 个字符）"
+        TEXT payload "与语言无关的 JSON，最多 1024 字节；不含密文"
+        TEXT urgency "very-low · low · normal · high"
+        INTEGER created_at "Unix 秒"
+        INTEGER expires_at "有效期截止（从发送时间起算）"
+        TEXT state "queued · leased · sent · failed · expired"
+        INTEGER next_at "queued：最早发送时间（安静时段、退避）；leased：租约结束"
+        INTEGER tries "到目前的投递尝试次数"
+        INTEGER status "最近一次 HTTP 状态，出结果前为 NULL"
+        INTEGER done_at "已发送、失败或过期时设置；保留 7 天"
+    }
+    devices ||--o| push_subscriptions : "device_id"
+    push_subscriptions ||--o{ push_outbox : "subscription_id"
+```
+
+| 表 | 主键和唯一约束 | 外键（全部 ON DELETE NO ACTION） | 索引 |
+|---|---|---|---|
+| `push_subscriptions` | PK `id`; UNIQUE `(endpoint)`; UNIQUE `(device_id)` | `device_id` → `devices(id)` | — |
+| `push_outbox` | PK `id` | `subscription_id` → `push_subscriptions(id)` | `idx_push_outbox_due (next_at) WHERE state IN ('queued', 'leased')`<br>`idx_push_outbox_sub (subscription_id)` |
+
+### 3.5 系统
+
+数据库层面的键、全站开关和活动历史。`system_settings.updated_by` 和 `activity_log.user_id` 是审计快照，不是外键。
+
+```mermaid
+erDiagram
     meta {
-        TEXT key PK "schema · legacy_migrated · users_known · banks_known"
+        TEXT key PK "schema · legacy_migrated · users_known · banks_known · app_version · push_imports_seen · push_banks_seen"
         TEXT value
     }
-    banks ||--o{ questions : "questions.bank_id"
-    banks ||--o{ imports : "imports.bank_id"
-    users |o--o{ banks : "banks.owner_id"
-    users ||--o{ user_banks : "user_banks.user_id"
-    banks ||--o{ user_banks : "user_banks.bank_id"
-    users ||--o{ sessions : "sessions.user_id"
-    users ||--o{ attempts : "attempts.user_id"
-    attempts ||--o{ attempt_items : "attempt_id"
-    users ||--o{ user_stats : "user_stats.user_id"
-    users ||--o{ user_settings : "user_settings.user_id"
     system_settings {
         TEXT key PK "站点开关名"
         TEXT value
@@ -177,15 +363,38 @@ erDiagram
     activity_log {
         INTEGER id PK
         INTEGER ts "unix 秒"
+        INTEGER last_ts "最近一次合并的重复，Unix 秒"
+        INTEGER count "合并进这一行的重复次数"
         TEXT actor "user · anon · system"
         INTEGER user_id "快照，无外键"
+        TEXT username "登录名快照"
+        TEXT role "角色快照"
         TEXT action
+        TEXT object "操作涉及的对象"
+        TEXT detail "JSON 详情"
         TEXT result "ok · fail"
+        TEXT reason "拒绝的简短原因代码"
+        TEXT ip
+        TEXT country
+        TEXT region
+        TEXT city
+        TEXT ua
         TEXT source "backend · ai"
+        TEXT src_id UK "ai-service 转发的行的去重键"
     }
+    users |o..o{ system_settings : "updated_by (软引用，没有外键)"
+    users |o..o{ activity_log : "user_id (软引用，没有外键)"
 ```
 
-十三张表。从 schema 11（v2.0）起其中九张声明了**外键**，全部明确写成 `ON DELETE NO ACTION`（会留下子行的删除会失败；代码照旧先在同一个事务里删子行）：`sessions.user_id`、`user_stats.user_id`、`user_settings.user_id`、`user_banks.user_id`、`attempts.user_id`（可为空）和 `banks.owner_id`（可为空）→ `users(id)`；`attempt_items.attempt_id` → `attempts(id)`；`questions.bank_id`（可为空）、`imports.bank_id`（可为空）和 `user_banks.bank_id` → `banks(id)`。特意**不加**外键的（建表语句里也有注释）：`attempt_items.question_id` 和 `user_stats.question_id`（记录比被删的题目活得久，v0.5 之前的题库用的是不分题库的 id）、`activity_log.user_id`（日志是审计快照）和 `system_settings.updated_by`（只写不读的审计字段：加了外键，就删不掉曾经改过站点开关的管理员）。旧表 `stats`（v0.5 及更早版本的每道题统计）和 `settings`（v0.5 的设置）从 schema 11 起不再存在；它们的行在 v3 迁移时已经复制给第一个管理员（`user_stats`、`user_settings`）。重建的九张表以带引号的名字存成 `CREATE TABLE "banks" (…)`，这是 SQLite 记录改过名的表的方式。
+| 表 | 主键和唯一约束 | 外键（全部 ON DELETE NO ACTION） | 索引 |
+|---|---|---|---|
+| `meta` | PK `key` | — | — |
+| `system_settings` | PK `key` | — | — |
+| `activity_log` | PK `id` | — | 唯一 `idx_activity_src (src_id) WHERE src_id IS NOT NULL`<br>`idx_activity_prune (ts) WHERE action <> 'auth.signin'`<br>`idx_activity_action (action, id)`<br>`idx_activity_user (user_id, id)`<br>`idx_activity_ts (ts)` |
+
+### 3.6 外键，以及每个 schema 新增了什么
+
+从 schema 13 起共十八张表（之前是十三张）。从 schema 11（v2.0）起其中九张声明了**外键**，全部明确写成 `ON DELETE NO ACTION`（会留下子行的删除会失败；代码照旧先在同一个事务里删子行）：`sessions.user_id`、`user_stats.user_id`、`user_settings.user_id`、`user_banks.user_id`、`attempts.user_id`（可为空）和 `banks.owner_id`（可为空）→ `users(id)`；`attempt_items.attempt_id` → `attempts(id)`；`questions.bank_id`（可为空）、`imports.bank_id`（可为空）和 `user_banks.bank_id` → `banks(id)`。特意**不加**外键的（建表语句里也有注释）：`attempt_items.question_id` 和 `user_stats.question_id`（记录比被删的题目活得久，v0.5 之前的题库用的是不分题库的 id）、`activity_log.user_id`（日志是审计快照）和 `system_settings.updated_by`（只写不读的审计字段：加了外键，就删不掉曾经改过站点开关的管理员）。旧表 `stats`（v0.5 及更早版本的每道题统计）和 `settings`（v0.5 的设置）从 schema 11 起不再存在；它们的行在 v3 迁移时已经复制给第一个管理员（`user_stats`、`user_settings`）。重建的九张表以带引号的名字存成 `CREATE TABLE "banks" (…)`，这是 SQLite 记录改过名的表的方式。 Schema 13（v3.1）又新增七个外键，同样全部是 `ON DELETE NO ACTION`，所以删除时要先删子行（第 4.16 节）：`banks.category_id` 指向 `bank_categories(id)`，`devices.user_id` 指向 `users(id)`，`sessions.device_id` 指向 `devices(id)`，`push_subscriptions.device_id` 指向 `devices(id)`，`saved_sessions.user_id` 指向 `users(id)`，`saved_sessions.device_id`（可为 NULL）指向 `devices(id)`，`push_outbox.subscription_id` 指向 `push_subscriptions(id)`。这样 13 张表上共有 17 个外键。`banks` 和 `sessions` 是用 `ALTER TABLE … ADD COLUMN` 扩展的，所以它们存下来的文本是原来的文本加上新增的列。
 
 每个 schema 新增了什么：
 
@@ -196,8 +405,10 @@ erDiagram
 - **v4**（v0.7）：表 `user_banks`；列 `users.new_banks INTEGER NOT NULL DEFAULT 0`、`users.can_manage_banks INTEGER NOT NULL DEFAULT 0`、`banks.owner_id INTEGER` 和 `attempts.kind TEXT NOT NULL DEFAULT 'exam' CHECK (kind IN ('exam', 'practice'))`；索引 `idx_user_banks_bank (bank_id)` 和 `idx_banks_owner (owner_id)`；`meta` 的键 `users_known` 和 `banks_known`（第 6.6 节）。v0.7 的六列工作簿格式不需要新列：各语言的文字放在 `questions.data` 里（第 4.7 节）。v0.7 的预发布版用的是 `users.all_banks` 而不是 `users.new_banks`；这样的数据库在打开时会被转换（第 6.5 节）。
 - **v6**（v0.9）：列 `attempts.session_key TEXT`（保存这条记录的那次练习或考试会话的随机 key：32 位小写十六进制数字；AI 服务用它给那次会话的对话命名，第 8.2 节）和 `attempts.started_at INTEGER`（那次会话的开始时间，Unix 秒，按浏览器的时钟）。v0.9 之前保存的每条记录，以及浏览器没有发来有效值的那次保存，这两列都是 NULL：两个值各自单独判断，无效的存为 NULL，保存从不因此被拒绝。没有索引，也没有约束。这两列从不用来查找记录（记录始终按 `attempts.id` 找），也不保证 key 唯一：没有任何东西依赖这一点。主数据库里别的都没有变：AI 对话、它们的文字和标题都在 AI 数据库里。
 - **v11**（v2.0）：没有新列。九张表带上面的外键重建；新索引 `idx_user_stats_question (question_id)`、`idx_imports_bank (bank_id)` 和唯一的 `idx_users_uid ON users(uid) WHERE uid <> ''`；删除 `stats` 和 `settings`（6.17）。
+- **v12**（v2.6）：列 `users.display_name TEXT` 和唯一索引 `idx_users_display_name`（第 6.19 节）。
+- **v13**（v3.1）：表 `bank_categories`、`devices`、`push_subscriptions`、`saved_sessions` 和 `push_outbox`；列 `banks.category_id`、`banks.sort` 和 `sessions.device_id`；索引 `idx_banks_category`、`idx_sessions_device`、`idx_saved_sessions_device`、`idx_push_outbox_sub` 和 `idx_push_outbox_due`；并删除 `idx_questions_sheet`（第 6.21 节）。
 
-v1 的建表语句作为历史保存在 `backend/src/database/schema.rs`（`SCHEMA`）里，后来新增的部分放在它旁边（`MIGRATE_V2_TABLES`、`V2_COLUMNS`、……、`MIGRATE_V4_INDEXES`、`V5_COLUMNS`、`V6_COLUMNS`，v2.0 起还有 `V11_REBUILDS`：九张表的定义和它们的索引）。`SCHEMA` 只在文件是新的或比 schema 11 旧时才在启动时执行（所以不会再在每次打开时重新建出 `stats`），然后执行升级的各步。全部用 `IF NOT EXISTS` 或先检查，所以打开一个已经是最新的数据库**什么都不写**（有测试：数据库文件连同它的 `-wal` 文件一字节都不变）。因为 SQLite 记录 `ALTER TABLE … ADD COLUMN` 的方式是把新列追加到已存的 `CREATE TABLE` 文本末尾，所以 `users` 存的文本是 v3 的文本加上后来加的列，而重建的九张表来自 `V11_REBUILDS` 里的常量，列顺序已规整；全新的数据库和升级来的数据库 schema 完全相同（在 `db_golden.rs` 里测试，从每个更老的 schema 升级的情形在 `v20_db.rs` 里测试）。
+v1 的建表语句作为历史保存在 `backend/src/database/schema.rs`（`SCHEMA`）里，后来新增的部分放在它旁边（`MIGRATE_V2_TABLES`、`V2_COLUMNS`、……、`MIGRATE_V4_INDEXES`、`V5_COLUMNS`、`V6_COLUMNS`，v2.0 起还有 `V11_REBUILDS`：九张表的定义和它们的索引）。`SCHEMA` 只在文件是新的或比 schema 11 旧时才在启动时执行（所以不会再在每次打开时重新建出 `stats`），然后执行升级的各步。全部用 `IF NOT EXISTS` 或先检查，所以打开一个已经是最新的数据库**什么都不写**（有测试：数据库文件连同它的 `-wal` 文件一字节都不变）。因为 SQLite 记录 `ALTER TABLE … ADD COLUMN` 的方式是把新列追加到已存的 `CREATE TABLE` 文本末尾，所以 `users` 存的文本是 v3 的文本加上后来加的列，而重建的九张表来自 `V11_REBUILDS` 里的常量，列顺序已规整；全新的数据库和升级来的数据库 schema 完全相同（在 `db_golden.rs` 里测试，从每个更老的 schema 升级的情形在 `v20_db.rs` 里测试）。 v13 的语句是 `MIGRATE_V13_CATEGORIES`、`V13_BANK_COLUMNS`、`V13_BANK_INDEX`、`MIGRATE_V13_DEVICES`、`V13_SESSION_COLUMNS`、`V13_SESSION_INDEX`、`MIGRATE_V13_PUSH` 和 `V13_DROP_INDEXES`。
 
 ## 4. 决定学习记录命运的细节
 
@@ -224,7 +435,7 @@ sha1( 工作表名 + "\n" + 去空白(题干)[:300] + "|" + 去空白(第一个�
 删除题库（`POST /api/banks/delete`）是题目离开数据库的唯一途径。它在一个事务里删除这个题库的题目（上架的和已下架的）、它的 `imports` 行、它的 `user_banks` 行（谁能看到它）以及它的 `banks` 行。带 `withRecords` 时，这些题的学习数据也一起删除：它们的 `user_stats` 和 `attempt_items` 行，以及所有 `banks` 快照里写着这个题库、又没有任何现存题库的 `attempts` 行（连同剩下的详情）。管理员这样删除的是**所有**用户的学习数据；可管理题库的用户删除自己的题库时，只删除**他自己**在这个题库的学习数据，其他用户的记录保留（里面的题显示为已删除）。不带 `withRecords` 时，`user_stats`、`attempts` 和 `attempt_items` 都原样保留。
 
 ### 4.3 错题本
-每个用户在 `user_stats` 里有自己的错题本。一道题在 `wrong > 0` 且 `streak < 2` 时在错题本里；连续答对 2 次后移出。考试和练习以同样的方式更新它。只能看到部分题库的用户（第 4.8 节）只看到这些题库里的题的统计。
+每个用户在 `user_stats` 里有自己的错题本。一道题在 `wrong > 0` 且 `streak < 2` 时在错题本里；连续答对 2 次后移出。考试和练习以同样的方式更新它。只能看到部分题库的用户（第 4.17 节）只看到这些题库里的题的统计。
 
 ### 4.4 学习记录
 每个用户的学习记录是 `attempts` 里带他的 `user_id` 的行；`kind` 表示一条记录是 `exam`（考试）还是 `practice`（练习）（v0.7 之前的每条记录都是考试，也就是这一列的默认值）。每个用户保留自己最新的 **500** 条记录（`RECORD_RETENTION`；v0.5 之前是 60）；每次提交之后，这个用户更早的记录会连同它们的 `attempt_items` 一起删除。`GET /api/progress` 的 `history` 只返回最新的 60 条。
@@ -235,7 +446,7 @@ sha1( 工作表名 + "\n" + 去空白(题干)[:300] + "|" + 去空白(第一个�
 - 删除一条记录（`POST /api/records/delete`）删掉它和它的详情，但不动统计；删除全部记录时还可以清空这个用户的统计（`withStats`），等于 `POST /api/reset`。
 
 ### 4.5 设置
-`user_settings` 里每个用户、每个改过的设置一行；`value` 是值的 JSON 文本（`"dark"`、`true`）。没有的行表示默认值（`theme` 是 `system`，`uiLang` 是 `en`，`autoAdvance` 是 false，`questionLang` 是 `ja`，`answerFx` 是 true）；保存的值无效时忽略它。浏览器保存一份副本，只用来画第一屏；数据库才是准的，所以更新容器、清除浏览器缓存、换别的浏览器之后设置都还在。
+`user_settings` 里每个用户、每个改过的设置一行；`value` 是值的 JSON 文本（`"dark"`、`true`）。键、默认值和 **恢复默认设置** 的作用见第 4.14 节。没有的行表示默认值；保存的值无效时忽略它。浏览器保存一份副本，只用来画第一屏；数据库才是准的，所以更新容器、清除浏览器缓存和换浏览器后设置都还在。
 
 ### 4.6 时间
 本地时间的字符串，格式 `%Y-%m-%d %H:%M`，**不带时区标记**，精确到分钟（`sessions` 表另外还存两个 Unix 时间）。容器里的时区默认是宿主机的（`docker/docker-compose.yml` 以只读方式挂载宿主机的 `/etc/localtime`）；在 `docker/.env` 里设置的 `TZ` 优先于它，例如 `TZ=UTC`；两者都没有时，镜像退回 UTC。在 Docker Desktop（Windows、macOS）上，挂载的是 Docker 自己的虚拟机里的文件（通常是 UTC），所以请设置 `TZ`。镜像里带有时区数据库，所以 `TZ` 可以写任何时区。以后再改时区不会改写已经保存的时间：它们保留写入时的时区。
@@ -251,15 +462,77 @@ sha1( 工作表名 + "\n" + 去空白(题干)[:300] + "|" + 去空白(第一个�
 
 对于只认识一份解析的客户端，六列格式的题的 `explanation`、`mnemonic` 和 `note`：E 列有中文时是中文，否则是日语（F 列），再否则是英语（D 列）。三列和四列格式的题作为已下架的题留在数据库里，完全保持以前版本的 JSON（没有新的键）；解析器仍然能读这些格式（导入就是靠这一点把它们认出来并拒绝），解析器的黄金测试会逐字节检查它的输出。
 
-### 4.8 谁能看到哪个题库（v0.7）
-- **管理员**能看到并管理所有题库。
-- **普通用户**正好能看到 `user_banks` 里为他列出的题库（管理员为他勾选的已有题库）。`users.new_banks = 1`（**包括以后导入的题库**）只会添加行：每当新建一个题库（任何人作为新题库导入，或者命令行 `import` 创建旧题库），每个带这个标记的用户都会在同一个事务里得到这个题库的一行。它从不添加已有的题库，取消勾选一个题库也只删掉那一行。新用户一开始没有任何行，标记也是关的。迁移到 v4 时已经存在的每个用户，都得到了每个已有题库的一行和这个标记，所以升级时没有人失去题库。
-- **可管理题库的用户**（`users.can_manage_banks = 1`）在拥有这个权限期间，还能看到自己拥有的题库（`banks.owner_id`），也只能更新和删除这些题库。作为新题库导入的题库属于导入它的用户；v0.7 之前的题库，以及没有登录用户时新建的题库（命令行的 `import`），属于第一个管理员。
-- 删除用户会删除他的会话、学习记录（含详情）、统计、设置和 `user_banks` 行；他拥有的题库转到删除他的那位管理员名下。他的 AI 对话和记忆在 AI 数据库里：AI 服务会在下一次对账时删除它们（第 8.3 节）。
+### 4.8 题库可见范围（已移到第 4.17 节）
+规则（管理员、普通用户、可管理题库的用户、删除用户）见第 4.17 节。
 
 ### 4.9 仪表盘的查询（v2.5，v2.6，只读）
 
 `GET /api/dashboard` 不写任何东西，也不改任何表。排行是 `user_stats` 联结 `users` 的一条汇总（至少答过一题的未停用用户，按答对数降序、再答题数升序、再用户 id 排序）；用逐题统计，是因为它在旧记录被清理到 500 条后依然保留。从 v2.6 起它也读 `users.display_name`：设置了的名字原样发出，为 NULL 时退回登录名（对别的查看者，邮箱登录名会隐去中间部分）。**最常错的题**（v2.6，取代了 v2.5 对 `attempts` 和 `attempt_items` 汇总的「最常练的题」）只读查看者自己在 `user_stats` 里的行（`user_id = 查看者 AND wrong > 0`），联结 `questions`（有效、有所属题库），按 `wrong` 降序、`correct` 升序、`attempts` 降序、再题库和位置排序，最多 5 道；`user_stats` 里从不存没有作答的考试项目。查看者的题库范围随后在代码里应用（所有题库都可见时，查询本身带 `LIMIT 5`）。返回的只有题目编号和次数，没有题目文字、用户 id 和邮箱域名。
+
+### 4.10 登录会话和设备（v3.1）
+- **会话。** `sessions` 每个登录中的浏览器会话一行（每个用户最多保留 20 个，最旧的被删除）。`sessions.device_id` 把会话关联到它的设备；v3.1 之前或旧程序创建的会话里它是 NULL，在那个浏览器的下一次请求时被关联（升级后的第一个 `POST /api/devices/hello` 会把它们全部关联上）。
+- **设备。** `devices` 每个用户的每个浏览器一行。浏览器靠随机 cookie `xexam_did` 认出（43 个字符，32 个随机字节的 base64url；`HttpOnly`、`SameSite=Strict`、400 天）；库里只存它的 SHA-256（`cookie_hash`，和 `user_id` 一起唯一）。这个 cookie 不是凭据：会话仍然需要自己的 `xexam_session`。这一行记着那个浏览器的情况：首次出现、最近一次登录（`signin_*`）和最近一次请求（`active_*`）、清理后的 User-Agent（`ua`，最多 256 个字符）、是否以安装的应用 运行（`app`）和它上报的时区（`tz`）。 浏览器属于最后登录的那个用户：同一个 cookie 在另一个用户名下登录时，其他用户的设备上的推送订阅（及其排队的行）会被删除。
+- **IP 和所在地**跟着登录信息开关（用户管理里的眼睛），规则和 `users.last_login_*`、`users.last_active_*` 完全一样：只在眼睛打开时写入，所在地来自当时的位置来源，**清除登录信息** 会清空它们（User-Agent 保留，和 `last_active_ua` 一样），切换到外部查询之后的补查也包括设备。
+- **状态**不存：*有效* = 设备有一个期限还在未来的会话；*已退出* = 没有这样的会话并且设置了 `signed_out_at`；*已过期* = 其余情况（会话到期了，或者它的行在等每小时一次的清理）。
+- **退出登录。** 显式退出（用户自己、管理员，或 **退出其他所有设备**）会删除这台设备的会话，以及它的推送订阅和排队中的推送，保留设备行用于列表并设置 `signed_out_at`；下一次登录会清掉它。到期和 20 个会话的上限**不会**让设备退出：它的订阅和通知照旧。修改自己的密码会让其他所有设备退出；管理员重置密码、禁用用户、改角色和命令行的 `reset-password` 会让该用户的所有设备退出。
+- **保留。** 没有会话的设备在 30 天没有请求后删除，每个用户最多保留 20 条设备行（先删没有会话的、最久没用的）；两者每小时执行一次。删除用户会连同他的设备一起删除（第 4.16 节）。
+
+### 4.11 题库分类（v3.1）
+- **`bank_categories`** 每个分类一行：名称 1 到 60 个字符，忽略大小写唯一；`sort` 是它在分类里的位置（0 到 n−1）。只有一层，只有管理员能编辑（题库页）。
+- **`banks.category_id`** 是题库所属的分类，NULL 表示未分类。**`banks.sort`** 是它在所在分组里的位置：排好位置后是 1 到 n，**0 表示还没排位**。分组按 `((sort = 0), sort, id)` 排序：从没排过位的题库（之后用任何途径创建的题库：应用里的导入、命令行 `import`、AI 生成，或者 v3.0 的程序）排在已排位的后面，按 `id` 顺序，所以新题库总是落在它所在分组的最后，任何创建途径都不必改动。
+- **移动题库**（移到某个分类、调整顺序）从不改变 `banks.updated_at`：那一列是内容时间，参与题库库存戳的计算。删除分类时，它的题库追加到未分类分组的最后，这个分组重新编号为 1 到 n，剩下的分类也重新编号。
+- **戳。** `GET /api/banks` 的 ETag 包含每个分类和每个题库的位置，所以只改了顺序时已打开的页面也会刷新；库存戳（`GET /api/bank`，`library` 的值）不随分类编辑变化。`GET /api/auth/state` 带第三个戳 `categories`。
+- **谁看到什么。** 管理员得到每个分类；其他人只得到包含自己能看到的题库的分类（第 4.17 节）。
+
+### 4.12 推送通知（v3.1）
+- **表。** `push_subscriptions` 每台设备最多一行（`device_id` 唯一）；推送服务的地址 `endpoint` 在所有用户里唯一，归最后确认它的设备；`p256dh` 和 `auth` 是浏览器的密钥，写成标准的 base64url；`key_id` 是订阅时所对应的服务器公钥的 SHA-256 的前 16 位十六进制。`push_outbox` 是队列，也是保留 7 天的投递日志：每条消息一行，带 `kind`（`remind`、`bank`、`version`、`test`）、用于合并的 `topic`、与语言无关的 JSON `payload`（最多 1024 字节，绝不是密文）、`urgency`、各个时间和 `state`。
+- **谁做什么。** 除了投递，其余都由后端负责：它把行排进队列（触发器：没做完的练习或考试的提醒、题库动态、新版本，以及测试按钮），在领取（lease）的那一刻用用户的界面语言生成文字，加密（RFC 8291，`aes128gcm`），并给请求头签名（RFC 8292，VAPID，ES256）。ai-service 是无状态的投递员：它长轮询 `POST /internal/ai/push/next`，把每个任务发给推送服务，再用 `POST /internal/ai/push/result` 报告结果；它从不接触浏览器的密钥、VAPID 私钥和明文。没有 ai-service 就什么都不会投递，行在有效期过后过期。两个服务之间的心跳没有变（见 [architecture.md](architecture.md) 第 5 节）。
+- **一行的一生。** `queued` → `leased`（120 秒；每次调用最多 20 行）→ `sent`、`failed` 或 `expired`。投递失败会在 30 秒、2 分钟、10 分钟、1 小时后重试（另加最多 20 % 的随机抖动；推送服务给的 `Retry-After` 取代退避时间），最多尝试 5 次。有效期：提醒 6 小时，动态和版本 3 天，测试 10 分钟，从消息最早可以发送的时间算起。每次领取前，后端会再检查订阅是否仍然有效（用户启用、账号开关打开、设备没有退出登录并且 30 天内用过、服务器密钥是当前的），以及消息是否仍然有意义（题库还在并且用户还能看到；练习仍保存在那台设备上并且没有做完）；不满足就不发送，把行标为 `expired`。 因夜间免打扰被推迟的行，在放行时它的 `expires_at` 至少延长到放行时刻加上完整的有效期。
+- **夜间免打扰**是用户时区的 00:00 到 08:00（设置 `tz`；`auto` 时用设备上报的时区；再不行用服务器的时区）。落在这个时段的消息留到 08:00 再发；测试不受限制。
+- **保留。** 每小时：超过有效期的排队行过期，超过 7 天的已结束行被删除；订阅在推送服务回复 404 或 410、`expires_at` 已过、连续失败 10 次并且 7 天没有成功、设备 30 天没用时被删除，启动时 `key_id` 不是当前密钥的订阅也会被删除。
+- **VAPID 密钥**在数据目录的文件 `push-vapid.key` 里（一行，PKCS#8 密钥的 base64url，权限 0600），第一次启动时创建；变量 `XEXAM_PUSH_VAPID_KEY` 可以覆盖它（多台主机共用一把密钥时）。它**不在数据库里**，所以迁移备份（`VACUUM INTO`）里没有它，而复制整个数据目录会带上它：请像保护数据库一样保护那份拷贝。更换密钥就是删除文件（或修改变量）再重启：旧密钥的订阅在那次启动时被删除，每部手机在下一次打开应用时重新订阅。
+- **回退到 v3.0** 需要先执行一组 SQL，之后才能再删除用户（第 6.22 节）。
+
+### 4.13 暂存会话的标记（v3.1）
+- **`saved_sessions`** 表示某个浏览器里有一场没做完的练习或考试：会话的 key（之后存成 `attempts.session_key` 的那个 key）、类型、答了多少题（共多少题）、保存它的浏览器（`device_id`）、限时考试还剩多少秒（`time_left`；计时只在考试页面打开时走，所以没有截止时刻），以及提醒的安排（`saved_at`、`remind_at`、`reminders`）。里面没有题目文字，也没有答案。应用用 `POST /api/study/saved` 上报；服务器对每个会话每分钟最多写一次，每个用户在每个浏览器上只有一个标记。
+- **提醒**从最后一次保存的 3 小时后开始，每 3 小时一次，最多 3 次；被夜间免打扰扣住的那条，下一条在它放行后的 3 小时，所以它们不会合并；时间已到的限时考试不提醒；每次保存都会重新开始计划。
+- **标记消失**的情况：这场会话的 `POST /api/attempt` 成功之后、放弃时（`POST /api/study/saved/discard`）、已经有同一个 key 的记录（attempt）时，以及最后一次保存的 14 天后。
+
+### 4.14 `user_settings` 的键
+| 键 | 值 | 默认 | **恢复默认设置** | 起始 |
+|---|---|---|---|---|
+| `theme` | `system`、`light`、`dark` | `system` | 恢复 | v0.6 |
+| `uiLang` | `en`、`zh`、`ja` | `en` | 恢复 | v0.6 |
+| `autoAdvance` | 布尔值 | `false` | 恢复 | v0.6 |
+| `questionLang` | `ja`、`zh`、`en` | `en`（v2.6 之前是 `ja`） | 保留 | v2.6 之前 |
+| `answerFx` | 布尔值 | `true` | 恢复 | v3.0 |
+| `push` | 布尔值：这个账号的通知 | `true` | 保留 | v3.1 |
+| `tz` | `auto` 或 IANA 时区名（最多 64 个字符） | `auto` | 保留 | v3.1 |
+
+没有 `push` 这一行表示**开启**：服务器端的每个筛选都问“不是 `false`”，从不问“是 `true`”。`tz` 在个人资料里设置，`push` 在设置里设置。`GET /api/settings` 的返回按这个顺序列出七个键。
+
+### 4.15 `meta` 和 `system_settings` 的键
+- **`meta`** 里是数据库层面的标记，只在值变化时才写，所以闲置的文件保持字节不变：`schema`（schema 编号）、`legacy_migrated`、`users_known` 和 `banks_known`（第 6.6 节），以及从 v3.1 起的 `app_version`（推送已经通知过的最高版本）、`push_imports_seen` 和 `push_banks_seen`（已经通知过的最大 `imports.id` 和 `banks.id`）。
+- **`system_settings`** 里是全站开关：`activity.retention_days`（默认 90，7 到 3650）、`activity.user_visits`（`0` 或 `1`，默认 `0`）、`users.signin_info`（`0` 或 `1`，默认 `0`：那只眼睛）和 `geo.source`（`cloudflare`，默认；或 `api`）。`updated_by` 是只用于审计的用户 id，没有外键。
+
+### 4.16 删除的顺序（先删子行）
+每个外键都是 `ON DELETE NO ACTION`，所以每次删除都在一个事务里，先删子行再删父行：
+
+| 操作 | 顺序 |
+|---|---|
+| 删除用户 | `user_banks`，然后是该用户的推送行（他订阅的发件箱、订阅、`saved_sessions`）、`sessions`、`devices`、学习行（`attempt_items`、`attempts`）、`user_stats`、`user_settings`，最后是用户 |
+| 让一台设备退出 | 这台设备的 `sessions`，它的推送订阅（先删发件箱），然后设置 `signed_out_at` |
+| 让一个用户的所有设备退出 | 该用户的 `sessions`，然后对每台设备：它的推送订阅（先删发件箱）和 `signed_out_at` |
+| 删除设备（30 天没用且没有会话） | 它的推送订阅（先删发件箱）、它的 `saved_sessions`、`devices` 这一行 |
+| 删除推送订阅 | 它的 `push_outbox` 行，然后是订阅 |
+| 删除分类 | 它的题库变成未分类并追加到未分类分组的最后，重新编号，最后删 `bank_categories` 这一行 |
+| 删除题库 | 不变（第 4.2 节）；`push_outbox` 没有指向 `banks` 的外键：已删除题库的排队消息在要发送时被丢弃 |
+
+### 4.17 谁能看到哪个题库（v0.7）
+- **管理员**能看到并管理所有题库。
+- **普通用户**正好能看到 `user_banks` 里为他列出的题库（管理员为他勾选的已有题库）。`users.new_banks = 1`（**包括以后导入的题库**）只会添加行：每当新建一个题库（任何人作为新题库导入，或者命令行 `import` 创建旧题库），每个带这个标记的用户都会在同一个事务里得到这个题库的一行。它从不添加已有的题库，取消勾选一个题库也只删掉那一行。新用户一开始没有任何行，标记也是关的。迁移到 v4 时已经存在的每个用户，都得到了每个已有题库的一行和这个标记，所以升级时没有人失去题库。
+- **可管理题库的用户**（`users.can_manage_banks = 1`）在拥有这个权限期间，还能看到自己拥有的题库（`banks.owner_id`），也只能更新和删除这些题库。作为新题库导入的题库属于导入它的用户；v0.7 之前的题库，以及没有登录用户时新建的题库（命令行的 `import`），属于第一个管理员。
+- 删除用户会删除他的会话、设备（连同推送订阅和暂存会话的标记）、学习记录（含详情）、统计、设置和 `user_banks` 行；他拥有的题库转到删除他的那位管理员名下。他的 AI 对话和记忆在 AI 数据库里：AI 服务会在下一次对账时删除它们（第 8.3 节）。
 
 ## 5. 备份和恢复
 
@@ -488,6 +761,34 @@ v0.7.5 也能直接打开 schema 5 的文件（它把 schema `5` 当作更新的
 
 v2.5 的后端能原样打开 schema 12 的文件：它把更新的 schema 当作当前的，从不读取 `users.display_name`，也不碰新索引（它自己插入的行这一列为 `NULL`）。所以回退**不需要恢复**：改掉镜像标签再启动即可。这期间在 v2.5 下新建的账户没有用户名，再次运行 v2.6 时会被要求设置。恢复 `backups/xexam-schema11-….db` 也行，能回到升级前的确切状态，但会丢掉之后写入的所有东西（记录、账户、用户名）。
 
+### 6.21 Schema v13（v3.1）
+
+主数据库在 v3.1 后端第一次启动时，一次性地从 schema 12 升到 **schema 13**，先写一份备份 `backups/xexam-schema12-<日期-时间>.db`（没有数据的文件不写备份；从更旧的 schema 升级会直接升到 13，只留那个更旧 schema 的一份备份，前面的各步先在同一个事务里执行）。这一步只做添加，在同一个事务里按下面的顺序执行：
+
+1. 表 `bank_categories`；
+2. 列 `banks.category_id`（指向 `bank_categories(id)` 的外键，NULL = 未分类）和 `banks.sort`（默认 0 = 尚未排位），以及索引 `idx_banks_category (category_id, sort)`；
+3. 表 `devices`（`(user_id, cookie_hash)` 唯一）、列 `sessions.device_id`（指向 `devices(id)` 的外键，可为 NULL）和索引 `idx_sessions_device`；
+4. 表 `push_subscriptions`、`saved_sessions` 和 `push_outbox` 及它们的索引（`idx_saved_sessions_device`、`idx_push_outbox_sub`，以及部分索引 `idx_push_outbox_due ON push_outbox(next_at) WHERE state IN ('queued', 'leased')`）；
+5. 删除索引 `idx_questions_sheet`：没有任何查询在不带 `bank_id` 的情况下按 `sheet` 过滤，而 `idx_questions_layout (bank_id, sheet, active, seq)` 已经服务所有按 sheet 的过滤；
+6. `meta.schema` 变成 `13`。
+
+不改动任何一行：每个题库的 `category_id` 是 NULL、`sort` 是 0，每个会话的 `device_id` 是 NULL。以后每次打开 schema 13 的文件，启动检查都会把被 v1.9 程序重新建出来的 `idx_questions_sheet` 再删掉一次；已经是最新的文件保持字节不变（有测试）。日志行是 `system.migrate`，内容 `{"from": 12, "to": 13}`（一行，用存储层时钟的时间写入，只在文件里有数据时才写；从更旧的 schema 升级时也是 `"to": 13`），日志里会写 `Upgraded the database to schema 13. A copy of the previous version was saved first: <路径> …`。和每次升级一样，它在一个事务里执行；出了意外，文件会停在 schema 12，备份已经写好。新的设置键 `push` 和 `tz` 以及 `meta` 的标记不需要迁移（第 4.14、4.15 节）。
+
+测试：`backend/tests/v31_migrate.rs`（全新的 schema 13 文件和从 schema 12 升上来的文件，连存储的 SQL 都相同；备份和日志行；第二次打开字节不变；更新的 schema 编号的文件原样打开；被删除的索引再次被删除；按 sheet 查询的执行计划；第 4.16 节的删除顺序）、`backend/tests/db_golden.rs`（56 个 schema 对象的清单）、`backend/tests/v20_db.rs`（所有更旧的 schema 现在都升到 13，17 个外键）和 `tests/integration/migrate_check.py`（CI 里，从每一种旧形态升级）。
+
+### 6.22 回到 v3.0
+
+v3.0 的后端可以原样打开 schema 13 的文件：它把更新的 schema 当作当前版本，忽略新表和新列（它的插入让新列保持默认值，它创建的会话 `device_id` 是 NULL），创建没有分类的题库，并忽略设置键 `push` 和 `tz`。所以回退**不需要恢复**：改镜像标签再启动即可。
+
+之后会失败的是删除在 `devices`、`push_subscriptions` 或 `saved_sessions` 里有行的用户：v3.0 不认识这些表，不会先删它们，外键就拒绝（`FOREIGN KEY constraint failed`；事务回滚，什么都不会丢）。先执行一次下面这段（停掉后端，或者在后端运行时用 `sqlite3`），再删除一次：
+
+```sql
+DELETE FROM push_outbox; DELETE FROM push_subscriptions; DELETE FROM saved_sessions;
+UPDATE sessions SET device_id = NULL; DELETE FROM devices;
+```
+
+恢复 `backups/xexam-schema12-….db` 也行，能回到升级之前的确切状态，但之后写入的一切都会丢失。再次升到 v3.1 只是一次普通的打开（文件已经是 schema 13）：设备在下一次请求时重新登记，手机在下一次打开应用时重新订阅。AI 数据库不受这一切影响。
+
 ## 7. 旧的 `progress.json`
 
 更早的版本把成绩保存在 `progress.json` 里。和旧的 Python 版一样，程序**每次启动时**都会检查数据目录里有没有它：如果有，而且数据库里还没有学习记录、以前也没有迁移过，就把它迁移进数据库（迁到第一个管理员的记录里）。`meta` 里的 `legacy_migrated` 标记保证它只迁移一次，已有的学习记录永远不会被覆盖。
@@ -519,33 +820,14 @@ ai-service 把 AI 的一切都放在它**自己的** SQLite 数据库里，只�
 
 和主数据库一样：`busy_timeout` 5000 ms、`foreign_keys=ON`（这里的 schema 确实用了外键，见下文）、`synchronous=FULL`、WAL 模式（`XEXAM_AI_SQLITE_JOURNAL=delete` 保留回滚日志，规则和 2.1 一样），另外还有 **`secure_delete=ON`**。一个连接放在互斥锁后面，每次写入都在 `BEGIN IMMEDIATE … COMMIT` 里，锁从不跨 `.await` 持有。启动日志里会写 `AI database: /data/xexam-ai.db (journal: wal)`。
 
-### 8.2 核心表（v0.8 的那一组；schema 11 的完整图见 9.2 节）
+### 8.2 AI 数据库的表（schema 11）
+
+十九张表分成三张图，每一列都和存储的一致（规则与第 3 节相同：`PK`、`FK`、`UK`；实线是外键，虚线是没有外键的软引用）。AI 数据库的外键按 9.2 里列出的方式使用 `CASCADE` 和 `SET NULL`。整个 AI 数据库的关系合在一页上的图在 9.2。
+
+**对话与学习**（身份、对话、记忆、最新的学习评估、共享回答）
 
 ```mermaid
 erDiagram
-    settings {
-        INTEGER id PK "恒为 1"
-        INTEGER enabled "AI+ 功能开关"
-        INTEGER retention_days "1-3650，默认 90"
-        INTEGER updated_at "unix 秒"
-        TEXT updated_by "管理员的用户名"
-        INTEGER features_off "全局功能开关位"
-    }
-    limits {
-        INTEGER id PK "总是 1"
-        INTEGER per_user_running "1-4，默认 1"
-        INTEGER global_running "1-64，默认 16"
-        INTEGER chats_per_user "10-100000，默认 1000"
-        INTEGER messages_per_chat "20-5000，默认 400"
-        INTEGER memories_per_user "1-1000，默认 50"
-        INTEGER memory_tokens "50-250000，默认 1000（v1.1；仍为 200 的值改成了 1000，其他值在升级到 schema 6 时一次性乘以 1.5）"
-        INTEGER calls_per_minute "1-100，默认 5（v1.0）"
-        INTEGER calls_per_hour "1-2000，默认 20（v1.0）"
-        INTEGER calls_per_day "1-20000，默认 100（v1.0）"
-        INTEGER reply_max_tokens "1-250000，默认 3000：回答长度（Token 数，v1.1）"
-        INTEGER updated_at "Unix 秒"
-        TEXT updated_by "用户名"
-    }
     users {
         INTEGER id PK "主数据库的 users.id"
         TEXT stamp "主数据库的 users.uid"
@@ -554,6 +836,7 @@ erDiagram
         INTEGER last_seen_at "Unix 秒"
         INTEGER function_enabled "1 = 使用中，0 = 已暂停（v2）"
         INTEGER free_mode "1 = 管理员的自由模式已开启（v2）"
+        INTEGER features_off
     }
     chats {
         INTEGER id PK "自增"
@@ -564,6 +847,10 @@ erDiagram
         TEXT kind "chat · practice · exam · summary（v3）"
         TEXT ref "会话 key，或记录的 rID@时间（chat 为 NULL）（v3）"
         INTEGER record_id "主程序里的记录，只用于显示（v3）"
+        INTEGER leaf_id
+        INTEGER pick_conn
+        TEXT pick_model
+        TEXT pick_effort
     }
     messages {
         INTEGER id PK "自增"
@@ -585,6 +872,8 @@ erDiagram
         INTEGER sample_used "总结：发出的答错的题数（v3）"
         INTEGER sample_usable "总结：仍可用的答错的题数（v3）"
         INTEGER sample_wrong "总结：记录里答错的题数（v3）"
+        INTEGER parent_id
+        TEXT connection
         TEXT reasoning "AI 对话的回答：模型的思考，去掉首尾空白，最多 32 KiB，NULL = 没有（v7）"
         INTEGER reasoning_ms "从第一段推理到第一段回答文字的毫秒数，NULL = 没有（v7）"
         INTEGER reasoning_truncated "1 = 在上限处被截断（v7）"
@@ -597,11 +886,232 @@ erDiagram
         INTEGER created_at "Unix 秒"
         INTEGER updated_at "Unix 秒"
     }
+    assess_latest {
+        INTEGER user_id PK,FK
+        TEXT content
+        TEXT lang
+        TEXT model
+        TEXT latest_at
+        INTEGER records
+        INTEGER answered
+        TEXT day
+        INTEGER created_at
+        INTEGER runs
+    }
+    study_shared {
+        INTEGER id PK
+        TEXT question_id
+        TEXT content_hash
+        TEXT kind
+        TEXT lang
+        TEXT content
+        TEXT model
+        TEXT connection
+        INTEGER tokens_in
+        INTEGER tokens_out
+        INTEGER gen
+        INTEGER hits
+        INTEGER created_at
+        INTEGER updated_at
+        INTEGER last_hit_at
+    }
+    users ||--o{ chats : "user_id"
+    users ||--o| assess_latest : "user_id"
+    users ||--o{ memories : "user_id"
+    chats ||--o{ messages : "chat_id"
+    messages |o..o{ messages : "parent_id (软引用，没有外键)"
+    chats |o..o| messages : "leaf_id (软引用，没有外键)"
+    connections |o..o{ chats : "pick_conn (软引用，没有外键)"
+```
+
+**连接与模型**（连接、加密的密钥、模型池和槽位，以及只有一行的设置、上限和位置查询）
+
+```mermaid
+erDiagram
+    connections {
+        INTEGER id PK
+        TEXT name UK
+        TEXT provider
+        TEXT base_url
+        TEXT format
+        TEXT gateway_auth
+        TEXT status
+        TEXT error_code
+        INTEGER lists_models
+        INTEGER tested_at
+        INTEGER rev
+        INTEGER sort
+        INTEGER created_at
+        INTEGER updated_at
+        TEXT updated_by
+        INTEGER responses
+        INTEGER enabled
+        TEXT effort_family
+    }
+    connection_secrets {
+        INTEGER connection_id PK,FK
+        TEXT name PK
+        TEXT key_id
+        BLOB nonce
+        BLOB ciphertext
+        TEXT hint
+        INTEGER rev
+        INTEGER aad_ver
+        INTEGER updated_at
+    }
+    models {
+        INTEGER id PK
+        INTEGER connection_id FK
+        TEXT model
+        INTEGER manual
+        TEXT status
+        TEXT error_code
+        INTEGER usage_option
+        INTEGER max_tokens
+        INTEGER context
+        INTEGER latency_ms
+        INTEGER tested_at
+    }
+    model_slots {
+        TEXT slot PK
+        INTEGER model_id FK
+        INTEGER updated_at
+        TEXT updated_by
+        TEXT effort
+    }
+    settings {
+        INTEGER id PK "恒为 1"
+        INTEGER enabled "AI+ 功能开关"
+        INTEGER retention_days "1-3650，默认 90"
+        INTEGER updated_at "unix 秒"
+        TEXT updated_by "管理员的用户名"
+        INTEGER features_off "全局功能开关位"
+    }
+    limits {
+        INTEGER id PK "总是 1"
+        INTEGER per_user_running "1-4，默认 1"
+        INTEGER global_running "1-64，默认 16"
+        INTEGER chats_per_user "10-100000，默认 1000"
+        INTEGER messages_per_chat "20-5000，默认 400"
+        INTEGER memories_per_user "1-1000，默认 50"
+        INTEGER updated_at "Unix 秒"
+        TEXT updated_by "用户名"
+        INTEGER calls_per_minute "1-100，默认 5（v1.0）"
+        INTEGER calls_per_hour "1-2000，默认 20（v1.0）"
+        INTEGER calls_per_day "1-20000，默认 100（v1.0）"
+        INTEGER gen_per_day
+        INTEGER gen_admins_exempt
+        INTEGER gen_min_source
+        INTEGER gen_min_wrong
+        INTEGER gen_bank_single
+        INTEGER gen_bank_multi
+        INTEGER gen_wrong_single
+        INTEGER gen_wrong_multi
+        INTEGER gen_max_calls
+        INTEGER import_max_calls
+        INTEGER recognize_max_calls
+        INTEGER gen_unlimited
+        INTEGER import_unlimited
+        INTEGER gen_running
+        INTEGER import_max_mb
+        INTEGER reply_max_tokens "1-250000，默认 3000：回答长度（Token 数，v1.1）"
+        INTEGER gen_call_tokens
+        INTEGER memory_tokens "50-250000，默认 1000（v1.1；仍为 200 的值改成了 1000，其他值在升级到 schema 6 时一次性乘以 1.5）"
+        INTEGER calls_admins_exempt
+        INTEGER study_share
+        INTEGER study_share_days
+        INTEGER gen_max_chunks
+        INTEGER summary_max_items
+        INTEGER import_file_questions
+        INTEGER daily_token_budget
+        INTEGER pace_on
+        INTEGER pace_rpm
+        INTEGER pace_tpm
+        INTEGER assess_per_day
+        INTEGER assess_admins_exempt
+    }
+    geo_settings {
+        INTEGER id PK
+        TEXT preset
+        TEXT url_template
+        TEXT key_header_name
+        TEXT key_header_value
+        TEXT map_country
+        TEXT map_country_code
+        TEXT map_region
+        TEXT map_city
+        TEXT ok_path
+        TEXT ok_value
+        TEXT error_path
+        TEXT message_path
+        TEXT key_id
+        BLOB key_nonce
+        BLOB key_ciphertext
+        TEXT key_hint
+        INTEGER tested_at
+        INTEGER updated_at
+        INTEGER updated_by
+    }
+    connections ||--o{ connection_secrets : "connection_id"
+    connections ||--o{ models : "connection_id"
+    models |o--o{ model_slots : "model_id"
+```
+
+**任务与计量**（生成和导入任务、模型调用用量、审计队列和数据库标记）
+
+```mermaid
+erDiagram
     tasks {
-        INTEGER id PK "v0.8 里只有结构"
+        INTEGER id PK "自增"
         INTEGER user_id FK "users.id，ON DELETE CASCADE；NULL = 整个实例"
         TEXT kind
         TEXT state "queued · running · done · failed · cancelled"
+        TEXT payload
+        TEXT result
+        TEXT error_code
+        INTEGER attempts
+        INTEGER run_after
+        INTEGER created_at
+        INTEGER updated_at
+        TEXT job_key UK
+        INTEGER goal
+        INTEGER made
+        TEXT phase
+        INTEGER charged
+        INTEGER seen
+        INTEGER started_at
+        INTEGER finished_at
+        INTEGER charged_at
+    }
+    gen_items {
+        INTEGER task_id PK,FK
+        INTEGER no PK
+        INTEGER slot
+        TEXT data
+        INTEGER at
+    }
+    gen_calls {
+        INTEGER id PK
+        INTEGER task_id FK
+        INTEGER user_id FK
+        TEXT purpose
+        INTEGER at
+        TEXT day
+        TEXT provider
+        TEXT model
+        INTEGER tokens_in
+        INTEGER tokens_out
+        INTEGER tokens_cached
+        INTEGER latency_ms
+        INTEGER first_byte_ms
+        TEXT status
+        TEXT error_code
+        INTEGER asked
+        INTEGER accepted
+        INTEGER truncated
+        INTEGER tokens_cache_write
+        INTEGER connection_id
+        TEXT connection
     }
     usage {
         INTEGER id PK "自增"
@@ -613,12 +1123,16 @@ erDiagram
         TEXT model "模型列表为 ''"
         INTEGER tokens_in "NULL = 没有报告"
         INTEGER tokens_out "NULL = 没有报告"
-        INTEGER tokens_cached "由提示词缓存提供的输入 token，NULL = 没有报告（v2）"
-        TEXT purpose "hint · explain · summary，NULL = AI 对话，或没有对话的调用（v3）"
         INTEGER latency_ms "从请求到最后一个字节"
         INTEGER first_byte_ms "从请求到第一段文字（对话）"
         TEXT status "ok · stopped · error"
         TEXT error_code "去掉前缀的 ai.up.* 错误码"
+        INTEGER tokens_cached "由提示词缓存提供的输入 token，NULL = 没有报告（v2）"
+        TEXT purpose "hint · explain · summary，NULL = AI 对话，或没有对话的调用（v3）"
+        INTEGER tokens_cache_write
+        INTEGER connection_id
+        TEXT connection
+        INTEGER assess
     }
     audit_outbox {
         INTEGER id PK "自增"
@@ -626,14 +1140,16 @@ erDiagram
         TEXT message "一行审计日志，不含内容"
     }
     meta {
-        TEXT key PK "schema = 3"
+        TEXT key PK "schema = 11，以及只执行一次的标记"
         TEXT value
     }
-    users ||--o{ chats : "chats.user_id"
-    chats ||--o{ messages : "messages.chat_id"
-    users ||--o{ memories : "memories.user_id"
-    users |o--o{ tasks : "tasks.user_id"
-    users |o--o{ usage : "usage.user_id"
+    users |o--o{ tasks : "user_id"
+    tasks ||--o{ gen_items : "task_id"
+    tasks |o--o{ gen_calls : "task_id"
+    users |o--o{ gen_calls : "user_id"
+    users |o--o{ usage : "user_id"
+    connections |o..o{ usage : "connection_id (软引用，没有外键)"
+    connections |o..o{ gen_calls : "connection_id (软引用，没有外键)"
 ```
 
 - **`settings`**（一行）保存 AI+ 功能开关 `enabled`、`retention_days`、`features_off`（全局功能开关位），以及谁在什么时候改的。它从不保存机密，也不保存连接：那些在 `connections` 和 `connection_secrets` 里（见 [security.md](security.md) 第 11 节）；封存的密钥上的 `key_id` 说明它是用哪个加密密钥封存的。**`limits`**（一行）保存 AI 设置里的安全上限，每个都带范围 `CHECK`；改它们从不会把 AI 关掉。
@@ -770,7 +1286,7 @@ AI 库仍是 **schema 11**；v2.6 只是在每次启动时用 `IF NOT EXISTS` �
 
 ### 8.3 服务怎样使用它
 
-- **打开**：创建表（`IF NOT EXISTS`），用默认值加上 `settings` 和 `limits` 两行，新数据库把 `meta.schema` 设为 `4`。`meta.schema` 为 `1`、`2` 或 `3` 的数据库会被升级（见下面的迁移）。更新的 ai-service 写的数据库（`meta.schema` 大于 `4`）会被拒绝：服务记一行日志，不启动，所以旧镜像永远不会打开更新的文件。因崩溃或被强行终止而停在 `streaming` 的回答会被标记为 `error`，错误码 `ai.interrupted`（只在有这样的回答时；`idx_messages_streaming` 负责找出它们）。
+- **打开**：创建表（`IF NOT EXISTS`），用默认值添加 `settings` 和 `limits` 的行，新数据库的 `meta.schema` 设为 `11`。`meta.schema` 从 `1` 到 `10` 的数据库会被升级（见下面的“迁移”和 8.2a–8.2h）。更新的 ai-service 写的数据库（`meta.schema` 大于 `11`）会被拒绝：服务写一行日志并且不启动，所以旧镜像永远不会打开更新的文件。因崩溃或被杀而停在 `streaming` 的回答会被标为 `error`，代码 `ai.interrupted`（只在有这种回答时；由 `idx_messages_streaming` 找出）。
 - **保留**：启动 60 秒后，之后每小时一次，删除最后一条消息早于保留天数的对话（正在生成回答的除外），连同它们的消息，学习对话和别的对话一样。清理按**每个事务 20 个对话**删除，每完整的一批之后停 20 毫秒，在阻塞线程上运行，所以一次大的清理（保留期调低了，或者服务停了很久）不会长时间锁住数据库，正在写的回答也能继续保存；一行日志给出总数。用户删除自己的全部对话、管理员的清除和已删除用户的数据的移除，仍然在一个事务里删完。记忆不受保留期影响。
 - **和主程序对账**：启动时（每 30 秒重试一次，直到成功）、每 10 分钟，以及管理员打开 **AI+ 用户** 时，服务会问后端它的哪些用户 id 还存在、标记是什么、是否被授予了 AI+ 功能。已经不存在的 id，或者现在标记不同的 id（主数据库恢复后被重新使用的用户 id），会先停止这个用户的回答，再删除它的数据。带着这样的身份的请求到达时，也会马上这样做。
 - **删除的内容**：`secure_delete=ON` 时释放的页会被覆盖，每次删除用户内容之后，服务还会执行 `PRAGMA wal_checkpoint(TRUNCATE)`（最多每 10 秒一次），这样旧的页不会留在 `xexam-ai.db-wal` 里。备份和卷快照里仍然有删掉的内容。
@@ -797,184 +1313,66 @@ docker compose start
 - 恢复的 AI 卷和另一个时间点的主卷可以搭配使用：已经不存在的用户会在下一次对账时失去他们的 AI 数据，现在属于另一个账户的用户 id 会通过标记认出来。
 - `xexam_ai_auth` 不用备份：它里面只有 `internal.token`，缺少时后端会重新创建（AI 服务会自己用上新的令牌）。
 
-## 9. 两个数据库的表结构图（v2.1）
+## 9. 两个数据库的表结构图（v3.1）
 
-这是一份阅读指南：有哪些表、各自做什么、彼此怎么关联。内容对应主数据库 schema 11 和 AI 数据库 schema 11；表名和列名与实际存储的完全一致。这里的任何内容都不会改动表。
+一份阅读指南：有哪些表、每张表做什么、它们怎么关联。这里描述的是 schema 13 的主数据库和 schema 11 的 AI 数据库；表名和列名与存储的完全一致。第 3 节和第 8.2 节画出每一列，这一节只在一页上画每个数据库的关系。这里的任何内容都不会改变任何表。
 
 ### 9.1 主数据库 `xexam.db`（backend）
 
-| 功能域 | 表 | 备注 |
+| 区域 | 表 | 说明 |
 |---|---|---|
-| 题库 | `banks`、`questions`、`imports` | 一个题库 = 一个导入的工作簿；从工作簿里消失的题目是停用（`active = 0`），不是删除 |
-| 学习记录和错题本 | `attempts`、`attempt_items`、`user_stats` | `attempts` 就是程序里说的“学习记录”（考试或练习） |
-| 用户与权限 | `users`、`sessions`、`user_banks`、`user_settings` | |
+| 题库 | `bank_categories`（v3.1）、`banks`、`questions`、`imports` | 一个题库就是一个导入的工作簿；从工作簿里消失的题目是下架（`active = 0`），不是删除；一个题库最多属于一个分类 |
+| 学习记录和错题本 | `attempts`、`attempt_items`、`user_stats`、`saved_sessions`（v3.1） | `attempts` 就是应用里说的学习记录（考试或练习）；`saved_sessions` 标记没做完的那一场 |
+| 用户和权限 | `users`、`sessions`、`devices`（v3.1）、`user_banks`、`user_settings` | 会话属于设备，设备属于用户 |
+| 通知 | `push_subscriptions`、`push_outbox`（v3.1） | users → devices → 订阅 → 发件箱 |
 | 系统 | `meta`、`system_settings`、`activity_log` | |
 
-从 schema 11 起主数据库声明了外键，全部是 `ON DELETE NO ACTION`，图里画成实线（会留下子行的删除会失败；代码照旧先删子行）。虚线是特意不加外键的关系（见 `attempt_items`、`user_stats`、`system_settings` 和 `activity_log` 的备注）。
+从 schema 11 起主数据库声明了外键，全部是 `ON DELETE NO ACTION`，用实线表示（会留下子行的删除会失败；代码照旧先删子行：第 4.16 节）。虚线是故意不加外键的关系（见 `attempt_items`、`user_stats`、`system_settings`、`activity_log` 和 `saved_sessions` 的说明）。每张表的每一列在第 3 节。
 
 ```mermaid
 erDiagram
   users ||--o{ sessions : "user_id"
-  users |o--o{ attempts : "user_id (NULL = 还没人认领的旧记录)"
+  users ||--o{ devices : "user_id"
+  devices |o--o{ sessions : "device_id"
+  devices ||--o| push_subscriptions : "device_id"
+  push_subscriptions ||--o{ push_outbox : "subscription_id"
+  users |o--o{ attempts : "user_id"
   users ||--o{ user_stats : "user_id"
   users ||--o{ user_settings : "user_id"
   users ||--o{ user_banks : "user_id"
+  users ||--o{ saved_sessions : "user_id"
+  devices |o--o{ saved_sessions : "device_id"
   users |o--o{ banks : "owner_id"
-  users |o..o{ system_settings : "updated_by (无外键)"
-  users |o..o{ activity_log : "user_id (快照，不关联)"
+  bank_categories |o--o{ banks : "category_id"
   banks ||--o{ user_banks : "bank_id"
   banks |o--o{ questions : "bank_id"
   banks |o--o{ imports : "bank_id"
   attempts ||--o{ attempt_items : "attempt_id"
-  questions |o..o{ attempt_items : "question_id (软关联)"
-  questions |o..o{ user_stats : "question_id (软关联)"
-
-  users {
-    int id PK
-    text username UK
-    text password_hash
-    text role
-    int disabled
-    int must_change_password
-    int new_banks
-    int can_manage_banks
-    int can_download_banks
-    int ai_enabled
-    text uid
-    text display_name
-    text created_at
-    text last_login_at
-    text last_active_at
-  }
-  sessions {
-    text token_hash PK
-    int user_id
-    int started_at
-    int last_seen_at
-    int expires_at
-    int remember
-    text ip
-    text ua
-  }
-  banks {
-    int id PK
-    text name
-    text filename
-    int legacy_ids
-    int owner_id
-    text ai_job UK
-    text ai_meta
-    text created_at
-    text updated_at
-  }
-  questions {
-    text id PK
-    int bank_id
-    text sheet
-    int row_no
-    int seq
-    text data
-    int active
-    text added_at
-    text updated_at
-  }
-  imports {
-    int id PK
-    int bank_id
-    text at
-    text filename
-    int added
-    int updated
-    int removed
-    int restored
-    int skipped
-    int total
-  }
-  attempts {
-    int id PK
-    int user_id
-    text kind
-    text mode
-    text at
-    text sheets
-    text banks
-    int total
-    int correct
-    int percent
-    int seconds
-    text session_key
-    int started_at
-    int time_limit
-    text ended
-  }
-  attempt_items {
-    int attempt_id PK
-    int seq PK
-    text question_id
-    text answer
-    int correct
-  }
-  user_stats {
-    int user_id PK
-    text question_id PK
-    int attempts
-    int correct
-    int wrong
-    int streak
-    int last
-    text at
-  }
-  user_settings {
-    int user_id PK
-    text key PK
-    text value
-  }
-  user_banks {
-    int user_id PK
-    int bank_id PK
-  }
-  system_settings {
-    text key PK
-    text value
-    text updated_at
-    int updated_by
-  }
-  activity_log {
-    int id PK
-    int ts
-    int last_ts
-    int count
-    text actor
-    int user_id
-    text username
-    text role
-    text action
-    text object
-    text detail
-    text result
-    text reason
-    text source
-    text src_id UK
-  }
-  meta {
-    text key PK
-    text value
-  }
+  attempts |o..o{ saved_sessions : "session_key (软引用，没有外键)"
+  questions |o..o{ attempt_items : "question_id (软引用，没有外键)"
+  questions |o..o{ user_stats : "question_id (软引用，没有外键)"
+  users |o..o{ system_settings : "updated_by (软引用，没有外键)"
+  users |o..o{ activity_log : "user_id (软引用，没有外键)"
 ```
 
 | 表 | 用途 | 键和关联 | 备注 |
 |---|---|---|---|
 | `meta` | 库级键值：`schema`、`banks_known`、`users_known`、`legacy_migrated` | PK `key` | |
-| `banks` | 题库，也保存 AI 生成题库的任务 key 和相关信息 | PK `id`；`owner_id` → `users`（可为空） | `ai_job` 是部分唯一索引；`idx_banks_owner` |
-| `questions` | 一题一行；整道题（含各语言）是 `data` 里的 JSON | PK `id`（文本）；`bank_id` → `banks`（可为空） | 有按工作表、题库、排布的索引（`idx_questions_sheet` 照旧保留） |
+| `bank_categories` | 题库分类，一层（v3.1） | PK `id`；`name` 唯一，忽略大小写 | 只有管理员能编辑；`sort` 是分类之间的顺序 |
+| `banks` | 题库，包括 AI 生成题库的任务键和信息，以及从 v3.1 起的分类和在分类里的位置 | PK `id`；`owner_id` 指向 `users`（可为 NULL）；`category_id` 指向 `bank_categories`（可为 NULL） | `ai_job` 是部分唯一索引；`idx_banks_owner`、`idx_banks_category (category_id, sort)`；`sort` 为 0 = 尚未排位 |
+| `questions` | 每道题一行；整道题（所有语言）是 `data` 里的 JSON | PK `id`（文本）；`bank_id` 指向 `banks`（可为 NULL） | 按题库和按版式（题库、sheet、active、seq）建索引；`idx_questions_sheet` 在 schema 13 删除 |
 | `imports` | 每次 Excel 导入的结果数量 | PK `id`；`bank_id` → `banks`（可为空） | 从 schema 11 起有 `idx_imports_bank` |
 | `attempts` | 学习记录：每次考试或练习一行 | PK `id`；`user_id` → `users`（NULL = 还没人认领的旧记录） | `sheets` 和 `banks` 故意是 JSON 快照；`mode` 没有 `CHECK`（旧记录里可能是任意 JSON） |
 | `attempt_items` | 记录里每道题的作答 | PK `(attempt_id, seq)`；`attempt_id` → `attempts`；`question_id` → `questions`（软关联，**没有外键**） | 记录可能比题目活得更久，遗留题库用的是不分题库的 id |
 | `user_stats` | 每个用户每道题的作答、答对、答错、连对次数（错题本） | PK `(user_id, question_id)`；`user_id` → `users`；`question_id` 是软关联，**没有外键** | 从 schema 11 起有 `idx_user_stats_question`（删题库时按题目查行） |
-| `users` | 账号、角色、权限、AI+ 开关、身份戳 `uid`、最后登录和最后活动（IP、地点、浏览器） | PK `id`；`username` 唯一，不分大小写 | 账号数据和登录遥测混在一起；`uid` 在非空值中唯一（`idx_users_uid`） |
-| `sessions` | 登录会话 | PK `token_hash`；`user_id` → `users` | 时间是 unix 秒 |
+| `saved_sessions` | 浏览器里没做完的练习或考试的标记，以及它的提醒计划（v3.1） | PK `(user_id, session_key)`；`user_id` 指向 `users`；`device_id` 指向 `devices`（可为 NULL） | `session_key` 是之后 `attempts.session_key` 得到的 key：软引用，没有外键 |
+| `users` | 账号、角色、权限、AI+ 开关、身份戳 `uid`、显示名、最近登录和最近活动（IP、所在地、User-Agent） | PK `id`；`username` 唯一，忽略大小写 | 账号数据和登录遥测混在一起；`uid` 在非空值里唯一（`idx_users_uid`），`display_name` 在已设置的名字里唯一（`idx_users_display_name`） |
+| `sessions` | 登录会话 | PK `token_hash`；`user_id` 指向 `users`；`device_id` 指向 `devices`（可为 NULL，v3.1） | 时间是 Unix 秒；`device_id` 为 NULL = v3.1 之前创建，在下次请求时关联 |
+| `devices` | 每个用户的每个浏览器一行：它的随机 cookie 的哈希、登录和最近活动的信息、应用标记、时区、退出登录的时间（v3.1） | PK `id`；`(user_id, cookie_hash)` 唯一；`user_id` 指向 `users` | IP 和所在地跟着登录信息的眼睛；会话和推送订阅都挂在设备上 |
 | `user_banks` | 普通用户能看到哪些题库 | PK `(user_id, bank_id)` | |
 | `user_settings` | 每个用户的界面设置（值是 JSON） | PK `(user_id, key)` | |
+| `push_subscriptions` | 一台设备的 Web 推送订阅：地址、浏览器密钥、订阅时对应的服务器密钥、健康计数（v3.1） | PK `id`；`device_id` 唯一，指向 `devices`；`endpoint` 唯一 | 每台设备最多一个；endpoint 归最后确认它的设备 |
+| `push_outbox` | 推送队列和保留 7 天的投递日志（v3.1） | PK `id`；`subscription_id` 指向 `push_subscriptions` | `idx_push_outbox_due` 是部分索引（`queued` 和 `leased` 的行）；payload 是与语言无关的 JSON |
 | `system_settings` | 全站开关（活动日志保留期、访问记录、登录信息、定位来源） | PK `key`；`updated_by` 是用户 id，**没有外键** | 只写不读的审计字段；加了外键，就删不掉曾经改过站点开关的管理员 |
 | `activity_log` | 活动历史，包括 ai-service 转来的行 | PK `id`；`src_id` 部分唯一（去重） | `username` 和 `role` 是快照，所以用户删除后日志仍然可读 |
 
@@ -1001,232 +1399,16 @@ erDiagram
   users |o--o{ usage : "SET NULL"
   users |o--o{ gen_calls : "SET NULL"
   chats ||--o{ messages : "CASCADE"
-  messages |o..o{ messages : "parent_id (no FK)"
-  chats |o..o| messages : "leaf_id (no FK)"
-  connections |o..o{ chats : "pick_conn (no FK)"
+  messages |o..o{ messages : "parent_id (软引用，没有外键)"
+  chats |o..o| messages : "leaf_id (软引用，没有外键)"
+  connections |o..o{ chats : "pick_conn (软引用，没有外键)"
   tasks ||--o{ gen_items : "CASCADE"
   tasks |o--o{ gen_calls : "SET NULL"
   connections ||--o{ connection_secrets : "CASCADE"
   connections ||--o{ models : "CASCADE"
   models |o--o{ model_slots : "SET NULL"
-  connections |o..o{ usage : "connection_id (no FK)"
-  connections |o..o{ gen_calls : "connection_id (no FK)"
-
-  users {
-    int id PK
-    text stamp
-    text username
-    int function_enabled
-    int free_mode
-    int features_off
-    int first_seen_at
-    int last_seen_at
-  }
-  chats {
-    int id PK
-    int user_id FK
-    text kind
-    text ref UK
-    int record_id
-    text title
-    int leaf_id
-    int pick_conn
-    text pick_model
-    int created_at
-    int updated_at
-  }
-  messages {
-    int id PK
-    int chat_id FK
-    int parent_id
-    text role
-    text kind
-    text content
-    text status
-    text error_code
-    int truncated
-    int free
-    text model
-    text connection
-    text question_id
-    int question_no
-    text source
-    text lang
-    text reasoning
-    int reasoning_ms
-    int reasoning_truncated
-    int created_at
-    int finished_at
-  }
-  memories {
-    int id PK
-    int user_id FK
-    text content
-    text source
-    int created_at
-    int updated_at
-  }
-  tasks {
-    int id PK
-    int user_id FK
-    text kind
-    text state
-    text payload
-    text result
-    text error_code
-    int attempts
-    int run_after
-    text job_key UK
-    int goal
-    int made
-    text phase
-    int charged
-    int seen
-    int created_at
-    int updated_at
-  }
-  gen_items {
-    int task_id PK
-    int no PK
-    int slot
-    text data
-    int at
-  }
-  gen_calls {
-    int id PK
-    int task_id FK
-    int user_id FK
-    text purpose
-    int at
-    text day
-    text provider
-    text model
-    int connection_id
-    text connection
-    int tokens_in
-    int tokens_out
-    int latency_ms
-    text status
-    text error_code
-    int asked
-    int accepted
-    int truncated
-  }
-  usage {
-    int id PK
-    int user_id FK
-    int at
-    text day
-    text kind
-    text purpose
-    text provider
-    text model
-    int connection_id
-    text connection
-    int tokens_in
-    int tokens_out
-    int latency_ms
-    text status
-    text error_code
-  }
-  connections {
-    int id PK
-    text name UK
-    text provider
-    text base_url
-    text format
-    int responses
-    int enabled
-    text gateway_auth
-    text status
-    text error_code
-    int lists_models
-    int tested_at
-    int rev
-    int sort
-  }
-  connection_secrets {
-    int connection_id PK
-    text name PK
-    text key_id
-    blob nonce
-    blob ciphertext
-    text hint
-    int rev
-    int aad_ver
-  }
-  models {
-    int id PK
-    int connection_id FK
-    text model
-    int manual
-    text status
-    text error_code
-    int usage_option
-    int max_tokens
-    int context
-    int latency_ms
-    int tested_at
-  }
-  model_slots {
-    text slot PK
-    int model_id FK
-    text effort
-    int updated_at
-    text updated_by
-  }
-  assess_latest {
-    int user_id PK
-    text content
-    text lang
-    text model
-    text latest_at
-    int records
-    int answered
-    text day
-    int created_at
-    int runs
-  }
-  study_shared {
-    int id PK
-    text question_id
-    text content_hash
-    text kind
-    text lang
-    text content
-    text model
-    int gen
-    int hits
-    int last_hit_at
-  }
-  settings {
-    int id PK
-    int enabled
-    int retention_days
-    int features_off
-  }
-  limits {
-    int id PK
-    int pace_on
-    int pace_rpm
-    int pace_tpm
-  }
-  geo_settings {
-    int id PK
-    text preset
-    text url_template
-    blob key_ciphertext
-    int updated_by
-  }
-  meta {
-    text key PK
-    text value
-  }
-  audit_outbox {
-    int id PK
-    int at
-    text message
-  }
+  connections |o..o{ usage : "connection_id (软引用，没有外键)"
+  connections |o..o{ gen_calls : "connection_id (软引用，没有外键)"
 ```
 
 | 表 | 用途 | 键和关联 | 备注 |
@@ -1259,6 +1441,8 @@ erDiagram
 |---|---|---|
 | `users.id` + `users.stamp` | `users.id` + `users.uid` | stamp 不同就是另一个人：AI 数据会被删除 |
 | `chats.ref` | `attempts.session_key`（或 `r<recordId>@<at>`） | 只作查找键 |
+| —（没有 AI 表） | `push_outbox` | ai-service 通过 `/internal/ai/push/next` 取走排队中、已加密的任务并报告每个结果；它什么都不存，也看不到任何密钥 |
+| `chats.ref` | `saved_sessions.session_key` | 同一个 32 位十六进制的会话 key，既给练习或考试的对话命名，也标记没做完的那场会话（只是查找用的 key） |
 | `chats.record_id` | `attempts.id` | 只用于显示，不用来查找（恢复备份后 id 可能被复用） |
 | `messages.question_id`、`study_shared.question_id` | `questions.id` | 软关联；`study_shared.content_hash` 防止题目被改过 |
 | `tasks.job_key` | `banks.ai_job` | 主数据库的部分唯一索引保证一个任务一个题库 |
@@ -1272,3 +1456,4 @@ erDiagram
 - 主数据库的外键一律明确写成 `ON DELETE NO ACTION`：先删子行才能删父行（不用 `CASCADE`，也不用 `SET NULL`）。AI 数据库按 9.2 所列使用 `CASCADE` 和 `SET NULL`。
 - 已有的名字和主数据库较老的文本时间列保持不变。
 - **有意保留的不一致**（只做了记录，v2.0 没有改）：主数据库的时间存成文本（`YYYY-MM-DD HH:MM:SS`），AI 数据库存 unix 秒；`updated_by` 在 `system_settings` 里是用户 id，在 AI 数据库里是用户名（TEXT）；`study_shared.lang` 用 `zh`，`messages.lang` 用 `zh-CN`；有些名字是历史遗留（`attempts` 在程序里叫学习记录，`legacy_ids`，`banks.filename`）。
+- schema 13 的新表遵守同样的规则：每个时间列都是 `INTEGER` 的 Unix 秒，每个布尔值都有 `CHECK (… IN (0, 1))`，每个枚举都有 `CHECK`，每个外键都明确写成 `ON DELETE NO ACTION`。

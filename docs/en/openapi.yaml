@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Xexam API
-  version: "3.0"
+  version: "3.1"
   description: |
     The REST API of Xexam. The endpoints that existed in the legacy Python implementation behave as it did, and the Rust
     backend stays consistent with it (172 golden responses compared item by item, see tests/baseline/). The intentional
@@ -11,7 +11,7 @@ info:
 
     All responses carry `Cache-Control: no-store` and `X-Content-Type-Options: nosniff`, and no `Server` header.
     JSON is UTF-8 and the key order is fixed (see the order of the properties in each schema).
-    Errors are always `{"error": "<reason, in Chinese>"}` (a 429 adds `retryAfter`; the v1.0 `ai.callLimit` 429 adds `cap`, `limit`, `retryAt`); docs/en/api.md lists every message with
+    Errors are always `{"error": "<reason, in Chinese>"}` (a 429 adds `retryAfter`; the v3.1 answers of the device, push and category routes add a stable `code`; the v1.0 `ai.callLimit` 429 adds `cap`, `limit`, `retryAt`); docs/en/api.md lists every message with
     its English meaning. Only the low-level answers of the request layer keep the old short English text (`bad content type`,
     `too large`, `bad json`, `not found`, `method not allowed`).
 
@@ -76,6 +76,10 @@ tags:
   - name: records
   - name: settings
   - name: logs
+  - name: devices
+    description: "(v3.1) Signed-in devices (one per browser and user)"
+  - name: push
+    description: "(v3.1) Web push notifications and the saved-session marker"
   - name: ai
     description: "(v0.8) AI Chat and Memory, answered by ai-service"
   - name: ai-admin
@@ -687,7 +691,7 @@ paths:
   /api/settings/reset:
     post:
       tags: [settings]
-      summary: "(v0.5) Restore theme, uiLang, autoAdvance and answerFx to their defaults (questionLang is kept)"
+      summary: "(v0.5) Restore theme, uiLang, autoAdvance and answerFx to their defaults (questionLang, push and tz are kept)"
       x-access: SignedIn
       requestBody:
         required: false
@@ -3659,6 +3663,425 @@ paths:
         "413": { description: Body too large }
         "415": { description: Content-Type is not application/json }
 
+  /api/devices:
+    get:
+      tags: [devices]
+      summary: "(v3.1) The caller's signed-in devices in every state, the current device first"
+      x-access: SignedIn
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DevicesResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/ForbiddenGet" }
+  /api/devices/hello:
+    post:
+      tags: [devices]
+      summary: "(v3.1) The app's start report: time zone, installed or not, notification permission"
+      x-access: SignedIn
+      description: |
+        Sent at every start after sign-in and when the app returns to the foreground after an hour or more. `tz` is stored when it
+        is a valid IANA zone name (else null). A `permission` other than `granted` deletes this device's push subscription
+        (activity `settings.pushOff`). A session made before v3.1 is linked to its device here (the answer then carries a new
+        `xexam_did` cookie when the browser had none). A missing or wrongly typed key is 400.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DeviceHello" }
+      responses:
+        "200":
+          description: The device after the update
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [device]
+                properties:
+                  device: { $ref: "#/components/schemas/Device" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "415": { $ref: "#/components/responses/BadContentType" }
+  /api/devices/signout:
+    post:
+      tags: [devices]
+      summary: "(v3.1) Sign one of the caller's other devices out (sessions, push subscription and queued pushes go; the row stays as signedOut)"
+      x-access: SignedIn
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id]
+              properties:
+                id: { type: integer }
+      responses:
+        "200":
+          description: The caller's devices after the change
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DevicesResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: "`这台设备不存在（可能已退出登录），请刷新页面后再试。` (code `devices.notFound`): not a device of the caller"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CodedError" }
+        "409":
+          description: "`不能在这里退出当前这台设备，请用菜单里的「退出登录」。` (code `devices.current`)"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CodedError" }
+        "415": { $ref: "#/components/responses/BadContentType" }
+  /api/devices/signout-others:
+    post:
+      tags: [devices]
+      summary: "(v3.1) Sign out every other device of the caller"
+      x-access: SignedIn
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "200":
+          description: The caller's devices after the change; `count` = devices that had a session or a subscription
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DevicesResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "415": { $ref: "#/components/responses/BadContentType" }
+  /api/users/devices:
+    get:
+      tags: [devices]
+      summary: "(v3.1) The devices of a user (query `user`, 1 to 18 digits); records nothing"
+      x-access: Admin
+      parameters:
+        - { name: user, in: query, required: true, schema: { type: string, pattern: "^[0-9]{1,18}$" } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserDevicesResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/ForbiddenGet" }
+        "404": { $ref: "#/components/responses/UserNotFound" }
+  /api/users/devices/signout:
+    post:
+      tags: [devices]
+      summary: "(v3.1) Sign one device (`id`) or every device (`id` null) of a user out"
+      x-access: Admin
+      description: |
+        For the caller's own account, `id` null signs out every device except the current one, and the current device is
+        refused with 409 `devices.current`. Administrators cannot turn a user's notifications on or off.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user, id]
+              properties:
+                user: { type: integer }
+                id: { type: integer, nullable: true }
+      responses:
+        "200":
+          description: The same answer as GET /api/users/devices
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserDevicesResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: "`这个用户不存在…`, or code `devices.notFound` for a device that is not the user's"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: "code `devices.current`"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CodedError" }
+        "415": { $ref: "#/components/responses/BadContentType" }
+  /api/push/config:
+    get:
+      tags: [push]
+      summary: "(v3.1) The server's public push key and whether a courier is connected (does not count as activity)"
+      x-access: SignedIn
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PushConfig" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/ForbiddenGet" }
+  /api/push/subscribe:
+    post:
+      tags: [push]
+      summary: "(v3.1) Store this device's web-push subscription (one per device; a user keeps at most 10)"
+      x-access: SignedIn
+      description: |
+        Checked in this order: the shape (400); `keyId` equals the server's current key id (409 `push.staleKey`); the endpoint is
+        an allowed push service (400 `push.badEndpoint`: https, port 443 only, no user info, no IP address, host
+        `fcm.googleapis.com`, `updates.push.services.mozilla.com`, `web.push.apple.com`, `*.push.apple.com` or
+        `*.notify.windows.com`); the keys decode (400 `push.badKeys`); the account switch is on (409 `push.off`). An endpoint that
+        was on another device moves to this one. The session must have a device (call /api/devices/hello first), else 400.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PushSubscribeBody" }
+      responses:
+        "200":
+          description: The device with its notification state
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [device]
+                properties:
+                  device: { $ref: "#/components/schemas/Device" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: "`push.staleKey` or `push.off`"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CodedError" }
+        "415": { $ref: "#/components/responses/BadContentType" }
+  /api/push/test:
+    post:
+      tags: [push]
+      summary: "(v3.1) Queue a test notification for this device at once (quiet hours do not apply)"
+      x-access: SignedIn
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "200":
+          description: Queued
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, courier]
+                properties:
+                  ok: { type: boolean, example: true }
+                  courier: { type: boolean, description: "A courier polled within the last 60 seconds" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: "`push.off` (the account switch is off) or `push.noDevice` (this device has no subscription)"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CodedError" }
+        "415": { $ref: "#/components/responses/BadContentType" }
+        "429":
+          description: "`push.testBusy`: one test per device every 10 seconds"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CodedError" }
+  /api/study/saved:
+    post:
+      tags: [push]
+      summary: "(v3.1) Report an unfinished practice or exam (the marker behind the reminders)"
+      x-access: SignedIn
+      description: |
+        At most once a minute per session and when the page is hidden. `timeLeft` is the seconds left of a timed exam at this save
+        (the clock runs only while the exam is open); null otherwise. A new session replaces the browser's older marker; every save
+        restarts the reminder schedule. Not written for a disabled account. Not logged. The marker disappears with the successful
+        POST /api/attempt of that session.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SavedReport" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Ok" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "415": { $ref: "#/components/responses/BadContentType" }
+  /api/study/saved/discard:
+    post:
+      tags: [push]
+      summary: "(v3.1) Drop the marker of an unfinished session (no marker is not an error; not logged)"
+      x-access: SignedIn
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [key]
+              properties:
+                key: { type: string, pattern: "^[0-9a-f]{32}$" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Ok" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "415": { $ref: "#/components/responses/BadContentType" }
+  /api/banks/categories:
+    post:
+      tags: [banks]
+      summary: "(v3.1) Create, rename, delete and reorder bank categories and the banks inside them (one operation per call)"
+      x-access: Admin
+      description: |
+        Operations: `create` (name 1-60 characters, cleaned; appended), `rename`, `delete` (its banks become uncategorised and are
+        appended to that group, which is renumbered), `order` (`ids` = exactly all category ids) and `bankOrder` (`categoryId`,
+        null = uncategorised, and `ids` = exactly the banks now in that group). The answer is the same body as GET /api/banks for
+        the caller, fresh, without an ETag. Errors: 400 `banks.categoryName`, 409 `banks.categoryTaken` (compared ignoring case),
+        404 `banks.categoryNotFound`, 409 `banks.categoryOrder`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CategoryEdit" }
+      responses:
+        "200":
+          description: The banks and categories after the change
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BankList" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: "`banks.categoryNotFound`"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CodedError" }
+        "409":
+          description: "`banks.categoryTaken` or `banks.categoryOrder`"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CodedError" }
+        "415": { $ref: "#/components/responses/BadContentType" }
+  /api/banks/category:
+    post:
+      tags: [banks]
+      summary: "(v3.1) Move banks to a category (appended in the given order) or out of one (categoryId null)"
+      x-access: Admin
+      description: "Moving never changes a bank's `updatedAt`. The answer is the same body as GET /api/banks."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ids, categoryId]
+              properties:
+                ids: { type: array, minItems: 1, maxItems: 1000, items: { type: integer }, description: Distinct bank ids }
+                categoryId: { type: integer, nullable: true }
+      responses:
+        "200":
+          description: The banks and categories after the move
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BankList" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: "An unknown bank (`这个题库不存在…`) or category (`banks.categoryNotFound`)"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "415": { $ref: "#/components/responses/BadContentType" }
+  /internal/ai/push/next:
+    post:
+      tags: [internal]
+      summary: "(v3.1, internal) ai-service asks for due web-push jobs (long poll)"
+      x-access: Internal
+      x-internal: true
+      security: [{ internalToken: [] }]
+      description: |
+        The backend queues, renders, encrypts (RFC 8291) and signs (RFC 8292) each message; ai-service only delivers ready bytes.
+        Body `{"waitMs": 0..20000}`; answer `{"jobs": [Job]}` (0 to 20), `Job` = `{"id", "tries", "endpoint", "ttl", "urgency",
+        "topic", "authorization", "body"}` (`body` = base64url without padding, at most 4096 bytes raw). Answers at once when jobs
+        are due, otherwise when one becomes due, the wait ends or the server stops. A handed-out job is leased for 120 s. Every call
+        records that a courier is present (60 s). Nginx has no location for /internal/.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [waitMs]
+              additionalProperties: false
+              properties:
+                waitMs: { type: integer, minimum: 0, maximum: 20000 }
+      responses:
+        "200": { description: "`{jobs: [{id, tries, endpoint, ttl, urgency, topic, authorization, body}]}`" }
+        "400": { description: Malformed body or an unknown key }
+        "404": { description: "Missing or wrong token (answered like an unknown path: text/plain `not found`)" }
+        "413": { description: Body too large }
+        "415": { description: Content-Type is not application/json }
+  /internal/ai/push/result:
+    post:
+      tags: [internal]
+      summary: "(v3.1, internal) ai-service reports the outcome of web-push jobs"
+      x-access: Internal
+      x-internal: true
+      security: [{ internalToken: [] }]
+      description: |
+        Body `{"results": [{"id", "tries", "outcome", "status", "retryAfter"}]}` (1 to 20). `outcome` is `sent`, `gone` (404 / 410:
+        the subscription is deleted), `auth` (401 / 403), `retry` (5xx, timeout, 429; tried again, 5 tries at most), `deferred`
+        (not sent because the push service was rate limiting) or `rejected` (failed). `status` 0..999 or null (0 = network error),
+        `retryAfter` 1..3600 or null. Accepted only for a job that is still leased with the same `tries`; late or duplicate
+        results are ignored. The heartbeat is unchanged: the backend learns that a courier exists from the polls.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [results]
+              additionalProperties: false
+              properties:
+                results:
+                  type: array
+                  minItems: 1
+                  maxItems: 20
+                  items:
+                    type: object
+                    required: [id, tries, outcome, status, retryAfter]
+                    properties:
+                      id: { type: integer }
+                      tries: { type: integer }
+                      outcome: { type: string, enum: [sent, gone, auth, retry, deferred, rejected] }
+                      status: { type: integer, nullable: true, minimum: 0, maximum: 999 }
+                      retryAfter: { type: integer, nullable: true, minimum: 1, maximum: 3600 }
+      responses:
+        "200": { description: "`{ok: true}`" }
+        "400": { description: Malformed body or an unknown key }
+        "404": { description: "Missing or wrong token (answered like an unknown path: text/plain `not found`)" }
+        "413": { description: Body too large }
+        "415": { description: Content-Type is not application/json }
+
 components:
   securitySchemes:
     session:
@@ -3925,7 +4348,7 @@ components:
         user: { $ref: "#/components/schemas/SessionUser" }
     AuthState:
       type: object
-      description: "(v0.6) Signed out: `user` and `defaultAdmin`. Signed in: `user`, `library` and (v0.8, round 2) `aiAvailable`; administrators also `aiService`."
+      description: "(v0.6) Signed out: `user` and `defaultAdmin`. Signed in: `user`, `library`, (v3.1) `categories` and (v0.8, round 2) `aiAvailable`; administrators also `aiService`."
       required: [user]
       properties:
         user: { nullable: true, allOf: [{ $ref: "#/components/schemas/SessionUser" }] }
@@ -3942,6 +4365,13 @@ components:
             Signed in only: an opaque stamp of the question banks the user may see. It changes whenever one of them is
             imported, replaced or deleted (also by the `import` command), and (v0.7) whenever the banks the user may see or
             manage change. For a user limited to some banks it is made only of those banks.
+        categories:
+          type: string
+          pattern: "^[0-9a-f]{32}$"
+          description: |
+            (v3.1) Signed in only, right after `library`: an opaque stamp of the bank categories and of the places of the banks
+            the user may see in them. It changes when categories are created, renamed, deleted or reordered, when banks are
+            moved, and when the set of visible banks changes. `library` is not affected by category edits.
         aiAvailable:
           type: boolean
           description: |
@@ -3994,7 +4424,7 @@ components:
     User:
       type: object
       description: "(v0.6) One account in GET /api/users. Key order as listed."
-      required: [id, username, displayName, role, disabled, createdAt, lastLoginAt, mustChangePassword, records, banks, newBanks, canManageBanks, canDownloadBanks, ai, ownedBanks, lock, aiSuspended]
+      required: [id, username, displayName, role, disabled, createdAt, lastLoginAt, mustChangePassword, records, banks, newBanks, canManageBanks, canDownloadBanks, ai, ownedBanks, lock, aiSuspended, devices]
       properties:
         id: { type: integer }
         username: { type: string, description: "The login" }
@@ -4013,6 +4443,7 @@ components:
         ownedBanks: { type: array, items: { type: integer }, description: "(v0.7) Ids of the banks this user owns (imported as new banks), ascending" }
         lock: { nullable: true, allOf: [{ $ref: "#/components/schemas/UserLock" }], description: "null while the account is in the first round and not locked" }
         aiSuspended: { type: boolean, description: "(v0.8, round 2) An administrator paused the user's AI+ feature in AI settings (from ai-service's last report: false while the backend has none; always false for administrators; the JSON keeps the older word)" }
+        devices: { type: integer, description: "(v3.1) The number of device rows of the user (the last key)" }
     UserList:
       type: object
       required: [users, aiAvailable]
@@ -4255,7 +4686,7 @@ components:
     BankSummary:
       type: object
       description: "(v0.5) One question bank (= one imported workbook). Key order as listed."
-      required: [id, name, filename, legacy, createdAt, updatedAt, total, inactive, sheets, studied, records, ownerId, owner, manageable]
+      required: [id, name, filename, legacy, createdAt, updatedAt, total, inactive, sheets, studied, records, ownerId, owner, manageable, categoryId, sort]
       properties:
         id: { type: integer }
         name: { type: string, description: "File name without .xlsx when created; ` (2)`, ` (3)` … appended if taken; never changed by updates" }
@@ -4271,11 +4702,14 @@ components:
         ownerId: { type: integer, nullable: true, description: "(v0.7) The user who imported the bank as a new bank. Administrators get it for every bank; anyone else only for their own banks (null otherwise)" }
         owner: { type: string, nullable: true, description: "(v0.7) The owner's username; administrators only (always null for anyone else)" }
         manageable: { type: boolean, description: "(v0.7) Whether the caller may update and delete this bank" }
+        categoryId: { type: integer, nullable: true, description: "(v3.1) The category of the bank; null = uncategorised" }
+        sort: { type: integer, minimum: 0, description: "(v3.1) Position in its group (1..n once placed; 0 = not placed yet). A group is ordered by ((sort = 0), sort, id). Moving a bank never changes updatedAt" }
     BankList:
       type: object
-      required: [banks]
+      required: [banks, categories]
       properties:
         banks: { type: array, items: { $ref: "#/components/schemas/BankSummary" } }
+        categories: { type: array, items: { $ref: "#/components/schemas/BankCategory" }, description: "(v3.1) Ordered by (sort, id). Administrators get every category; everyone else only categories that hold a bank they can see" }
     RecordBank:
       type: object
       required: [id, name, deleted]
@@ -4340,13 +4774,15 @@ components:
     Settings:
       type: object
       description: "(v0.5) Key order as listed."
-      required: [theme, uiLang, autoAdvance, questionLang, answerFx]
+      required: [theme, uiLang, autoAdvance, questionLang, answerFx, push, tz]
       properties:
         theme: { type: string, enum: [system, light, dark], default: system }
         uiLang: { type: string, enum: [en, zh, ja], default: en }
         autoAdvance: { type: boolean, default: false, description: "Go to the next question automatically after a single-choice pick (or the last hotspot choice); never in practice" }
         questionLang: { type: string, enum: [ja, zh, en], default: en, description: "The default question language (every exam or practice starts in it); default en since v2.6 (ja before)" }
         answerFx: { type: boolean, default: true, description: "(v3.0) Practice only: confetti for a right answer and claw marks for a wrong one when an answer is checked" }
+        push: { type: boolean, default: true, description: "(v3.1) Notifications for this account on every device. A missing row means on. Not reset by POST /api/settings/reset" }
+        tz: { type: string, default: auto, description: "(v3.1) `auto` (the zone the device reported) or an IANA zone name (1-64 characters of A-Z a-z 0-9 _ + - /, known to the server); the time zone of the quiet hours 00:00-08:00. Not reset by POST /api/settings/reset" }
     SettingsPatch:
       type: object
       description: "(v0.5) Any subset of Settings; unknown keys are ignored"
@@ -4356,6 +4792,114 @@ components:
         autoAdvance: { type: boolean }
         questionLang: { type: string, enum: [ja, zh, en] }
         answerFx: { type: boolean }
+        push: { type: boolean }
+        tz: { type: string }
+    CodedError:
+      type: object
+      description: "(v3.1) An error answer with a stable `code` next to the Chinese message"
+      required: [error, code]
+      properties:
+        error: { type: string }
+        code: { type: string, example: "devices.current" }
+    GeoLocation:
+      type: object
+      nullable: true
+      description: "(v1.3) Place of an address, or null when unknown or while the sign-in info eye is closed"
+      properties:
+        country: { type: string, nullable: true }
+        region: { type: string, nullable: true }
+        city: { type: string, nullable: true }
+    Device:
+      type: object
+      description: "(v3.1) One browser of one user. Key order as listed."
+      required: [id, current, state, ua, app, createdAt, signinAt, signinIp, signinLocation, activeAt, activeIp, activeLocation, push]
+      properties:
+        id: { type: integer }
+        current: { type: boolean, description: "The device of the requesting session (read from the session row, never from the cookie)" }
+        state: { type: string, enum: [active, signedOut, expired], description: "active = a session that has not run out; signedOut = signed out explicitly; expired = the sign-in ran out (the device keeps its notifications until unused for 30 days)" }
+        ua: { type: string, nullable: true, description: "Cleaned User-Agent (at most 256 characters)" }
+        app: { type: boolean, description: "The last hello came from the installed app" }
+        createdAt: { type: string, description: "Local time YYYY-MM-DD HH:MM:SS" }
+        signinAt: { type: string, nullable: true }
+        signinIp: { type: string, nullable: true, description: "Null while the sign-in info eye is closed" }
+        signinLocation: { $ref: "#/components/schemas/GeoLocation" }
+        activeAt: { type: string }
+        activeIp: { type: string, nullable: true, description: "Null while the sign-in info eye is closed" }
+        activeLocation: { $ref: "#/components/schemas/GeoLocation" }
+        push: { type: boolean, description: "A subscription exists, the account switch is on and the subscription is eligible (user enabled, device not signed out and used within 30 days, current server key)" }
+    DevicesResponse:
+      type: object
+      required: [devices, signinInfo]
+      properties:
+        devices: { type: array, items: { $ref: "#/components/schemas/Device" }, description: "The current device first, then by last activity, newest first" }
+        signinInfo: { type: boolean }
+        count: { type: integer, description: "Only in the answer of signout-others: the devices that had a session or a subscription" }
+    UserDevicesResponse:
+      type: object
+      required: [user, devices, signinInfo]
+      properties:
+        user:
+          type: object
+          required: [id, username, displayName]
+          properties:
+            id: { type: integer }
+            username: { type: string }
+            displayName: { type: string, nullable: true }
+        devices: { type: array, items: { $ref: "#/components/schemas/Device" } }
+        signinInfo: { type: boolean }
+    DeviceHello:
+      type: object
+      required: [tz, app, permission]
+      properties:
+        tz: { type: string, nullable: true, description: "IANA zone name; stored when valid, else null" }
+        app: { type: boolean }
+        permission: { type: string, enum: [granted, denied, default, unsupported] }
+    PushConfig:
+      type: object
+      required: [publicKey, keyId, courier]
+      properties:
+        publicKey: { type: string, nullable: true, description: "Base64url of the 65-byte uncompressed P-256 point (87 characters); null while push is off" }
+        keyId: { type: string, nullable: true, pattern: "^[0-9a-f]{16}$" }
+        courier: { type: boolean, description: "ai-service polled for push jobs within the last 60 seconds" }
+    PushSubscribeBody:
+      type: object
+      required: [endpoint, keys, expirationTime, keyId]
+      properties:
+        endpoint: { type: string, description: "https address at an allowed push service, at most 2048 bytes" }
+        keys:
+          type: object
+          required: [p256dh, auth]
+          properties:
+            p256dh: { type: string, description: "65-byte point, base64url" }
+            auth: { type: string, description: "16 bytes, base64url" }
+        expirationTime: { type: number, nullable: true }
+        keyId: { type: string, pattern: "^[0-9a-f]{16}$", description: "The keyId of GET /api/push/config" }
+    SavedReport:
+      type: object
+      required: [key, kind, answered, total, startedAt, timeLeft]
+      properties:
+        key: { type: string, pattern: "^[0-9a-f]{32}$" }
+        kind: { type: string, enum: [exam, practice] }
+        answered: { type: integer, minimum: 0 }
+        total: { type: integer, minimum: 1, maximum: 100000 }
+        startedAt: { type: integer, description: "Unix seconds, the browser's clock" }
+        timeLeft: { type: integer, nullable: true, minimum: 0, maximum: 36000, description: "Timed exam only: seconds left at this save; 0 = time is up (no reminders)" }
+    BankCategory:
+      type: object
+      description: "(v3.1) One category (one level). Key order as listed."
+      required: [id, name, sort]
+      properties:
+        id: { type: integer }
+        name: { type: string, description: "1-60 characters, unique ignoring case" }
+        sort: { type: integer, description: "Position among the categories (0..n-1)" }
+    CategoryEdit:
+      description: "(v3.1) One operation per call"
+      oneOf:
+        - { type: object, required: [op, name], properties: { op: { type: string, enum: [create] }, name: { type: string } } }
+        - { type: object, required: [op, id, name], properties: { op: { type: string, enum: [rename] }, id: { type: integer }, name: { type: string } } }
+        - { type: object, required: [op, id], properties: { op: { type: string, enum: [delete] }, id: { type: integer } } }
+        - { type: object, required: [op, ids], properties: { op: { type: string, enum: [order] }, ids: { type: array, items: { type: integer } } } }
+        - { type: object, required: [op, categoryId, ids], properties: { op: { type: string, enum: [bankOrder] }, categoryId: { type: integer, nullable: true }, ids: { type: array, items: { type: integer } } } }
     ImportRecord:
       type: object
       required: [id, at, filename, added, updated, removed, restored, skipped, total]

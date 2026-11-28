@@ -99,6 +99,21 @@ export function clearSaved(): void {
 }
 
 /**
+ * v3.1: the raw session key of the saved exam / practice (32 lower-case hex), or null when nothing valid is saved. It does not
+ * look at the question bank, so it still answers when `loadSaved` returns null because every saved question is gone.
+ */
+export function storedSessionKey(): string | null {
+  const k = key();
+  if (!k) return null;
+  try {
+    const d: unknown = JSON.parse(localStorage.getItem(k) ?? 'null');
+    return isObj(d) && typeof d.key === 'string' && KEY_RE.test(d.key) ? d.key : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Before v0.6 there was one user and one saved exam (`xexam.session.v1`). The upgrade gives the old data to the default
  * administrator, so the old saved exam goes to the first administrator who signs in on this browser (unless they already
  * have one); it is never shown to a plain user.

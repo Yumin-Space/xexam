@@ -1124,7 +1124,7 @@ fn a_schema_8_file_with_data_migrates_to_9_with_one_backup_and_one_row() {
         .expect("query")
         .map(|r| r.expect("row"))
         .collect();
-    assert_eq!(rows, vec![r#"{"from":8,"to":12}"#.to_string()]);
+    assert_eq!(rows, vec![r#"{"from":8,"to":13}"#.to_string()]);
     // fresh == migrated, and the next open changes nothing
     assert_eq!(master(&db), master(&fresh));
     drop(c);

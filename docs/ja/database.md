@@ -2,9 +2,25 @@
 
 # データベース
 
-> データベースは SQLite で、**ファイルは `xexam.db` の 1 つだけ**です。Rust バックエンドは旧 Python 版のデータベースから始まりました。元のテーブル定義（スキーマ v1）は 1 文字も変えずに残し、v10 までのスキーマはどれも加えるだけでした（新しいテーブルと新しい列）：**スキーマ v2**（v0.5：問題集、試験の詳細、設定）、**スキーマ v3**（v0.6：ユーザーとログイン）、**スキーマ v4**（v0.7：ユーザーごとの問題集、問題集の所有者、練習の記録）、**スキーマ v5**（v0.8：ユーザーごとの AI+ 機能の付与と識別用のスタンプ）、**スキーマ v6**（v0.9：記録を保存した練習または試験のセッションのキーと開始時刻）。*v1.6* でメインデータベースはスキーマ **10**（ユーザーごとの問題集のダウンロード権限。第 6.16 節）になります。*v2.0* でスキーマ **11**（データベースの整理：9 つのテーブルを外部キー付きで作り直し、旧テーブルを削除。第 6.17 節）、*v2.6* でスキーマ **12**（ユーザーの表示名 `users.display_name`。第 6.19 節）になります。既存のデータベースは、新しいバージョンを初めて起動したときに、バックアップのコピーを書き出してから自動的に移行されます（第 6 節）。v0.7 からデータベースは **WAL モード** で動きます（第 2 節）。
-> v0.8 からは、ai-service が専用のボリュームに **2 つ目の、別のデータベース** `xexam-ai.db` を持ちます（第 8 節）。そのスキーマは v2.1 から **11**（v2.0 は 10、v1.9 は 9、v1.4 は 8、v1.3 は 7、v1.1 は 6、v1.0 は 4、v0.9 までは 3）です。2 つのサービスが互いのデータベースを開くことはありません。**v1.1 はメインのデータベースをスキーマ v7 に上げます**（第 6 節）。
-> 根拠：[audit/database.md](../zh-CN/history/audit/database.md)。突き合わせテスト：`backend/tests/db_golden.rs`（旧 Python 実装で作成した `tests/baseline/fixtures/sample.db` と、コミット済みのスナップショットを使用）。移行とそのバックアップは、`backend/tests/v05_banks_records_settings.rs`（v2）、`v06_users_and_sign_in.rs`（v3）、`v065_bank_access_and_practice.rs`（v4）、`v07_bank_access_and_layouts.rs`（v4 の問題集へのアクセス、リリース前のデータベースの変換、古い形式の問題の出題停止）、`v07_wal_and_logs.rs`（WAL モード）、`v08_ai_link.rs`（v5）、`v09_ai_study.rs`（v6、バックエンドの学習用ルート）、`v20_db.rs`（v11、整理）でテストしています。AI のデータベースは `ai-service/tests/`（スキーマ 3 は `v09_store.rs`、スキーマ 10 は `v20_schema.rs`）と `ai-service/src/store/` の単体テストでテストしています。
+> データベースは SQLite で、**ファイルは `xexam.db` の 1 つだけ**です。Rust バックエンドは旧 Python 版のデータベースから始まりました。元のテーブル定義（スキーマ v1）は 1 文字も変えずに残し、その後のスキーマはどれも追加（新しいテーブルと新しい列）だけで、スキーマ 11 では 9 つのテーブルを外部キー付きで作り直しました。既存のデータベースは、新しいバージョンの最初の起動時に、バックアップのコピーを書き出してから自動的に移行されます（第 6 節）。v0.7 からデータベースは **WAL モード**で動きます（第 2 節）。スキーマ番号は `meta`（`schema`）に保存されます。どのバージョンがどのスキーマをもたらしたかは下の表のとおりです。
+> v0.8 からは、ai-service が専用のボリュームに **2 つ目の、別のデータベース** `xexam-ai.db` を持ちます（第 8 節）。そのスキーマは v2.1 から **11** です。2 つのサービスが互いのデータベースを開くことはありません。
+> 根拠：[audit/database.md](../zh-CN/history/audit/database.md)。突き合わせテスト：`backend/tests/db_golden.rs`（旧 Python 実装で作成した `tests/baseline/fixtures/sample.db` と、コミット済みのスナップショットを使用）。移行とそのバックアップは、`backend/tests/v05_banks_records_settings.rs`（v2）、`v06_users_and_sign_in.rs`（v3）、`v065_bank_access_and_practice.rs`（v4）、`v07_bank_access_and_layouts.rs`（v4 の問題集アクセス、リリース前のデータベースの変換、旧レイアウトの問題の無効化）、`v07_wal_and_logs.rs`（WAL モード）、`v08_ai_link.rs`（v5）、`v09_ai_study.rs`（v6、バックエンドの学習ルート）、`v20_db.rs`（v11 の整理と、すべての古いスキーマが 13 になること）、`v31_migrate.rs`（v13）でテストされています。AI のデータベースは `ai-service/tests/`（スキーマ 3 は `v09_store.rs`、スキーマ 10 は `v20_schema.rs`）と `ai-service/src/store/` の単体テストでテストされています。**第 3 節、第 8.2 節、第 9 節のすべての図は、`backend/tests/docs_diagrams.rs` と `ai-service/tests/docs_diagrams.rs` が新規のデータベースと照合します**（テーブル、列、型、主キーと外部キー、そして 3 言語で同じであること）。そのため、図がコードとずれることはありません。
+
+| スキーマ | アプリのバージョン | 加わったもの |
+|---|---|---|
+| 1 | v0.4 以前（Python 版） | 元のテーブル：questions、attempts、stats、imports、meta |
+| 2 | v0.5 | 問題集、試験の詳細、設定 |
+| 3 | v0.6 | ユーザーとログイン |
+| 4 | v0.7 | ユーザーごとの問題集、問題集の所有者、練習の記録 |
+| 5 | v0.8 | ユーザーごとの AI+ の付与と識別スタンプ |
+| 6 | v0.9 | 記録を保存したセッションのキーと開始時刻 |
+| 7 | v1.1 | 試験の制限時間と終了、AI が作る問題集 |
+| 8 | v1.3 | セッション、アクティビティログ、システム設定 |
+| 9 | v1.4 | 最終アクティビティの列 |
+| 10 | v1.6 | ユーザーごとの問題集のダウンロード権限 |
+| 11 | v2.0 | 整理：9 つのテーブルを外部キー付きで作り直し、旧テーブルを削除 |
+| 12 | v2.6 | ユーザーの表示名 |
+| 13 | v3.1 | 分類、端末、プッシュ、保存セッションのマーカー |
 
 ## 1. ファイルの場所
 
@@ -19,12 +35,14 @@
 
 - **`xexam.db-wal` と `xexam.db-shm`** は、バックエンドの動作中にあります（WAL モード、第 2 節）。`-wal` ファイルには、SQLite が `xexam.db` へ書き写すまで、最新のコミット済みの変更が入っています。バックエンドが正常に停止すると、すべてが `xexam.db` に書き写され、`xexam.db-wal` は空になります。この 2 つのファイルは空のまま残ることがありますが、害はありません。これらはデータベースの一部です。バックエンドの動作中に削除しないでください。コピーするときは `xexam.db` と一緒にコピーします（第 5 節）。
 - **`backups/`** には、スキーマ移行の前に書き出したコピーが入ります（第 6 節）。例：`/data/backups/xexam-schema3-20261111-140501.db`。プログラムがこれらのファイルを削除することはありません。不要になったら自分で削除してください。
+- **`push-vapid.key`**（v3.1）は Web プッシュのサーバーの秘密鍵です（4.12 節）。1 行のファイルで、権限は 0600、最初の起動で作られます。データベースには**入りません**。移行のバックアップには入らず、データディレクトリ全体のコピーには入り、`xexam.db` だけを復元しても戻りません（その場合、スマートフォンはもう一度購読します）。
 
 何がどこに保存されるか：
 
 | 場所 | 内容 |
 |---|---|
 | ボリューム内の `xexam.db`（動作中は `-wal` / `-shm` も） | 問題集とその所有者と問題（出題停止中のものを含む）、インポート履歴、ユーザー（パスワードはハッシュだけ）とそのセッション、各ユーザーが使える問題集、ユーザーごとの問題ごとの統計（間違いノート）、問題ごとの詳細を含む学習記録（試験と練習。v0.9 からは、それぞれを保存したセッションのキーと開始時刻も）、設定（テーマ、表示言語、自動で次の問題へ進む設定、問題の言語） |
+| `xexam.db` の隣の `push-vapid.key`（v3.1） | Web プッシュのサーバーの秘密鍵（VAPID）。データベースにも、そのバックアップにも含まれません |
 | ボリューム内の `backups/` | スキーマ移行の前に書き出されたデータベースのコピー（`xexam-schema1-…` から `xexam-schema5-…` まで） |
 | バックエンドのメモリだけ | システムログ、ログインのロック、インポートのプレビュー。どれも再起動すると空になります |
 | ボリューム `xexam_ai_auth`（v0.8） | バックエンドと ai-service が共有するトークン `internal.token` だけ。バックエンドが書き込み、ai-service が読みます。データベースはありません |
@@ -56,18 +74,20 @@
 
 ## 3. テーブル
 
+テーブルは 18 個で、5 つの領域に分けて図にしてあります。各図は**すべての列を `sqlite_master` に保存されているとおりに**示し（宣言された型。`PK` は主キー、`FK` は外部キー、`UK` は一意）、図では表せないキーとインデックス（部分インデックス、一意インデックス、`COLLATE NOCASE`）を表で続けます。図が必要とする別の領域のテーブルは、空の箱で描いてあります。実線は外部キーで（`|o--o{` は外部キーが NULL になりうることを表します）、点線はあえて外部キーを付けていないソフトな参照です。どのテーブルにも、範囲や列挙のための `CHECK` 制約があります。完全な文は `backend/src/database/schema.rs` にあります。列の一覧では言えないことは第 4 節、各スキーマの履歴は第 6 節、データベース全体の関係を 1 枚にしたものは 9.1 節にあります。
+
+### 3.1 問題集と分類
+
+問題集は取り込んだ 1 つのワークブック（または AI が作った 1 つの問題集）です。ワークブックから消えた問題は削除ではなく無効化されます（4.2 節）。v3.1 からは、管理者が問題集を 1 階層の分類にまとめられます（`bank_categories`、`banks.category_id`、`banks.sort`。4.11 節）。
+
 ```mermaid
 erDiagram
-    questions {
-        TEXT id PK "問題の識別子（4.1 節）"
-        TEXT sheet "ワークシート名（インデックスあり：sheet, active）"
-        INTEGER row_no "Excel 上の行番号（表示専用）"
-        INTEGER seq "問題集内の順序"
-        TEXT data "問題全体の JSON（4.7 節）"
-        INTEGER active "1 有効 · 0 無効"
-        TEXT added_at "問題集に最初に入った日時"
-        TEXT updated_at "最後にインポートまたは無効化された日時"
-        INTEGER bank_id "banks.id（v2）"
+    bank_categories {
+        INTEGER id PK "自動採番、再利用しない（v13）"
+        TEXT name UK "1～60 文字、大文字小文字を区別せず一意"
+        INTEGER sort "分類の並び順（0..n-1）"
+        INTEGER created_at "Unix 秒"
+        INTEGER updated_at "Unix 秒、名前変更で更新"
     }
     banks {
         INTEGER id PK "自動採番、再利用しない（v2）"
@@ -76,7 +96,22 @@ erDiagram
         INTEGER legacy_ids "1 = レガシー問題集（問題 id を問題集ごとに分けない）"
         TEXT created_at "問題集を作成した日時"
         TEXT updated_at "この問題集に最後にインポートした日時"
-        INTEGER owner_id "新しい問題集としてインポートしたユーザーの users.id（v4）"
+        INTEGER owner_id FK "新しい問題集としてインポートしたユーザーの users.id（v4）"
+        TEXT ai_job UK "AI 生成した問題集のジョブキー。それ以外は NULL（v7）"
+        TEXT ai_meta "AI 生成した問題集の JSON 情報（v7）"
+        INTEGER category_id FK "bank_categories.id。NULL = 未分類（v13）"
+        INTEGER sort "グループ内の位置 1..n。0 = まだ未配置（v13）"
+    }
+    questions {
+        TEXT id PK "問題の識別子（4.1 節）"
+        TEXT sheet "シート名"
+        INTEGER row_no "Excel 上の行番号（表示専用）"
+        INTEGER seq "問題集内の順序"
+        TEXT data "問題全体の JSON（4.7 節）"
+        INTEGER active "1 有効 · 0 無効"
+        TEXT added_at "問題集に最初に入った日時"
+        TEXT updated_at "最後にインポートまたは無効化された日時"
+        INTEGER bank_id FK "banks.id（v2）"
     }
     imports {
         INTEGER id PK "自動採番"
@@ -88,35 +123,27 @@ erDiagram
         INTEGER restored "復元"
         INTEGER skipped "読み取れなかった件数"
         INTEGER total "インポート後に有効な問題数"
-        INTEGER bank_id "banks.id（v2）"
+        INTEGER bank_id FK "banks.id（v2）"
     }
-    users {
-        INTEGER id PK "自動採番、再利用しない（v3）"
-        TEXT username "一意、大文字と小文字を区別しない"
-        TEXT password_hash "Argon2id、PHC 文字列"
-        TEXT role "admin · user"
-        INTEGER disabled "1 = ログインできない"
-        TEXT created_at "ローカル時刻"
-        TEXT last_login_at "ローカル時刻、NULL 可"
-        TEXT password_changed_at "ローカル時刻"
-        INTEGER must_change_password "1 = 先に新しいパスワードを設定しなければならない"
-        INTEGER new_banks "1 = 今後作られるすべての問題集を受け取る（v4）"
-        INTEGER can_manage_banks "1 = 問題集の管理権限あり（v4）"
-        INTEGER ai_enabled "1 = AI+ オン（v5）"
-        TEXT uid "識別用のスタンプ、16 進 32 桁、変わらない（v5）"
-        TEXT display_name "他の人に表示されるユーザー名、NULL = 未設定、大文字と小文字を区別せず一意（v12）"
-    }
-    sessions {
-        TEXT token_hash PK "Cookie の値の SHA-256（v3）"
-        INTEGER user_id "users.id（インデックスあり）"
-        TEXT created_at "ローカル時刻"
-        INTEGER last_seen_at "Unix 秒"
-        INTEGER expires_at "Unix 秒"
-    }
-    user_banks {
-        INTEGER user_id PK "users.id（v4）"
-        INTEGER bank_id PK "banks.id（インデックスあり）"
-    }
+    bank_categories |o--o{ banks : "category_id"
+    users |o--o{ banks : "owner_id"
+    banks |o--o{ questions : "bank_id"
+    banks |o--o{ imports : "bank_id"
+```
+
+| テーブル | 主キーと一意制約 | 外部キー（すべて ON DELETE NO ACTION） | インデックス |
+|---|---|---|---|
+| `bank_categories` | PK `id`; UNIQUE `(name NOCASE)` | — | — |
+| `banks` | PK `id` | `category_id` → `bank_categories(id)`; `owner_id` → `users(id)` | `idx_banks_category (category_id, sort)`<br>一意 `idx_banks_ai_job (ai_job) WHERE ai_job IS NOT NULL`<br>`idx_banks_owner (owner_id)` |
+| `questions` | PK `id` | `bank_id` → `banks(id)` | `idx_questions_layout (bank_id, sheet, active, seq)`<br>`idx_questions_bank (bank_id, active)` |
+| `imports` | PK `id` | `bank_id` → `banks(id)` | `idx_imports_bank (bank_id)` |
+
+### 3.2 学習
+
+学習記録（`attempts`。各問題の答えは `attempt_items`）、間違いノートの元になるユーザーごとの統計（`user_stats`）、そして v3.1 からは、未完了の練習や試験をサーバー側に残すマーカー（`saved_sessions`。4.13 節）。
+
+```mermaid
+erDiagram
     attempts {
         INTEGER id PK "自動採番"
         TEXT at "提出日時"
@@ -127,20 +154,22 @@ erDiagram
         INTEGER percent "百分率（偶数丸め）"
         INTEGER seconds "所要時間（秒）"
         TEXT banks "問題集の JSON スナップショット（v2）"
-        INTEGER user_id "users.id（v3、インデックスあり）"
+        INTEGER user_id FK "users.id（v3、インデックスあり）"
         TEXT kind "exam · practice（v4）"
         TEXT session_key "練習・試験のセッションの 16 進数 32 桁。古い記録では NULL（v6）"
         INTEGER started_at "セッションの開始、unix 秒。session_key と同じく NULL になりうる（v6）"
+        INTEGER time_limit "試験の制限時間（秒）。なければ NULL（v7）"
+        TEXT ended "時間制限付き試験の終わり方（v7）"
     }
     attempt_items {
-        INTEGER attempt_id PK "attempts.id（v2）"
+        INTEGER attempt_id PK,FK "attempts.id（v2）"
         INTEGER seq PK "試験の中での順番"
         TEXT question_id "インデックスあり"
         TEXT answer "送信されたままの JSON 配列。NULL = 未回答"
         INTEGER correct "1 · 0"
     }
     user_stats {
-        INTEGER user_id PK "users.id（v3）"
+        INTEGER user_id PK,FK "users.id（v3）"
         TEXT question_id PK "questions.id（制約なし）"
         INTEGER attempts "解答回数"
         INTEGER correct "正解回数"
@@ -149,25 +178,182 @@ erDiagram
         INTEGER last "前回の正誤（NULL 可）"
         TEXT at "最後に解答した日時（NULL 可）"
     }
+    saved_sessions {
+        INTEGER user_id PK,FK "users.id"
+        TEXT session_key PK "練習または試験セッションの 32 桁 hex（後の attempts.session_key）"
+        INTEGER device_id FK "保存した端末の devices.id"
+        TEXT kind "exam · practice"
+        INTEGER answered "回答済みの問題数"
+        INTEGER total "セッションの問題数"
+        INTEGER started_at "セッションの開始（ブラウザーの時計、Unix 秒）"
+        INTEGER time_left "時間制限付きの試験のみ。最後の保存時の残り秒数。0 = 時間切れ"
+        INTEGER saved_at "最後に受け付けた報告のサーバー時刻"
+        INTEGER remind_at "次のリマインダー予定。NULL = これ以上なし"
+        INTEGER reminders "これまでに送ったリマインダー（0..3）"
+    }
+    users |o--o{ attempts : "user_id"
+    attempts ||--o{ attempt_items : "attempt_id"
+    users ||--o{ user_stats : "user_id"
+    users ||--o{ saved_sessions : "user_id"
+    devices |o--o{ saved_sessions : "device_id"
+    questions |o..o{ attempt_items : "question_id (ソフトな参照、外部キーなし)"
+    questions |o..o{ user_stats : "question_id (ソフトな参照、外部キーなし)"
+    attempts |o..o{ saved_sessions : "session_key (ソフトな参照、外部キーなし)"
+    banks |o..o{ attempts : "banks (ソフト, JSON)"
+```
+
+| テーブル | 主キーと一意制約 | 外部キー（すべて ON DELETE NO ACTION） | インデックス |
+|---|---|---|---|
+| `attempts` | PK `id` | `user_id` → `users(id)` | `idx_attempts_session (user_id, session_key) WHERE session_key IS NOT NULL`<br>`idx_attempts_user (user_id)` |
+| `attempt_items` | PK `(attempt_id, seq)` | `attempt_id` → `attempts(id)` | `idx_attempt_items_question (question_id)` |
+| `user_stats` | PK `(user_id, question_id)` | `user_id` → `users(id)` | `idx_user_stats_question (question_id)` |
+| `saved_sessions` | PK `(user_id, session_key)` | `device_id` → `devices(id)`; `user_id` → `users(id)` | `idx_saved_sessions_device (device_id)` |
+
+### 3.3 ユーザーとアクセス
+
+アカウント、ログインのセッション、v3.1 からはユーザーがログインしたブラウザー（`devices`。4.10 節）、一般ユーザーが見られる問題集（4.17 節）、ユーザーごとの設定（4.14 節）。
+
+```mermaid
+erDiagram
+    users {
+        INTEGER id PK "自動採番、再利用しない（v3）"
+        TEXT username UK "一意、大文字と小文字を区別しない"
+        TEXT password_hash "Argon2id、PHC 文字列"
+        TEXT role "admin · user"
+        INTEGER disabled "1 = ログインできない"
+        TEXT created_at "ローカル時刻"
+        TEXT last_login_at "ローカル時刻、NULL 可"
+        TEXT password_changed_at "ローカル時刻"
+        INTEGER must_change_password "1 = 先に新しいパスワードを設定しなければならない"
+        INTEGER new_banks "1 = 今後作られるすべての問題集を受け取る（v4）"
+        INTEGER can_manage_banks "1 = 問題集の管理権限あり（v4）"
+        INTEGER ai_enabled "1 = AI+ オン（v5）"
+        TEXT uid UK "識別用のスタンプ、16 進 32 桁、変わらない（v5）"
+        TEXT last_active_at "最後のリクエスト（ローカル時刻）"
+        TEXT last_login_ip "最後のログインのアドレス・場所・User-Agent（ログイン情報、v1.3）"
+        TEXT last_login_country
+        TEXT last_login_region
+        TEXT last_login_city
+        TEXT last_active_ip "最後のリクエストのアドレス・場所・User-Agent（v1.4）"
+        TEXT last_active_country
+        TEXT last_active_region
+        TEXT last_active_city
+        TEXT last_active_ua
+        INTEGER can_download_banks
+        TEXT display_name UK "他の人に表示されるユーザー名、NULL = 未設定、大文字と小文字を区別せず一意（v12）"
+    }
+    sessions {
+        TEXT token_hash PK "Cookie の値の SHA-256（v3）"
+        INTEGER user_id FK "users.id（インデックスあり）"
+        TEXT created_at "ローカル時刻"
+        INTEGER last_seen_at "Unix 秒"
+        INTEGER expires_at "Unix 秒"
+        INTEGER started_at "ログイン時刻（Unix 秒、v8）"
+        INTEGER remember "1 = このブラウザーを記憶する"
+        TEXT ip "ログイン時のアドレス（ログイン情報の目が開いているとき）"
+        TEXT ua "整形した User-Agent"
+        INTEGER device_id FK "devices.id。NULL = v3.1 より前に作成。次のリクエストで紐づく（v13）"
+    }
+    devices {
+        INTEGER id PK "自動採番、再利用しない（v13）"
+        INTEGER user_id FK "users.id（端末は 1 人のユーザーのもの）"
+        TEXT cookie_hash "xexam_did クッキーの SHA-256（16 進）。ユーザーごとに一意"
+        INTEGER created_at "最初に見た時刻（Unix 秒）"
+        INTEGER active_at "最後のリクエスト（Unix 秒）。30 日の規則に使う"
+        TEXT active_ip "最後のリクエストの IP（ログイン情報の目が開いているとき）"
+        TEXT active_country "そのアドレスの場所"
+        TEXT active_region "そのアドレスの場所"
+        TEXT active_city "そのアドレスの場所"
+        INTEGER signin_at "この端末での最後のログイン成功"
+        TEXT signin_ip "そのログインのアドレス"
+        TEXT signin_country "そのアドレスの場所"
+        TEXT signin_region "そのアドレスの場所"
+        TEXT signin_city "そのアドレスの場所"
+        TEXT ua "整形した User-Agent（最大 256 文字）"
+        INTEGER app "1 = インストールしたアプリとして開いた"
+        TEXT tz "端末が報告した IANA タイムゾーン。なければ NULL"
+        INTEGER signed_out_at "明示的なログアウトで設定、次のログインで解除"
+    }
+    user_banks {
+        INTEGER user_id PK,FK "users.id（v4）"
+        INTEGER bank_id PK,FK "banks.id（インデックスあり）"
+    }
     user_settings {
-        INTEGER user_id PK "users.id（v3）"
-        TEXT key PK "theme · uiLang · autoAdvance · questionLang · answerFx"
+        INTEGER user_id PK,FK "users.id（v3）"
+        TEXT key PK "theme · uiLang · autoAdvance · questionLang · answerFx · push · tz"
         TEXT value "値の JSON テキスト"
     }
+    users ||--o{ sessions : "user_id"
+    users ||--o{ devices : "user_id"
+    devices |o--o{ sessions : "device_id"
+    users ||--o{ user_banks : "user_id"
+    banks ||--o{ user_banks : "bank_id"
+    users ||--o{ user_settings : "user_id"
+```
+
+| テーブル | 主キーと一意制約 | 外部キー（すべて ON DELETE NO ACTION） | インデックス |
+|---|---|---|---|
+| `users` | PK `id`; UNIQUE `(username NOCASE)` | — | 一意 `idx_users_display_name (display_name COLLATE NOCASE) WHERE display_name IS NOT NULL`<br>一意 `idx_users_uid (uid) WHERE uid <> ''` |
+| `sessions` | PK `token_hash` | `device_id` → `devices(id)`; `user_id` → `users(id)` | `idx_sessions_device (device_id)`<br>`idx_sessions_user (user_id)` |
+| `devices` | PK `id`; UNIQUE `(user_id, cookie_hash)` | `user_id` → `users(id)` | — |
+| `user_banks` | PK `(user_id, bank_id)` | `bank_id` → `banks(id)`; `user_id` → `users(id)` | `idx_user_banks_bank (bank_id)` |
+| `user_settings` | PK `(user_id, key)` | `user_id` → `users(id)` | — |
+
+### 3.4 通知（v3.1）
+
+Web プッシュ（v3.1）：端末ごとに 1 つの購読と、キューと 7 日間の配信ログを 1 つにしたアウトボックス。設定 `push` と `tz` は `user_settings`（4.14 節）に、トリガーの印は `meta`（4.15 節）にあります。仕組みは 4.12 節です。
+
+```mermaid
+erDiagram
+    push_subscriptions {
+        INTEGER id PK "自動採番"
+        INTEGER device_id FK,UK "devices.id。端末ごとに購読は最大 1 つ"
+        TEXT endpoint UK "プッシュサービスの https アドレス。一意で、最後に確認した端末へ移る"
+        TEXT p256dh "ブラウザーの公開鍵（65 バイトの base64url、87 文字）"
+        TEXT auth "認証シークレット（16 バイトの base64url、22 文字）"
+        TEXT key_id "購読時のサーバー鍵の SHA-256 の先頭 16 桁（16 進）"
+        INTEGER created_at "Unix 秒"
+        INTEGER confirmed_at "アプリからの最後の購読または再確認"
+        INTEGER expires_at "ブラウザーの expirationTime。なければ NULL"
+        INTEGER last_ok_at "プッシュサービスが最後に受け付けた配信"
+        INTEGER last_fail_at "最後に失敗した配信"
+        INTEGER last_status "プッシュサービスの最後の HTTP ステータス。0 = ネットワークエラー"
+        INTEGER failures "連続した失敗の回数。成功でリセット"
+    }
+    push_outbox {
+        INTEGER id PK "自動採番"
+        INTEGER subscription_id FK "push_subscriptions.id"
+        TEXT kind "remind · bank · version · test"
+        TEXT topic "まとめるキーと Topic ヘッダー（最大 32 文字）"
+        TEXT payload "言語に依存しない JSON（最大 1024 バイト）。暗号文は入らない"
+        TEXT urgency "very-low · low · normal · high"
+        INTEGER created_at "Unix 秒"
+        INTEGER expires_at "有効期限（送信時刻から数える）"
+        TEXT state "queued · leased · sent · failed · expired"
+        INTEGER next_at "queued: 最も早い送信時刻（静かな時間帯・再試行待ち）。leased: リースの終わり"
+        INTEGER tries "これまでの配信試行回数"
+        INTEGER status "最後の HTTP ステータス。結果が出るまで NULL"
+        INTEGER done_at "送信済み・失敗・期限切れで設定。7 日間保持"
+    }
+    devices ||--o| push_subscriptions : "device_id"
+    push_subscriptions ||--o{ push_outbox : "subscription_id"
+```
+
+| テーブル | 主キーと一意制約 | 外部キー（すべて ON DELETE NO ACTION） | インデックス |
+|---|---|---|---|
+| `push_subscriptions` | PK `id`; UNIQUE `(endpoint)`; UNIQUE `(device_id)` | `device_id` → `devices(id)` | — |
+| `push_outbox` | PK `id` | `subscription_id` → `push_subscriptions(id)` | `idx_push_outbox_due (next_at) WHERE state IN ('queued', 'leased')`<br>`idx_push_outbox_sub (subscription_id)` |
+
+### 3.5 システム
+
+データベース全体のキー、サイト全体のスイッチ、アクティビティの履歴。`system_settings.updated_by` と `activity_log.user_id` は監査用のスナップショットで、外部キーではありません。
+
+```mermaid
+erDiagram
     meta {
-        TEXT key PK "schema · legacy_migrated · users_known · banks_known"
+        TEXT key PK "schema · legacy_migrated · users_known · banks_known · app_version · push_imports_seen · push_banks_seen"
         TEXT value
     }
-    banks ||--o{ questions : "questions.bank_id"
-    banks ||--o{ imports : "imports.bank_id"
-    users |o--o{ banks : "banks.owner_id"
-    users ||--o{ user_banks : "user_banks.user_id"
-    banks ||--o{ user_banks : "user_banks.bank_id"
-    users ||--o{ sessions : "sessions.user_id"
-    users ||--o{ attempts : "attempts.user_id"
-    attempts ||--o{ attempt_items : "attempt_id"
-    users ||--o{ user_stats : "user_stats.user_id"
-    users ||--o{ user_settings : "user_settings.user_id"
     system_settings {
         TEXT key PK "サイトスイッチ名"
         TEXT value
@@ -177,15 +363,38 @@ erDiagram
     activity_log {
         INTEGER id PK
         INTEGER ts "UNIX 秒"
+        INTEGER last_ts "最後にまとめた繰り返し（Unix 秒）"
+        INTEGER count "この行にまとめた繰り返しの回数"
         TEXT actor "user · anon · system"
         INTEGER user_id "スナップショット。外部キーなし"
+        TEXT username "ログインの記録（スナップショット）"
+        TEXT role "ロールの記録（スナップショット）"
         TEXT action
+        TEXT object "操作の対象"
+        TEXT detail "JSON の詳細"
         TEXT result "ok · fail"
+        TEXT reason "拒否の短い理由コード"
+        TEXT ip
+        TEXT country
+        TEXT region
+        TEXT city
+        TEXT ua
         TEXT source "backend · ai"
+        TEXT src_id UK "ai-service から転送された行の重複排除キー"
     }
+    users |o..o{ system_settings : "updated_by (ソフトな参照、外部キーなし)"
+    users |o..o{ activity_log : "user_id (ソフトな参照、外部キーなし)"
 ```
 
-13 のテーブルです。スキーマ 11（v2.0）から、そのうち 9 つが**外部キー**付きで宣言され、すべて `ON DELETE NO ACTION` と明記されています（子の行を残してしまう削除は失敗します。コードはこれまでどおり、同じトランザクションの中で子の行を先に削除します）：`sessions.user_id`、`user_stats.user_id`、`user_settings.user_id`、`user_banks.user_id`、`attempts.user_id`（NULL 可）、`banks.owner_id`（NULL 可）→ `users(id)`、`attempt_items.attempt_id` → `attempts(id)`、`questions.bank_id`（NULL 可）、`imports.bank_id`（NULL 可）、`user_banks.bank_id` → `banks(id)`。意図的に**つないでいない**もの（テーブル定義にもその旨のコメントがあります）：`attempt_items.question_id` と `user_stats.question_id`（記録は削除された問題より長く残り、v0.5 より前の問題集は問題集ごとに区別しない id を使うため）、`activity_log.user_id`（ログは監査用のスナップショット）、`system_settings.updated_by`（書き込むだけの監査用の項目。つなぐと、サイトのスイッチを一度でも変更した管理者を削除できなくなります）。旧テーブルの `stats`（v0.5 以前の問題ごとの統計）と `settings`（v0.5 の設定）はスキーマ 11 からありません。その行は v3 への移行のときに最初の管理者にコピー済みです（`user_stats`、`user_settings`）。作り直した 9 つのテーブルは、名前を引用符で囲んだ `CREATE TABLE "banks" (…)` の形で保存されます（SQLite が名前を変えたテーブルをこう記録します）。
+| テーブル | 主キーと一意制約 | 外部キー（すべて ON DELETE NO ACTION） | インデックス |
+|---|---|---|---|
+| `meta` | PK `key` | — | — |
+| `system_settings` | PK `key` | — | — |
+| `activity_log` | PK `id` | — | 一意 `idx_activity_src (src_id) WHERE src_id IS NOT NULL`<br>`idx_activity_prune (ts) WHERE action <> 'auth.signin'`<br>`idx_activity_action (action, id)`<br>`idx_activity_user (user_id, id)`<br>`idx_activity_ts (ts)` |
+
+### 3.6 外部キーと、各スキーマで加わったもの
+
+スキーマ 13 から 18 のテーブルです（それまでは 13）。スキーマ 11（v2.0）から、そのうち 9 つが**外部キー**付きで宣言され、すべて `ON DELETE NO ACTION` と明記されています（子の行を残してしまう削除は失敗します。コードはこれまでどおり、同じトランザクションの中で子の行を先に削除します）：`sessions.user_id`、`user_stats.user_id`、`user_settings.user_id`、`user_banks.user_id`、`attempts.user_id`（NULL 可）、`banks.owner_id`（NULL 可）→ `users(id)`、`attempt_items.attempt_id` → `attempts(id)`、`questions.bank_id`（NULL 可）、`imports.bank_id`（NULL 可）、`user_banks.bank_id` → `banks(id)`。意図的に**つないでいない**もの（テーブル定義にもその旨のコメントがあります）：`attempt_items.question_id` と `user_stats.question_id`（記録は削除された問題より長く残り、v0.5 より前の問題集は問題集ごとに区別しない id を使うため）、`activity_log.user_id`（ログは監査用のスナップショット）、`system_settings.updated_by`（書き込むだけの監査用の項目。つなぐと、サイトのスイッチを一度でも変更した管理者を削除できなくなります）。旧テーブルの `stats`（v0.5 以前の問題ごとの統計）と `settings`（v0.5 の設定）はスキーマ 11 からありません。その行は v3 への移行のときに最初の管理者にコピー済みです（`user_stats`、`user_settings`）。作り直した 9 つのテーブルは、名前を引用符で囲んだ `CREATE TABLE "banks" (…)` の形で保存されます（SQLite が名前を変えたテーブルをこう記録します）。 スキーマ 13（v3.1）では外部キーが 7 つ加わります。これらもすべて `ON DELETE NO ACTION` なので、削除は子の行から先に行います（4.16 節）：`banks.category_id` から `bank_categories(id)`、`devices.user_id` から `users(id)`、`sessions.device_id` から `devices(id)`、`push_subscriptions.device_id` から `devices(id)`、`saved_sessions.user_id` から `users(id)`、`saved_sessions.device_id`（NULL 可）から `devices(id)`、`push_outbox.subscription_id` から `push_subscriptions(id)`。これで 13 のテーブルに 17 の外部キーがあります。`banks` と `sessions` は `ALTER TABLE … ADD COLUMN` で拡張したため、保存されている文は以前の文に追加した列を足したものです。
 
 各スキーマで加わったもの：
 
@@ -196,8 +405,10 @@ erDiagram
 - **v4**（v0.7）：テーブル `user_banks`。列 `users.new_banks INTEGER NOT NULL DEFAULT 0`、`users.can_manage_banks INTEGER NOT NULL DEFAULT 0`、`banks.owner_id INTEGER`、`attempts.kind TEXT NOT NULL DEFAULT 'exam' CHECK (kind IN ('exam', 'practice'))`。インデックス `idx_user_banks_bank (bank_id)` と `idx_banks_owner (owner_id)`。`meta` のキー `users_known` と `banks_known`（6.6 節）。v0.7 の 6 列形式のワークブックには、列は必要ありませんでした。言語ごとの文は `questions.data` に入ります（4.7 節）。v0.7 のリリース前のビルドには、`users.new_banks` の代わりに `users.all_banks` がありました。そうしたデータベースは、開いたときに変換されます（6.5 節）。
 - **v6**（v0.9）：列 `attempts.session_key TEXT`（その記録を保存した練習または試験のセッションのランダムなキー。小文字の 16 進数 32 桁。AI サービスはこれでそのセッションのチャットに名前を付けます。8.2 節）と `attempts.started_at INTEGER`（そのセッションが始まった時刻。ブラウザーの時計での unix 秒）。v0.9 より前に保存したすべての記録と、ブラウザーが有効な値を送らなかった保存では、どちらも NULL です。2 つはそれぞれ別に判定され、無効なほうは NULL として保存し、そのために保存を拒否することはありません。インデックスも制約もありません。この列で記録を探すことはなく（記録は常に `attempts.id` で見つかります）、キーが一意であることも保証しません：それに頼る処理はありません。メインのデータベースで変わったのはそれだけです：AI のチャットとその文、タイトルは AI のデータベースにあります。
 - **v11**（v2.0）：新しい列はありません。上の外部キー付きで 9 つのテーブルを作り直し、新しいインデックス `idx_user_stats_question (question_id)`、`idx_imports_bank (bank_id)`、ユニークな `idx_users_uid ON users(uid) WHERE uid <> ''` を加え、`stats` と `settings` を削除します（6.17）。
+- **v12**（v2.6）：列 `users.display_name TEXT` と一意インデックス `idx_users_display_name`（6.19 節）。
+- **v13**（v3.1）：テーブル `bank_categories`、`devices`、`push_subscriptions`、`saved_sessions`、`push_outbox`。列 `banks.category_id`、`banks.sort`、`sessions.device_id`。インデックス `idx_banks_category`、`idx_sessions_device`、`idx_saved_sessions_device`、`idx_push_outbox_sub`、`idx_push_outbox_due`。そして `idx_questions_sheet` を削除します（6.21 節）。
 
-v1 のテーブル作成文は `backend/src/database/schema.rs`（`SCHEMA`）に履歴として残してあり、その後の追加分はそのすぐ隣にあります（`MIGRATE_V2_TABLES`、`V2_COLUMNS`、…、`MIGRATE_V4_INDEXES`、`V5_COLUMNS`、`V6_COLUMNS`。v2.0 からは `V11_REBUILDS`：9 つのテーブルの定義とそのインデックス）。`SCHEMA` は、ファイルが新しいか、スキーマ 11 より古いときだけ起動時に実行されます（そのため、開くたびに `stats` を作り直すことはありません）。そのあとアップグレードの手順が走ります。どれも `IF NOT EXISTS` を使うか、先に確認してから実行するため、最新のデータベースを開いても**何も書き込みません**（テスト済み：データベースファイルとその `-wal` ファイルは、どちらも 1 バイトも変わりません）。SQLite は `ALTER TABLE … ADD COLUMN` を、保存済みの `CREATE TABLE` の文の末尾に列を書き足す形で記録します。そのため `users` の保存された文は v3 の文に追加した列が付いたものになり、作り直した 9 つのテーブルは `V11_REBUILDS` の定数から、列の順を整えて作られます。新しく作ったデータベースとアップグレードしたデータベースのスキーマは完全に同じです（`db_golden.rs` と、古い各スキーマからの `v20_db.rs` でテスト済み）。
+v1 のテーブル作成文は `backend/src/database/schema.rs`（`SCHEMA`）に履歴として残してあり、その後の追加分はそのすぐ隣にあります（`MIGRATE_V2_TABLES`、`V2_COLUMNS`、…、`MIGRATE_V4_INDEXES`、`V5_COLUMNS`、`V6_COLUMNS`。v2.0 からは `V11_REBUILDS`：9 つのテーブルの定義とそのインデックス）。`SCHEMA` は、ファイルが新しいか、スキーマ 11 より古いときだけ起動時に実行されます（そのため、開くたびに `stats` を作り直すことはありません）。そのあとアップグレードの手順が走ります。どれも `IF NOT EXISTS` を使うか、先に確認してから実行するため、最新のデータベースを開いても**何も書き込みません**（テスト済み：データベースファイルとその `-wal` ファイルは、どちらも 1 バイトも変わりません）。SQLite は `ALTER TABLE … ADD COLUMN` を、保存済みの `CREATE TABLE` の文の末尾に列を書き足す形で記録します。そのため `users` の保存された文は v3 の文に追加した列が付いたものになり、作り直した 9 つのテーブルは `V11_REBUILDS` の定数から、列の順を整えて作られます。新しく作ったデータベースとアップグレードしたデータベースのスキーマは完全に同じです（`db_golden.rs` と、古い各スキーマからの `v20_db.rs` でテスト済み）。 v13 の文は `MIGRATE_V13_CATEGORIES`、`V13_BANK_COLUMNS`、`V13_BANK_INDEX`、`MIGRATE_V13_DEVICES`、`V13_SESSION_COLUMNS`、`V13_SESSION_INDEX`、`MIGRATE_V13_PUSH`、`V13_DROP_INDEXES` です。
 
 ## 4. 学習記録を左右する細かな仕様
 
@@ -224,7 +435,7 @@ sha1( ワークシート名 + "\n" + 空白除去(問題文)[:300] + "|" + 空�
 問題がデータベースから消えるのは、問題集を削除したとき（`POST /api/banks/delete`）だけです。その問題集の問題（有効なものも無効化されたものも）、`imports` の行、`user_banks` の行（誰がそれを見られるか）、`banks` の行を、1 つのトランザクションで削除します。`withRecords` を指定すると、それらの問題の学習データも削除します：その `user_stats` と `attempt_items` の行、そして `banks` スナップショットにその問題集が含まれていて、まだ存在するほかの問題集が含まれていない `attempts` の行（残っている詳細と一緒に）です。管理者はこの方法で**すべての**ユーザーの学習データを削除します。問題集の管理権限を持つユーザーが自分の問題集を削除するときは、その問題集の**自分の**学習データだけを削除し、ほかのユーザーの記録は残ります（その問題は削除済みと表示されます）。`withRecords` を指定しない場合、`user_stats`、`attempts`、`attempt_items` はそのまま残ります。
 
 ### 4.3 間違いノート
-ユーザーごとに、`user_stats` に自分の間違いノートがあります。`wrong > 0` かつ `streak < 2` の問題は間違いノートに入り、連続で 2 回正解すると外れます。試験も練習も、同じように間違いノートを更新します。一部の問題集だけを見られるユーザー（4.8 節）には、その問題集の問題の統計だけが見えます。
+ユーザーごとに、`user_stats` に自分の間違いノートがあります。`wrong > 0` かつ `streak < 2` の問題は間違いノートに入り、連続で 2 回正解すると外れます。試験も練習も、同じように間違いノートを更新します。一部の問題集だけを見られるユーザー（4.17 節）には、その問題集の問題の統計だけが見えます。
 
 ### 4.4 学習記録
 各ユーザーの学習記録は、その `user_id` を持つ `attempts` の行です。`kind` は、記録が `exam`（試験）か `practice`（練習）かを示します（v0.7 より前の記録は、列の既定値どおりすべて試験です）。ユーザーごとに直近 **500** 件を残します（`RECORD_RETENTION`。v0.5 より前は 60 件でした）。提出のたびに、そのユーザーのそれより古いものを `attempt_items` と一緒に削除します。`GET /api/progress` の `history` で返すのは、直近 60 件だけです。
@@ -235,7 +446,7 @@ sha1( ワークシート名 + "\n" + 空白除去(問題文)[:300] + "|" + 空�
 - 記録を 1 件削除すると（`POST /api/records/delete`）、その記録と詳細は消えますが、統計は変わりません。すべて削除するときはユーザーの統計も空にでき（`withStats`）、これは `POST /api/reset` と同じです。
 
 ### 4.5 設定
-`user_settings` には、ユーザーと変更された設定ごとに 1 行が入ります。`value` は値の JSON テキストです（`"dark"`、`true`）。行がない設定は既定値になります（`theme` は `system`、`uiLang` は `en`、`autoAdvance` は false、`questionLang` は `ja`、`answerFx` は true）。保存されている値が正しくない場合は無視されます。ブラウザもコピーを持ちますが、最初の画面を描くためだけに使います。正となるのはデータベースなので、設定はコンテナを更新しても、ブラウザのキャッシュを消しても残り、別のブラウザでも同じです。
+`user_settings` には、ユーザーと変更された設定ごとに 1 行が入ります。`value` は値の JSON テキストです（`"dark"`、`true`）。キーと既定値と **既定の設定に戻す** の動きは 4.14 節にあります。行がない設定は既定値になり、保存されている値が正しくない場合は無視されます。ブラウザは最初の 1 画面を描くためだけにコピーを持ちます。正はデータベースなので、設定はコンテナの更新、ブラウザのキャッシュの削除、別のブラウザをまたいでも残ります。
 
 ### 4.6 タイムスタンプ
 ローカル時刻の文字列で、形式は `%Y-%m-%d %H:%M` です。**タイムゾーンの表記はなく**、分単位までです（`sessions` テーブルは Unix 時刻も 2 つ持ちます）。コンテナ内のタイムゾーンは、既定ではホストと同じです（`docker/docker-compose.yml` がホストの `/etc/localtime` を読み取り専用でマウントします）。`docker/.env` に `TZ` を設定するとそちらが優先され（例：`TZ=UTC`）、どちらもなければイメージは UTC になります。Docker Desktop（Windows、macOS）では、マウントされるのは Docker 自身の仮想マシンのファイル（たいてい UTC）なので、`TZ` を設定してください。イメージにはタイムゾーンのデータベースが含まれているので、`TZ` には任意のタイムゾーンを指定できます。後からタイムゾーンを変えても、保存済みの日時は書き換えません。書き込まれたときのタイムゾーンのままです。
@@ -251,15 +462,77 @@ sha1( ワークシート名 + "\n" + 空白除去(問題文)[:300] + "|" + 空�
 
 解説を 1 つしか知らないクライアントのために、6 列形式の問題の `explanation`、`mnemonic`、`note` には、E 列にあれば中国語の文、なければ日本語（F 列）、なければ英語（D 列）が入ります。3 列と 4 列形式の問題は、出題停止の問題としてデータベースに残り、その JSON は以前のバージョンとまったく同じです（新しいキーはありません）。パーサーは今もこれらの形式を読みます（インポートがそれを見分けて拒否するためです）。パーサーのゴールデンテストが、その出力をバイト単位で確かめています。
 
-### 4.8 誰がどの問題集を見られるか（v0.7）
-- **管理者** は、すべての問題集を利用・管理できます。
-- **一般ユーザー** が見られるのは、`user_banks` にそのユーザーの分として並んだ問題集（管理者がチェックした既存の問題集）だけです。`users.new_banks = 1`（**今後インポートする問題集も含める**）は行を加えるだけです。問題集が作られるたびに（誰かが新しい問題集としてインポートしたとき、またはコマンドラインの `import` がレガシー問題集を作ったとき）、このフラグを持つユーザー全員に、同じトランザクションでその問題集の行が加わります。既存の問題集を加えることはなく、問題集のチェックを外すと、その行だけが削除されます。新しいユーザーは、行がなく、フラグもオフの状態で始まります。v4 への移行の時点でいたユーザーには、既存のすべての問題集の行とフラグを設定したので、アップグレードで問題集を失った人はいません。
-- **問題集の管理権限を持つユーザー**（`users.can_manage_banks = 1`）は、権限がある間、自分が所有する問題集（`banks.owner_id`）も見られ、更新・削除できるのはその問題集だけです。新しい問題集としてインポートした問題集は、インポートしたユーザーのものです。v0.7 より前の問題集と、ログインしたユーザーなしで作られた問題集（コマンドラインの `import`）は、最初の管理者のものです。
-- ユーザーを削除すると、そのセッション、学習記録（詳細を含む）、統計、設定、`user_banks` の行を削除します。そのユーザーが所有していた問題集は、削除した管理者に移ります。その AI チャットとメモは AI のデータベースにあり、AI サービスが次の照合のときに削除します（8.3 節）。
+### 4.8 問題集の見える範囲（4.17 節へ移動）
+規則（管理者、一般ユーザー、問題集の管理権限を持つユーザー、ユーザーの削除）は 4.17 節にあります。
 
 ### 4.9 ダッシュボードのクエリ（v2.5、v2.6、読み取り専用）
 
 `GET /api/dashboard` は何も書き込まず、どのテーブルも変えません。ランキングは `user_stats` と `users` を結合した 1 つの集計です（解答が 1 件以上ある有効なユーザーを、正解数の降順、次に解答数の昇順、次にユーザー ID の順に並べます）。古い記録が 500 件に整理されても残る問題ごとの統計を使うのは、そのためです。v2.6 からは `users.display_name` も読みます：設定済みの名前はそのまま送り、NULL のときはログイン ID を使います（メールアドレスなら、他の閲覧者には伏せた形）。**よく間違える問題** の一覧（v2.6。v2.5 の `attempts` と `attempt_items` を対象にした「よく練習された問題」の集計に代わるもの）は、閲覧者自身の `user_stats` の行（`user_id = 閲覧者 AND wrong > 0`）と `questions`（有効で、持ち主の問題集があるもの）を結合したものだけを読み、`wrong` の降順、`correct` の昇順、`attempts` の降順、次に問題集と位置の順に、最大 5 問を返します。`user_stats` に未解答の試験項目が入ることはありません。閲覧者の問題集の範囲はコードで適用します（すべての問題集が見える場合は、クエリ自体に `LIMIT 5` が付きます）。返すのは問題の ID と回数だけで、問題文、ユーザー ID、メールのドメインは含みません。
+
+### 4.10 ログインのセッションと端末（v3.1）
+- **セッション。** `sessions` はログイン中のブラウザーのセッションごとに 1 行です（1 人のユーザーは最大 20 まで。いちばん古いものが削除されます）。`sessions.device_id` がセッションをその端末に結び付けます。v3.1 より前、または古いバイナリで作られたセッションでは NULL で、そのブラウザーの次のリクエストで結び付けられます（アップグレード後の最初の `POST /api/devices/hello` がすべてを結び付けます）。
+- **端末。** `devices` はユーザーごと、ブラウザーごとに 1 行です。ブラウザーはランダムなクッキー `xexam_did`（43 文字、32 バイトの乱数の base64url。`HttpOnly`、`SameSite=Strict`、400 日）で見分け、保存するのはその SHA-256 だけです（`cookie_hash`。`user_id` と合わせて一意）。このクッキーは認証情報ではありません。セッションには別に `xexam_session` が必要です。行にはそのブラウザーの事実が入ります：最初に見た時刻、最後のログイン（`signin_*`）と最後のリクエスト（`active_*`）、整形した User-Agent（`ua`、最大 256 文字）、インストールしたアプリとして動いたか（`app`）、報告したタイムゾーン（`tz`）。 ブラウザーは最後にログインしたユーザーのものになります。同じクッキーが別のユーザーでログインすると、ほかのユーザーの端末にあるプッシュ購読（とキューにある行）は削除されます。
+- **IP と場所**はログイン情報のスイッチ（ユーザー管理の目）に、`users.last_login_*`・`users.last_active_*` とまったく同じように従います。目が開いている間だけ書き込まれ、場所はそのときの場所の取得元で決まり、**ログイン情報を消去** で空になり（User-Agent は `last_active_ua` と同じく残ります）、外部のルックアップに切り替えたあとの補完は端末も対象にします。
+- **状態**は保存しません。*有効* ＝ 期限が未来のセッションがある端末、*ログアウト済み* ＝ そのようなセッションがなく `signed_out_at` が設定されている端末、*期限切れ* ＝ それ以外（セッションが切れた、またはその行が毎時の整理を待っている）。
+- **ログアウト。** 明示的なログアウト（本人、管理者、**ほかのすべての端末をログアウト**）は、その端末のセッションと、プッシュの購読およびキューにある通知を削除し、一覧のために端末の行は残して `signed_out_at` を設定します。次のログインで解除されます。期限切れと 20 セッションの上限では端末はログアウトされ**ません**。購読も通知も続きます。自分のパスワードを変えると、ほかのすべての端末がログアウトされます。管理者によるパスワードのリセット、ユーザーの無効化、ロールの変更、コマンドラインの `reset-password` は、そのユーザーのすべての端末をログアウトします。
+- **保持。** セッションのない端末は、30 日リクエストがないと削除され、1 人のユーザーが持てる端末の行は最大 20 です（セッションのない最も古い未使用のものから消えます）。どちらも毎時実行されます。ユーザーを削除すると、その端末も削除されます（4.16 節）。
+
+### 4.11 問題集の分類（v3.1）
+- **`bank_categories`** は分類ごとに 1 行です。名前は 1～60 文字で、大文字小文字を区別せず一意。`sort` は分類の中での位置（0～n−1）です。階層は 1 つだけで、編集できるのは管理者だけです（問題集管理のページ）。
+- **`banks.category_id`** は問題集の分類で、NULL は未分類です。**`banks.sort`** はグループ内の位置で、配置されると 1～n、**0 は未配置**です。グループは `((sort = 0), sort, id)` の順に並びます。まだ配置されていない問題集（あとから作られたすべての問題集：アプリでの取り込み、コマンドラインの `import`、AI 生成、v3.0 のバイナリ）は、配置済みのものの後ろに `id` 順で来ます。そのため新しい問題集は必ずグループの末尾に入り、どの作成経路も変更する必要がありませんでした。
+- **問題集の移動**（分類への移動、並べ替え）では `banks.updated_at` を変えません。この列は内容の時刻で、ライブラリのスタンプに関わるからです。分類を削除すると、その問題集は未分類のグループの末尾に追加され、そのグループは 1～n に振り直され、残りの分類も振り直されます。
+- **スタンプ。** `GET /api/banks` の ETag はすべての分類とすべての問題集の位置を含むので、順序だけが変わったときも開いているページが更新されます。ライブラリのスタンプ（`GET /api/bank`、`library` の値）は分類の編集では変わりません。`GET /api/auth/state` には 3 つ目のスタンプ `categories` があります。
+- **誰に何が見えるか。** 管理者にはすべての分類が、それ以外のユーザーには自分が見られる問題集を含む分類だけが返ります（4.17 節）。
+
+### 4.12 プッシュ通知（v3.1）
+- **テーブル。** `push_subscriptions` は端末ごとに最大 1 行です（`device_id` は一意）。プッシュサービスのアドレス `endpoint` は全ユーザーで一意で、最後に確認した端末に移ります。`p256dh` と `auth` はブラウザーの鍵を正規の base64url にしたもの、`key_id` は購読したときのサーバーの公開鍵の SHA-256 の先頭 16 桁（16 進）です。`push_outbox` はキューであり、7 日間は配信ログでもあります。メッセージごとに 1 行で、`kind`（`remind`、`bank`、`version`、`test`）、まとめるための `topic`、言語に依存しない JSON の `payload`（最大 1024 バイト、暗号文は入らない）、`urgency`、時刻、`state` を持ちます。
+- **役割分担。** 配信以外はすべてバックエンドが持ちます。行をキューに入れ（トリガー：未完了の練習や試験のリマインダー、問題集のお知らせ、新しいバージョン、テストボタン）、リースの時点でユーザーの表示言語で本文を作り、暗号化（RFC 8291、`aes128gcm`）し、リクエストのヘッダーに署名（RFC 8292、VAPID、ES256）します。ai-service は状態を持たない配達役です。`POST /internal/ai/push/next` をロングポーリングし、各ジョブをプッシュサービスへ送り、結果を `POST /internal/ai/push/result` で報告します。ブラウザーの鍵も VAPID の秘密鍵も平文も見ません。ai-service がなければ何も配信されず、行は有効期間が過ぎて失効します。サービス間のハートビートは変わりません（[architecture.md](architecture.md) の 5 節）。
+- **行の一生。** `queued` → `leased`（120 秒。1 回の呼び出しで最大 20 行）→ `sent`、`failed`、`expired` のいずれか。配信に失敗すると、30 秒、2 分、10 分、1 時間後に再試行されます（最大 20 % のゆらぎ付き。プッシュサービスの `Retry-After` があれば待ち時間をそれに置き換えます）。試行は最大 5 回です。有効期間はリマインダーが 6 時間、お知らせとバージョンが 3 日、テストが 10 分で、メッセージを最初に送れる時刻から数えます。リースのたびに、バックエンドは購読がまだ有効か（ユーザーが有効、アカウントのスイッチがオン、端末がログアウトしておらず 30 日以内に使われている、サーバーの鍵が現在のもの）と、メッセージにまだ意味があるか（問題集が存在しユーザーに見える。練習がその端末にまだ保存されていて終わっていない）を確かめ直し、満たさなければ送らずに `expired` にします。 静音時間のために保留された行は、解放時に `expires_at` が少なくとも解放時刻に有効期間を丸ごと足した時刻まで延ばされます。
+- **静かな時間帯**はユーザーのタイムゾーンの 0:00～8:00 です（設定 `tz`。`auto` のときは端末が報告したゾーン、それもなければサーバーのゾーン）。この時間帯に送る予定のメッセージは 8:00 まで保留されます。テストは対象外です。
+- **保持。** 毎時：有効期間が過ぎたキューの行は失効し、7 日より古い完了した行は削除され、購読はプッシュサービスが 404 または 410 を返したとき、`expires_at` が過ぎたとき、10 回連続で失敗して 7 日間成功がないとき、端末が 30 日使われなかったとき、そして起動時に `key_id` が現在の鍵でないときに削除されます。
+- **VAPID 鍵**はデータディレクトリのファイル `push-vapid.key`（1 行、PKCS#8 鍵の base64url、権限 0600）にあり、最初の起動で作られます。変数 `XEXAM_PUSH_VAPID_KEY` で上書きできます（複数のホストで 1 つの鍵を共有するとき）。**データベースには入らない**ので、移行のバックアップ（`VACUUM INTO`）には含まれず、データディレクトリ全体のコピーには含まれます。そのコピーはデータベースと同じように守ってください。鍵の更新はファイルを削除（または変数を変更）して再起動することです。古い鍵の購読はその起動で削除され、スマートフォンは次にアプリを開いたときにもう一度購読します。
+- **v3.0 に戻す**と、ユーザーを再び削除できるようにするために SQL を 1 回実行する必要があります（6.22 節）。
+
+### 4.13 保存セッションのマーカー（v3.1）
+- **`saved_sessions`** は、ブラウザーに未完了の練習や試験があることを示します。セッションのキー（のちに `attempts.session_key` として保存されるキー）、種類、何問中何問に答えたか、保存したブラウザー（`device_id`）、時間制限付きの試験では残り秒数（`time_left`。時計は試験を開いている間だけ進むので、期限の時刻はありません）、リマインダーの予定（`saved_at`、`remind_at`、`reminders`）です。問題文も答えも入りません。アプリは `POST /api/study/saved` で報告し、サーバーの書き込みはセッションごとに 1 分に 1 回までで、1 人のユーザーにつきブラウザーごとにマーカーは 1 つです。
+- **リマインダー**は最後の保存の 3 時間後に始まり、3 時間ごとに最大 3 回です。静かな時間帯で保留されたものの次は、その解除の 3 時間後になるので、重なりません。時間切れの試験には送りません。保存するたびに予定は最初からになります。
+- **マーカーが消える**のは、そのセッションの `POST /api/attempt` が成功したとき、破棄（`POST /api/study/saved/discard`）したとき、同じキーの記録（attempt）があるとき、最後の保存から 14 日後です。
+
+### 4.14 `user_settings` のキー
+| キー | 値 | 既定値 | **既定の設定に戻す** | 追加 |
+|---|---|---|---|---|
+| `theme` | `system`、`light`、`dark` | `system` | 戻す | v0.6 |
+| `uiLang` | `en`、`zh`、`ja` | `en` | 戻す | v0.6 |
+| `autoAdvance` | 真偽値 | `false` | 戻す | v0.6 |
+| `questionLang` | `ja`、`zh`、`en` | `en`（v2.6 より前は `ja`） | そのまま | v2.6 より前 |
+| `answerFx` | 真偽値 | `true` | 戻す | v3.0 |
+| `push` | 真偽値：このアカウントの通知 | `true` | そのまま | v3.1 |
+| `tz` | `auto` または IANA ゾーン名（最大 64 文字） | `auto` | そのまま | v3.1 |
+
+`push` の行がなければ**オン**です。サーバー側のフィルターはどれも「`false` でない」を条件にし、「`true`」を条件にすることはありません。`tz` はプロフィールで、`push` は設定で変更します。`GET /api/settings` の応答は、この順に 7 つのキーを返します。
+
+### 4.15 `meta` と `system_settings` のキー
+- **`meta`** にはデータベース全体の印が入り、値が変わるときだけ書き込まれるので、何もないファイルはバイト単位で同じままです。`schema`（スキーマ番号）、`legacy_migrated`、`users_known`、`banks_known`（6.6 節）、v3.1 からは `app_version`（プッシュですでに知らせた最高のバージョン）、`push_imports_seen` と `push_banks_seen`（すでに知らせた最大の `imports.id` と `banks.id`）です。
+- **`system_settings`** にはサイト全体のスイッチが入ります。`activity.retention_days`（既定 90、7～3650）、`activity.user_visits`（`0` または `1`、既定 `0`）、`users.signin_info`（`0` または `1`、既定 `0`：目）、`geo.source`（`cloudflare`（既定）または `api`）です。`updated_by` は監査用だけのユーザー id で、外部キーはありません。
+
+### 4.16 削除の順序（子の行から先に）
+すべての外部キーは `ON DELETE NO ACTION` なので、各削除は 1 つのトランザクションの中で、子から先に親を消します。
+
+| 操作 | 順序 |
+|---|---|
+| ユーザーの削除 | `user_banks`、次にそのユーザーのプッシュの行（購読のアウトボックス、購読、`saved_sessions`）、`sessions`、`devices`、学習の行（`attempt_items`、`attempts`）、`user_stats`、`user_settings`、最後にユーザー |
+| 端末のログアウト | その端末の `sessions`、そのプッシュの購読（先にアウトボックス）、そして `signed_out_at` を設定 |
+| ユーザーのすべての端末のログアウト | そのユーザーの `sessions`、続いて各端末のプッシュの購読（先にアウトボックス）と `signed_out_at` |
+| 端末の削除（30 日未使用でセッションなし） | そのプッシュの購読（先にアウトボックス）、その `saved_sessions`、`devices` の行 |
+| プッシュの購読の削除 | その `push_outbox` の行、次に購読 |
+| 分類の削除 | その問題集は未分類になって未分類のグループの末尾に追加され、グループが振り直され、最後に `bank_categories` の行 |
+| 問題集の削除 | 変更なし（4.2 節）。`push_outbox` から `banks` への外部キーはありません。削除された問題集のキューにある通知は、送る時点で捨てられます |
+
+### 4.17 誰がどの問題集を見られるか（v0.7）
+- **管理者** は、すべての問題集を利用・管理できます。
+- **一般ユーザー** が見られるのは、`user_banks` にそのユーザーの分として並んだ問題集（管理者がチェックした既存の問題集）だけです。`users.new_banks = 1`（**今後インポートする問題集も含める**）は行を加えるだけです。問題集が作られるたびに（誰かが新しい問題集としてインポートしたとき、またはコマンドラインの `import` がレガシー問題集を作ったとき）、このフラグを持つユーザー全員に、同じトランザクションでその問題集の行が加わります。既存の問題集を加えることはなく、問題集のチェックを外すと、その行だけが削除されます。新しいユーザーは、行がなく、フラグもオフの状態で始まります。v4 への移行の時点でいたユーザーには、既存のすべての問題集の行とフラグを設定したので、アップグレードで問題集を失った人はいません。
+- **問題集の管理権限を持つユーザー**（`users.can_manage_banks = 1`）は、権限がある間、自分が所有する問題集（`banks.owner_id`）も見られ、更新・削除できるのはその問題集だけです。新しい問題集としてインポートした問題集は、インポートしたユーザーのものです。v0.7 より前の問題集と、ログインしたユーザーなしで作られた問題集（コマンドラインの `import`）は、最初の管理者のものです。
+- ユーザーを削除すると、そのセッション、端末（プッシュの購読と保存セッションのマーカーを含む）、学習記録（詳細を含む）、統計、設定、`user_banks` の行を削除します。そのユーザーが所有していた問題集は、削除した管理者に移ります。その AI チャットとメモは AI のデータベースにあり、AI サービスが次の照合のときに削除します（8.3 節）。
 
 ## 5. バックアップと復元
 
@@ -487,6 +760,34 @@ v0.7.5 はスキーマ 5 のファイルそのものも開けます（スキー�
 
 v2.5 のバックエンドはスキーマ 12 のファイルをそのまま開きます：新しいスキーマを現在のものとして扱い、`users.display_name` は読まず、新しいインデックスにも触れません（自分で挿入する行ではこの列は `NULL` になります）。したがって戻すときに **復元は要りません**：イメージのタグを変えて起動するだけです。その間に v2.5 で作ったアカウントにはユーザー名がなく、再び v2.6 を動かしたときに名前を求められます。`backups/xexam-schema11-….db` を復元しても戻せて、アップグレード前の状態をそのまま取り戻せますが、それ以降に書かれたもの（記録、アカウント、ユーザー名）はすべて失われます。
 
+### 6.21 スキーマ v13（v3.1）
+
+メインのデータベースは、v3.1 のバックエンドの最初の起動で一度だけ、バックアップのコピー `backups/xexam-schema12-<日時>.db` を作ったあと、スキーマ 12 から**スキーマ 13**に上がります（データのないファイルにはバックアップを作りません。もっと古いスキーマからは、その古いスキーマのバックアップ 1 つだけでスキーマ 13 へ直接上がり、それまでのステップが同じトランザクションの中で先に実行されます）。このステップは追加だけで、1 つのトランザクションの中で次の順に実行されます。
+
+1. テーブル `bank_categories`。
+2. 列 `banks.category_id`（`bank_categories(id)` への外部キー。NULL は未分類）と `banks.sort`（既定 0 ＝ まだ未配置）、インデックス `idx_banks_category (category_id, sort)`。
+3. テーブル `devices`（`(user_id, cookie_hash)` が一意）、列 `sessions.device_id`（`devices(id)` への外部キー、NULL 可）、インデックス `idx_sessions_device`。
+4. テーブル `push_subscriptions`、`saved_sessions`、`push_outbox` とそのインデックス（`idx_saved_sessions_device`、`idx_push_outbox_sub`、部分インデックス `idx_push_outbox_due ON push_outbox(next_at) WHERE state IN ('queued', 'leased')`）。
+5. インデックス `idx_questions_sheet` を削除します。`bank_id` なしで `sheet` を絞り込むクエリはなく、`idx_questions_layout (bank_id, sheet, active, seq)` がシートの絞り込みをすべて受け持つからです。
+6. `meta.schema` が `13` になります。
+
+行は変わりません。どの問題集も `category_id` は NULL、`sort` は 0、どのセッションも `device_id` は NULL になります。スキーマ 13 のファイルを開くたびに、起動時の確認が、v1.9 のバイナリが作り直していた `idx_questions_sheet` を再び削除します。最新のファイルはバイト単位で同じままです（テスト済み）。ログの行は `system.migrate` で `{"from": 12, "to": 13}` です（1 行。ストアの時計の時刻で書かれ、ファイルにデータがあったときだけ。古いスキーマからの場合も `"to": 13`）。ログには `Upgraded the database to schema 13. A copy of the previous version was saved first: <パス> …` と出ます。ほかのアップグレードと同じく 1 つのトランザクションで実行され、想定外のことがあればファイルはスキーマ 12 のままバックアップだけが残ります。新しい設定のキー `push` と `tz`、`meta` の印には移行は要りません（4.14 節、4.15 節）。
+
+テスト：`backend/tests/v31_migrate.rs`（新規のスキーマ 13 のファイルと、スキーマ 12 から上げたファイルが、保存された SQL まで同じであること。バックアップとログの行。2 回目に開いてもバイト単位で同じであること。新しいスキーマ番号のファイルがそのまま開くこと。削除したインデックスが再び削除されること。シートのクエリのプラン。4.16 の削除の順序）、`backend/tests/db_golden.rs`（スキーマのオブジェクト 56 個の一覧）、`backend/tests/v20_db.rs`（すべての古いスキーマが 13 になること、外部キー 17 個）、`tests/integration/migrate_check.py`（CI での、すべての古い形からのアップグレード）。
+
+### 6.22 v3.0 に戻す
+
+v3.0 のバックエンドはスキーマ 13 のファイルをそのまま開けます。新しいスキーマを現行として扱い、新しいテーブルと列を無視し（挿入では既定値のままで、作るセッションの `device_id` は NULL）、分類のない問題集を作り、設定のキー `push` と `tz` は無視します。そのため、戻すのに**復元は要りません**。イメージのタグを変えて起動するだけです。
+
+そのあとで失敗するのは、`devices`、`push_subscriptions`、`saved_sessions` に行があるユーザーの削除です。v3.0 はそれらのテーブルを知らないので先に削除せず、外部キーが拒否します（`FOREIGN KEY constraint failed`。トランザクションはロールバックされ、何も失われません）。次を一度実行してから（バックエンドを止めるか、動いたまま `sqlite3` で）、もう一度削除してください。
+
+```sql
+DELETE FROM push_outbox; DELETE FROM push_subscriptions; DELETE FROM saved_sessions;
+UPDATE sessions SET device_id = NULL; DELETE FROM devices;
+```
+
+`backups/xexam-schema12-….db` を復元しても構いません。アップグレード直前の状態そのものに戻りますが、それ以降に書き込まれたものはすべて失われます。もう一度 v3.1 にするのは普通に開くだけです（ファイルはすでにスキーマ 13）。端末は次のリクエストでまた登録され、スマートフォンは次にアプリを開いたときにまた購読します。AI のデータベースには何も影響しません。
+
 ## 7. 旧 `progress.json`
 
 さらに古いバージョンでは、成績を `progress.json` に保存していました。旧 Python 版と同じく、**起動のたびに**データディレクトリにそのファイルがあるかを確認します。ファイルがあり、かつデータベースにまだ学習記録がなく、移行も行われていない場合に、それをデータベースへ（最初の管理者の記録として）移行します。`meta` の `legacy_migrated` マークによって移行は一度だけになり、すでにある学習記録が上書きされることはありません。
@@ -518,33 +819,14 @@ ai-service は、AI のものをすべて **専用の** SQLite データベー�
 
 メインのデータベースと同じです：`busy_timeout` 5000 ms、`foreign_keys=ON`（ここではスキーマが実際に外部キーを使います。下を参照）、`synchronous=FULL`、WAL モード（`XEXAM_AI_SQLITE_JOURNAL=delete` でロールバックジャーナルのまま。規則は 2.1 節と同じ）、それに加えて **`secure_delete=ON`**。接続は 1 つでミューテックスの後ろに置き、書き込みはどれも `BEGIN IMMEDIATE … COMMIT` で行い、ロックは `.await` をまたぎません。起動時のログには `AI database: /data/xexam-ai.db (journal: wal)` と出ます。
 
-### 8.2 中核テーブル（v0.8 の構成。スキーマ 11 の全体図は 9.2 節）
+### 8.2 AI データベースのテーブル（スキーマ 11）
+
+19 個のテーブルを 3 つの図にしました。すべての列を保存されているとおりに示します（第 3 節と同じ規則：`PK`、`FK`、`UK`。実線は外部キー、点線は外部キーのないソフトな参照です）。AI データベースの外部キーは 9.2 に挙げたとおり `CASCADE` と `SET NULL` を使います。AI データベース全体の関係を 1 枚にしたものは 9.2 にあります。
+
+**チャットと学習**（識別、会話、メモリ、最新の学習評価、共有された回答）
 
 ```mermaid
 erDiagram
-    settings {
-        INTEGER id PK "常に 1"
-        INTEGER enabled "AI+ 機能のスイッチ"
-        INTEGER retention_days "1-3650、既定 90"
-        INTEGER updated_at "UNIX 秒"
-        TEXT updated_by "管理者のユーザー名"
-        INTEGER features_off "全体の機能スイッチのビット"
-    }
-    limits {
-        INTEGER id PK "常に 1"
-        INTEGER per_user_running "1-4、既定 1"
-        INTEGER global_running "1-64、既定 16"
-        INTEGER chats_per_user "10-100000、既定 1000"
-        INTEGER messages_per_chat "20-5000、既定 400"
-        INTEGER memories_per_user "1-1000、既定 50"
-        INTEGER memory_tokens "50-250000、既定 1000（v1.1。200 のままだった値は 1000 に、ほかの値は schema 6 への移行時に 1 回だけ 1.5 倍にしました）"
-        INTEGER calls_per_minute "1-100、既定 5（v1.0）"
-        INTEGER calls_per_hour "1-2000、既定 20（v1.0）"
-        INTEGER calls_per_day "1-20000、既定 100（v1.0）"
-        INTEGER reply_max_tokens "1-250000、既定 3000：回答の長さ（トークン数、v1.1）"
-        INTEGER updated_at "unix 秒"
-        TEXT updated_by "ユーザー名"
-    }
     users {
         INTEGER id PK "メインのデータベースの users.id"
         TEXT stamp "メインのデータベースの users.uid"
@@ -553,6 +835,7 @@ erDiagram
         INTEGER last_seen_at "unix 秒"
         INTEGER function_enabled "1 = 有効、0 = 一時停止（v2）"
         INTEGER free_mode "1 = 管理者のフリーモードがオン（v2）"
+        INTEGER features_off
     }
     chats {
         INTEGER id PK "自動採番"
@@ -563,6 +846,10 @@ erDiagram
         TEXT kind "chat · practice · exam · summary（v3）"
         TEXT ref "セッションのキー、または記録では rID@時刻（chat では NULL）（v3）"
         INTEGER record_id "メインのアプリの記録。表示専用（v3）"
+        INTEGER leaf_id
+        INTEGER pick_conn
+        TEXT pick_model
+        TEXT pick_effort
     }
     messages {
         INTEGER id PK "自動採番"
@@ -584,6 +871,8 @@ erDiagram
         INTEGER sample_used "summary：送った間違いの数（v3）"
         INTEGER sample_usable "summary：まだ使える間違いの数（v3）"
         INTEGER sample_wrong "summary：記録にある間違いの数（v3）"
+        INTEGER parent_id
+        TEXT connection
         TEXT reasoning "AI チャットの回答：モデルの思考。前後の空白を除き最大 32 KiB、NULL = なし（v7）"
         INTEGER reasoning_ms "最初の推論から最初の回答テキストまでのミリ秒、NULL = なし（v7）"
         INTEGER reasoning_truncated "1 = 上限で切った（v7）"
@@ -596,11 +885,232 @@ erDiagram
         INTEGER created_at "unix 秒"
         INTEGER updated_at "unix 秒"
     }
+    assess_latest {
+        INTEGER user_id PK,FK
+        TEXT content
+        TEXT lang
+        TEXT model
+        TEXT latest_at
+        INTEGER records
+        INTEGER answered
+        TEXT day
+        INTEGER created_at
+        INTEGER runs
+    }
+    study_shared {
+        INTEGER id PK
+        TEXT question_id
+        TEXT content_hash
+        TEXT kind
+        TEXT lang
+        TEXT content
+        TEXT model
+        TEXT connection
+        INTEGER tokens_in
+        INTEGER tokens_out
+        INTEGER gen
+        INTEGER hits
+        INTEGER created_at
+        INTEGER updated_at
+        INTEGER last_hit_at
+    }
+    users ||--o{ chats : "user_id"
+    users ||--o| assess_latest : "user_id"
+    users ||--o{ memories : "user_id"
+    chats ||--o{ messages : "chat_id"
+    messages |o..o{ messages : "parent_id (ソフトな参照、外部キーなし)"
+    chats |o..o| messages : "leaf_id (ソフトな参照、外部キーなし)"
+    connections |o..o{ chats : "pick_conn (ソフトな参照、外部キーなし)"
+```
+
+**接続とモデル**（接続、封印された鍵、モデルのプールとスロット、1 行だけのテーブル：設定、上限、位置情報の照会）
+
+```mermaid
+erDiagram
+    connections {
+        INTEGER id PK
+        TEXT name UK
+        TEXT provider
+        TEXT base_url
+        TEXT format
+        TEXT gateway_auth
+        TEXT status
+        TEXT error_code
+        INTEGER lists_models
+        INTEGER tested_at
+        INTEGER rev
+        INTEGER sort
+        INTEGER created_at
+        INTEGER updated_at
+        TEXT updated_by
+        INTEGER responses
+        INTEGER enabled
+        TEXT effort_family
+    }
+    connection_secrets {
+        INTEGER connection_id PK,FK
+        TEXT name PK
+        TEXT key_id
+        BLOB nonce
+        BLOB ciphertext
+        TEXT hint
+        INTEGER rev
+        INTEGER aad_ver
+        INTEGER updated_at
+    }
+    models {
+        INTEGER id PK
+        INTEGER connection_id FK
+        TEXT model
+        INTEGER manual
+        TEXT status
+        TEXT error_code
+        INTEGER usage_option
+        INTEGER max_tokens
+        INTEGER context
+        INTEGER latency_ms
+        INTEGER tested_at
+    }
+    model_slots {
+        TEXT slot PK
+        INTEGER model_id FK
+        INTEGER updated_at
+        TEXT updated_by
+        TEXT effort
+    }
+    settings {
+        INTEGER id PK "常に 1"
+        INTEGER enabled "AI+ 機能のスイッチ"
+        INTEGER retention_days "1-3650、既定 90"
+        INTEGER updated_at "UNIX 秒"
+        TEXT updated_by "管理者のユーザー名"
+        INTEGER features_off "全体の機能スイッチのビット"
+    }
+    limits {
+        INTEGER id PK "常に 1"
+        INTEGER per_user_running "1-4、既定 1"
+        INTEGER global_running "1-64、既定 16"
+        INTEGER chats_per_user "10-100000、既定 1000"
+        INTEGER messages_per_chat "20-5000、既定 400"
+        INTEGER memories_per_user "1-1000、既定 50"
+        INTEGER updated_at "unix 秒"
+        TEXT updated_by "ユーザー名"
+        INTEGER calls_per_minute "1-100、既定 5（v1.0）"
+        INTEGER calls_per_hour "1-2000、既定 20（v1.0）"
+        INTEGER calls_per_day "1-20000、既定 100（v1.0）"
+        INTEGER gen_per_day
+        INTEGER gen_admins_exempt
+        INTEGER gen_min_source
+        INTEGER gen_min_wrong
+        INTEGER gen_bank_single
+        INTEGER gen_bank_multi
+        INTEGER gen_wrong_single
+        INTEGER gen_wrong_multi
+        INTEGER gen_max_calls
+        INTEGER import_max_calls
+        INTEGER recognize_max_calls
+        INTEGER gen_unlimited
+        INTEGER import_unlimited
+        INTEGER gen_running
+        INTEGER import_max_mb
+        INTEGER reply_max_tokens "1-250000、既定 3000：回答の長さ（トークン数、v1.1）"
+        INTEGER gen_call_tokens
+        INTEGER memory_tokens "50-250000、既定 1000（v1.1。200 のままだった値は 1000 に、ほかの値は schema 6 への移行時に 1 回だけ 1.5 倍にしました）"
+        INTEGER calls_admins_exempt
+        INTEGER study_share
+        INTEGER study_share_days
+        INTEGER gen_max_chunks
+        INTEGER summary_max_items
+        INTEGER import_file_questions
+        INTEGER daily_token_budget
+        INTEGER pace_on
+        INTEGER pace_rpm
+        INTEGER pace_tpm
+        INTEGER assess_per_day
+        INTEGER assess_admins_exempt
+    }
+    geo_settings {
+        INTEGER id PK
+        TEXT preset
+        TEXT url_template
+        TEXT key_header_name
+        TEXT key_header_value
+        TEXT map_country
+        TEXT map_country_code
+        TEXT map_region
+        TEXT map_city
+        TEXT ok_path
+        TEXT ok_value
+        TEXT error_path
+        TEXT message_path
+        TEXT key_id
+        BLOB key_nonce
+        BLOB key_ciphertext
+        TEXT key_hint
+        INTEGER tested_at
+        INTEGER updated_at
+        INTEGER updated_by
+    }
+    connections ||--o{ connection_secrets : "connection_id"
+    connections ||--o{ models : "connection_id"
+    models |o--o{ model_slots : "model_id"
+```
+
+**ジョブと計測**（生成・インポートのジョブ、モデル呼び出しの利用状況、監査キュー、データベースの印）
+
+```mermaid
+erDiagram
     tasks {
-        INTEGER id PK "v0.8 では構造だけ"
+        INTEGER id PK "自動採番"
         INTEGER user_id FK "users.id、ON DELETE CASCADE、NULL = インスタンス"
         TEXT kind
         TEXT state "queued · running · done · failed · cancelled"
+        TEXT payload
+        TEXT result
+        TEXT error_code
+        INTEGER attempts
+        INTEGER run_after
+        INTEGER created_at
+        INTEGER updated_at
+        TEXT job_key UK
+        INTEGER goal
+        INTEGER made
+        TEXT phase
+        INTEGER charged
+        INTEGER seen
+        INTEGER started_at
+        INTEGER finished_at
+        INTEGER charged_at
+    }
+    gen_items {
+        INTEGER task_id PK,FK
+        INTEGER no PK
+        INTEGER slot
+        TEXT data
+        INTEGER at
+    }
+    gen_calls {
+        INTEGER id PK
+        INTEGER task_id FK
+        INTEGER user_id FK
+        TEXT purpose
+        INTEGER at
+        TEXT day
+        TEXT provider
+        TEXT model
+        INTEGER tokens_in
+        INTEGER tokens_out
+        INTEGER tokens_cached
+        INTEGER latency_ms
+        INTEGER first_byte_ms
+        TEXT status
+        TEXT error_code
+        INTEGER asked
+        INTEGER accepted
+        INTEGER truncated
+        INTEGER tokens_cache_write
+        INTEGER connection_id
+        TEXT connection
     }
     usage {
         INTEGER id PK "自動採番"
@@ -612,12 +1122,16 @@ erDiagram
         TEXT model "モデルの一覧では ''"
         INTEGER tokens_in "NULL = 報告なし"
         INTEGER tokens_out "NULL = 報告なし"
-        TEXT purpose "hint · explain · summary。NULL = AI チャット、またはチャットのない呼び出し（v3）"
-        INTEGER tokens_cached "プロンプトキャッシュから提供された入力トークン、NULL = 報告なし（v2）"
         INTEGER latency_ms "リクエストから最後のバイトまで"
         INTEGER first_byte_ms "リクエストから最初の文章まで（チャット）"
         TEXT status "ok · stopped · error"
         TEXT error_code "接頭辞なしの ai.up.* のコード"
+        INTEGER tokens_cached "プロンプトキャッシュから提供された入力トークン、NULL = 報告なし（v2）"
+        TEXT purpose "hint · explain · summary。NULL = AI チャット、またはチャットのない呼び出し（v3）"
+        INTEGER tokens_cache_write
+        INTEGER connection_id
+        TEXT connection
+        INTEGER assess
     }
     audit_outbox {
         INTEGER id PK "自動採番"
@@ -625,14 +1139,16 @@ erDiagram
         TEXT message "監査の行、内容なし"
     }
     meta {
-        TEXT key PK "schema = 3"
+        TEXT key PK "schema = 11 と 1 回限りのフラグ"
         TEXT value
     }
-    users ||--o{ chats : "chats.user_id"
-    chats ||--o{ messages : "messages.chat_id"
-    users ||--o{ memories : "memories.user_id"
-    users |o--o{ tasks : "tasks.user_id"
-    users |o--o{ usage : "usage.user_id"
+    users |o--o{ tasks : "user_id"
+    tasks ||--o{ gen_items : "task_id"
+    tasks |o--o{ gen_calls : "task_id"
+    users |o--o{ gen_calls : "user_id"
+    users |o--o{ usage : "user_id"
+    connections |o..o{ usage : "connection_id (ソフトな参照、外部キーなし)"
+    connections |o..o{ gen_calls : "connection_id (ソフトな参照、外部キーなし)"
 ```
 
 - **`settings`**（1 行）は、AI+ 機能のスイッチ `enabled`、`retention_days`、`features_off`（全体の機能スイッチのビット）と、いつ誰が変更したかを持ちます。秘密も接続も持ちません。それらは `connections` と `connection_secrets` にあります（[security.md](security.md) の 11 節）。封印されたキーの `key_id` は、どの暗号化キーで封印したかを示します。**`limits`**（1 行）は AI 設定の安全上限を持ち、それぞれに範囲の `CHECK` があります。これを変えても AI がオフになることはありません。
@@ -773,7 +1289,7 @@ AI のデータベースは **スキーマ 11** のままです。v2.6 は起動
 
 ### 8.3 サービスがこれをどう扱うか
 
-- **開くとき**：テーブルを作成し（`IF NOT EXISTS`）、`settings` と `limits` の行を既定値で加え、新しいデータベースでは `meta.schema` を `4` にします。`meta.schema` が `1`、`2`、`3` のデータベースはアップグレードします（下の「移行」を参照）。より新しい ai-service が書いたデータベース（`meta.schema` が `4` より大きい）は拒否します：サービスはログに 1 行出して起動しないので、古いイメージが新しいファイルを開くことはありません。クラッシュや強制終了で `streaming` のまま残った回答は、コード `ai.interrupted` 付きで `error` にします（そうした回答があるときだけ。`idx_messages_streaming` がそれを見つけます）。
+- **開くとき**：テーブルを作成し（`IF NOT EXISTS`）、`settings` と `limits` の行を既定値で追加し、新しいデータベースでは `meta.schema` を `11` にします。`meta.schema` が `1` から `10` のデータベースはアップグレードされます（下の「移行」と 8.2a～8.2h を参照）。新しい ai-service が書いたデータベース（`meta.schema` が `11` より大きい）は拒否されます。サービスは 1 行ログを出して起動せず、古いイメージが新しいファイルを開くことはありません。クラッシュや強制終了で `streaming` のまま残った回答は、コード `ai.interrupted` の `error` にされます（該当があるときだけ。`idx_messages_streaming` が見つけます）。
 - **保存期間**：起動の 60 秒後、その後は 1 時間ごとに、最後のメッセージが保存期間の日数より古いチャットを、そのメッセージと一緒に削除します（回答の作成中のものは削除しません）。学習用のチャットも、ほかのチャットと同じです。この掃除は **1 回のトランザクションにつき 20 件のチャット** を削除し、20 件がそろうたびに 20 ms の間を置き、ブロッキング用のスレッドで動くので、大きな掃除（保存期間を短くしたとき、サービスを長く止めていたとき）でもデータベースを長くロックすることはなく、作成中の回答は保存され続けます。合計は 1 行のログに出ます。ユーザーによる自分のチャットの全削除、管理者の消去、削除されたユーザーのデータの削除は、これまでどおり 1 つのトランザクションで削除します。メモは保存期間の対象ではありません。
 - **メインのアプリとの照合（reconcile）**：起動時（うまくいくまで 30 秒ごとにやり直し）、10 分ごと、管理者が **AI+ ユーザー** を開いたときに、サービスは自分のユーザー id のうちどれがまだあり、どのスタンプを持ち、AI+ 機能の付与を持つかどうかをバックエンドに問い合わせます。なくなった id や、別のスタンプを持つようになった id（メインのデータベースを復元した後に再利用されたユーザー id）のデータは、そのユーザーの回答をすべて止めた後に削除します。そのような本人確認を持つリクエストが届いたときも、すぐに同じことをします。
 - **削除した内容**：`secure_delete=ON` で解放されたページは上書きされ、ユーザーの内容を削除するたびに、サービスは `PRAGMA wal_checkpoint(TRUNCATE)` を実行します（多くても 10 秒に 1 回）。古いページが `xexam-ai.db-wal` に残らないようにするためです。バックアップとボリュームのスナップショットには、削除したものがまだ残ります。
@@ -800,184 +1316,66 @@ docker compose start
 - 復元した AI のボリュームと、別の時点のメインのボリュームを組み合わせても問題ありません：もう存在しないユーザーは次の照合で AI データを失い、別のアカウントのものになったユーザー id はスタンプで見分けられます。
 - `xexam_ai_auth` はバックアップ不要です：入っているのは `internal.token` だけで、ない場合はバックエンドがもう一度作ります（AI サービスは新しいトークンを自分で読み込みます）。
 
-## 9. 2 つのデータベースのスキーママップ（v2.1）
+## 9. 2 つのデータベースのスキーママップ（v3.1）
 
-どんなテーブルがあり、何のためにあり、どう関係しているかを読むための案内です。メインのデータベースはスキーマ 11、AI データベースはスキーマ 11 の内容で、テーブル名と列名は保存されているとおりです。ここに書いたことでテーブルが変わることはありません。
+読み方の手引きです。どんなテーブルがあり、それぞれ何のためのもので、どうつながっているかを示します。メインのデータベースはスキーマ 13、AI のデータベースはスキーマ 11 のものです。テーブル名と列名は保存されているとおりです。第 3 節と 8.2 節はすべての列を描き、この節は各データベースの関係だけを 1 枚に描きます。ここに書いたことでテーブルが変わることはありません。
 
 ### 9.1 メインのデータベース `xexam.db`（バックエンド）
 
 | 領域 | テーブル | 補足 |
 |---|---|---|
-| 問題集 | `banks`、`questions`、`imports` | 問題集は取り込んだワークブック 1 つに当たります。ワークブックから消えた問題は削除ではなく廃止（`active = 0`）になります |
-| 学習記録と間違いノート | `attempts`、`attempt_items`、`user_stats` | `attempts` がアプリで「学習記録」と呼ぶもの（試験または練習）です |
-| ユーザーとアクセス | `users`、`sessions`、`user_banks`、`user_settings` | |
+| 問題集 | `bank_categories`（v3.1）、`banks`、`questions`、`imports` | 問題集は取り込んだ 1 つのワークブックです。ワークブックから消えた問題は削除ではなく無効化（`active = 0`）されます。問題集が属する分類は最大 1 つです |
+| 学習記録と間違いノート | `attempts`、`attempt_items`、`user_stats`、`saved_sessions`（v3.1） | `attempts` はアプリで学習記録（試験または練習）と呼ぶものです。`saved_sessions` は未完了のものの印です |
+| ユーザーとアクセス | `users`、`sessions`、`devices`（v3.1）、`user_banks`、`user_settings` | セッションは端末に、端末はユーザーに属します |
+| 通知 | `push_subscriptions`、`push_outbox`（v3.1） | users → devices → 購読 → アウトボックス |
 | システム | `meta`、`system_settings`、`activity_log` | |
 
-スキーマ 11 からメインのデータベースは外部キーを宣言しており、すべて `ON DELETE NO ACTION` で、図では実線で描いています（子の行を残してしまう削除は失敗します。コードはこれまでどおり子の行を先に削除します）。点線は、あえて外部キーを付けていない関係です（`attempt_items`、`user_stats`、`system_settings`、`activity_log` の補足を参照）。
+スキーマ 11 からメインのデータベースには外部キーがあり、すべて `ON DELETE NO ACTION` で、実線で示します（子の行を残してしまう削除は失敗します。コードはこれまでどおり子の行を先に削除します：4.16 節）。点線は、あえて外部キーを付けていない関係です（`attempt_items`、`user_stats`、`system_settings`、`activity_log`、`saved_sessions` の備考を参照）。すべてのテーブルのすべての列は第 3 節にあります。
 
 ```mermaid
 erDiagram
   users ||--o{ sessions : "user_id"
-  users |o--o{ attempts : "user_id (NULL = 持ち主のいない古い記録)"
+  users ||--o{ devices : "user_id"
+  devices |o--o{ sessions : "device_id"
+  devices ||--o| push_subscriptions : "device_id"
+  push_subscriptions ||--o{ push_outbox : "subscription_id"
+  users |o--o{ attempts : "user_id"
   users ||--o{ user_stats : "user_id"
   users ||--o{ user_settings : "user_id"
   users ||--o{ user_banks : "user_id"
+  users ||--o{ saved_sessions : "user_id"
+  devices |o--o{ saved_sessions : "device_id"
   users |o--o{ banks : "owner_id"
-  users |o..o{ system_settings : "updated_by (FK なし)"
-  users |o..o{ activity_log : "user_id (スナップショット、つなげない)"
+  bank_categories |o--o{ banks : "category_id"
   banks ||--o{ user_banks : "bank_id"
   banks |o--o{ questions : "bank_id"
   banks |o--o{ imports : "bank_id"
   attempts ||--o{ attempt_items : "attempt_id"
-  questions |o..o{ attempt_items : "question_id (ゆるい関係)"
-  questions |o..o{ user_stats : "question_id (ゆるい関係)"
-
-  users {
-    int id PK
-    text username UK
-    text password_hash
-    text role
-    int disabled
-    int must_change_password
-    int new_banks
-    int can_manage_banks
-    int can_download_banks
-    int ai_enabled
-    text uid
-    text display_name
-    text created_at
-    text last_login_at
-    text last_active_at
-  }
-  sessions {
-    text token_hash PK
-    int user_id
-    int started_at
-    int last_seen_at
-    int expires_at
-    int remember
-    text ip
-    text ua
-  }
-  banks {
-    int id PK
-    text name
-    text filename
-    int legacy_ids
-    int owner_id
-    text ai_job UK
-    text ai_meta
-    text created_at
-    text updated_at
-  }
-  questions {
-    text id PK
-    int bank_id
-    text sheet
-    int row_no
-    int seq
-    text data
-    int active
-    text added_at
-    text updated_at
-  }
-  imports {
-    int id PK
-    int bank_id
-    text at
-    text filename
-    int added
-    int updated
-    int removed
-    int restored
-    int skipped
-    int total
-  }
-  attempts {
-    int id PK
-    int user_id
-    text kind
-    text mode
-    text at
-    text sheets
-    text banks
-    int total
-    int correct
-    int percent
-    int seconds
-    text session_key
-    int started_at
-    int time_limit
-    text ended
-  }
-  attempt_items {
-    int attempt_id PK
-    int seq PK
-    text question_id
-    text answer
-    int correct
-  }
-  user_stats {
-    int user_id PK
-    text question_id PK
-    int attempts
-    int correct
-    int wrong
-    int streak
-    int last
-    text at
-  }
-  user_settings {
-    int user_id PK
-    text key PK
-    text value
-  }
-  user_banks {
-    int user_id PK
-    int bank_id PK
-  }
-  system_settings {
-    text key PK
-    text value
-    text updated_at
-    int updated_by
-  }
-  activity_log {
-    int id PK
-    int ts
-    int last_ts
-    int count
-    text actor
-    int user_id
-    text username
-    text role
-    text action
-    text object
-    text detail
-    text result
-    text reason
-    text source
-    text src_id UK
-  }
-  meta {
-    text key PK
-    text value
-  }
+  attempts |o..o{ saved_sessions : "session_key (ソフトな参照、外部キーなし)"
+  questions |o..o{ attempt_items : "question_id (ソフトな参照、外部キーなし)"
+  questions |o..o{ user_stats : "question_id (ソフトな参照、外部キーなし)"
+  users |o..o{ system_settings : "updated_by (ソフトな参照、外部キーなし)"
+  users |o..o{ activity_log : "user_id (ソフトな参照、外部キーなし)"
 ```
 
 | テーブル | 用途 | キーと関係 | 補足 |
 |---|---|---|---|
 | `meta` | データベース単位のキーと値：`schema`、`banks_known`、`users_known`、`legacy_migrated` | PK `key` | |
-| `banks` | 問題集。AI 作成の問題集のジョブキーと情報も持つ | PK `id`、`owner_id` → `users`（NULL 可） | `ai_job` は部分ユニークインデックス、`idx_banks_owner` |
-| `questions` | 1 問 1 行。問題全体（全言語）が `data` の JSON | PK `id`（テキスト）、`bank_id` → `banks`（NULL 可） | シート・問題集・並びのインデックス（`idx_questions_sheet` は従来どおり残す） |
+| `bank_categories` | 問題集の分類（1 階層、v3.1） | PK `id`。`name` は大文字小文字を区別せず一意 | 編集できるのは管理者だけ。`sort` は分類の順序 |
+| `banks` | 問題集。AI が作った問題集のジョブキーと情報、v3.1 からは分類とその中の位置を含みます | PK `id`。`owner_id` から `users`（NULL 可）。`category_id` から `bank_categories`（NULL 可） | `ai_job` は部分一意インデックス。`idx_banks_owner`、`idx_banks_category (category_id, sort)`。`sort` が 0 ＝ まだ未配置 |
+| `questions` | 1 問につき 1 行。問題全体（全言語）は `data` の JSON | PK `id`（テキスト）。`bank_id` から `banks`（NULL 可） | 問題集別とレイアウト別（問題集、シート、active、seq）のインデックス。`idx_questions_sheet` はスキーマ 13 で削除 |
 | `imports` | Excel インポートごとの結果の件数 | PK `id`、`bank_id` → `banks`（NULL 可） | スキーマ 11 から `idx_imports_bank` |
 | `attempts` | 学習記録。試験または練習 1 回につき 1 行 | PK `id`、`user_id` → `users`（NULL は持ち主のいない古い記録） | `sheets` と `banks` はあえて JSON のスナップショット。`mode` に `CHECK` はない（古い記録には任意の JSON が入りうる） |
 | `attempt_items` | 記録の各問題への回答 | PK `(attempt_id, seq)`、`attempt_id` → `attempts`、`question_id` → `questions`（ゆるい関係、**外部キーなし**） | 問題より記録のほうが長く残ることがあり、レガシーの問題集は問題集ごとに区別しない id を使う |
 | `user_stats` | ユーザーと問題ごとの挑戦・正解・不正解・連続正解（間違いノート） | PK `(user_id, question_id)`、`user_id` → `users`、`question_id` はゆるい関係（**外部キーなし**） | スキーマ 11 から `idx_user_stats_question`（問題集の削除は問題で行を探す） |
-| `users` | アカウント、ロール、権限、AI+ のスイッチ、本人確認用の `uid`、最後のサインインと最後の操作（IP、場所、ユーザーエージェント） | PK `id`、`username` は大文字小文字を区別しない一意 | アカウント情報とサインインの記録が同居している。`uid` は空でない値の中で一意（`idx_users_uid`） |
-| `sessions` | サインインのセッション | PK `token_hash`、`user_id` → `users` | 時刻は UNIX 秒 |
+| `saved_sessions` | ブラウザーの未完了の練習や試験のマーカーとリマインダーの予定（v3.1） | PK `(user_id, session_key)`。`user_id` から `users`。`device_id` から `devices`（NULL 可） | `session_key` は後に `attempts.session_key` になるキーで、ソフトな参照（外部キーなし） |
+| `users` | アカウント、ロール、権限、AI+ のスイッチ、識別スタンプ `uid`、表示名、最後のログインと最後の操作（IP、場所、User-Agent） | PK `id`。`username` は大文字小文字を区別せず一意 | アカウントのデータとログインのテレメトリが混ざっています。`uid` は空でない値の中で一意（`idx_users_uid`）、`display_name` は設定済みの名前の中で一意（`idx_users_display_name`） |
+| `sessions` | ログインのセッション | PK `token_hash`。`user_id` から `users`。`device_id` から `devices`（NULL 可、v3.1） | 時刻は Unix 秒。`device_id` が NULL ＝ v3.1 より前に作成され、次のリクエストで結び付く |
+| `devices` | ユーザーごと、ブラウザーごとに 1 行：ランダムなクッキーのハッシュ、ログインと最後の操作の情報、アプリのフラグ、タイムゾーン、ログアウトの時刻（v3.1） | PK `id`。`(user_id, cookie_hash)` が一意。`user_id` から `users` | IP と場所はログイン情報の目に従います。セッションとプッシュの購読は端末にぶら下がります |
 | `user_banks` | 一般ユーザーに見える問題集 | PK `(user_id, bank_id)` | |
 | `user_settings` | ユーザーごとの画面設定（値は JSON） | PK `(user_id, key)` | |
+| `push_subscriptions` | 端末の Web プッシュの購読：アドレス、ブラウザーの鍵、作ったときのサーバーの鍵、状態のカウンター（v3.1） | PK `id`。`device_id` は一意で `devices` へ。`endpoint` は一意 | 端末ごとに最大 1 つ。endpoint は最後に確認した端末に移ります |
+| `push_outbox` | プッシュのキューと 7 日間の配信ログ（v3.1） | PK `id`。`subscription_id` から `push_subscriptions` | `idx_push_outbox_due` は部分インデックス（`queued` と `leased` の行）。payload は言語に依存しない JSON |
 | `system_settings` | サイト全体のスイッチ（アクティビティの保持、閲覧、サインイン情報、所在地の取得元） | PK `key`、`updated_by` はユーザー ID（**外部キーなし**） | 書き込むだけの監査用の項目。つなぐと、サイトのスイッチを一度でも変更した管理者を削除できなくなる |
 | `activity_log` | アクティビティ履歴。ai-service から転送された行も含む | PK `id`、`src_id` は部分ユニーク（重複排除） | `username` と `role` は当時の写しなので、ユーザーを削除しても履歴を読める |
 
@@ -1004,232 +1402,16 @@ erDiagram
   users |o--o{ usage : "SET NULL"
   users |o--o{ gen_calls : "SET NULL"
   chats ||--o{ messages : "CASCADE"
-  messages |o..o{ messages : "parent_id (no FK)"
-  chats |o..o| messages : "leaf_id (no FK)"
-  connections |o..o{ chats : "pick_conn (no FK)"
+  messages |o..o{ messages : "parent_id (ソフトな参照、外部キーなし)"
+  chats |o..o| messages : "leaf_id (ソフトな参照、外部キーなし)"
+  connections |o..o{ chats : "pick_conn (ソフトな参照、外部キーなし)"
   tasks ||--o{ gen_items : "CASCADE"
   tasks |o--o{ gen_calls : "SET NULL"
   connections ||--o{ connection_secrets : "CASCADE"
   connections ||--o{ models : "CASCADE"
   models |o--o{ model_slots : "SET NULL"
-  connections |o..o{ usage : "connection_id (no FK)"
-  connections |o..o{ gen_calls : "connection_id (no FK)"
-
-  users {
-    int id PK
-    text stamp
-    text username
-    int function_enabled
-    int free_mode
-    int features_off
-    int first_seen_at
-    int last_seen_at
-  }
-  chats {
-    int id PK
-    int user_id FK
-    text kind
-    text ref UK
-    int record_id
-    text title
-    int leaf_id
-    int pick_conn
-    text pick_model
-    int created_at
-    int updated_at
-  }
-  messages {
-    int id PK
-    int chat_id FK
-    int parent_id
-    text role
-    text kind
-    text content
-    text status
-    text error_code
-    int truncated
-    int free
-    text model
-    text connection
-    text question_id
-    int question_no
-    text source
-    text lang
-    text reasoning
-    int reasoning_ms
-    int reasoning_truncated
-    int created_at
-    int finished_at
-  }
-  memories {
-    int id PK
-    int user_id FK
-    text content
-    text source
-    int created_at
-    int updated_at
-  }
-  tasks {
-    int id PK
-    int user_id FK
-    text kind
-    text state
-    text payload
-    text result
-    text error_code
-    int attempts
-    int run_after
-    text job_key UK
-    int goal
-    int made
-    text phase
-    int charged
-    int seen
-    int created_at
-    int updated_at
-  }
-  gen_items {
-    int task_id PK
-    int no PK
-    int slot
-    text data
-    int at
-  }
-  gen_calls {
-    int id PK
-    int task_id FK
-    int user_id FK
-    text purpose
-    int at
-    text day
-    text provider
-    text model
-    int connection_id
-    text connection
-    int tokens_in
-    int tokens_out
-    int latency_ms
-    text status
-    text error_code
-    int asked
-    int accepted
-    int truncated
-  }
-  usage {
-    int id PK
-    int user_id FK
-    int at
-    text day
-    text kind
-    text purpose
-    text provider
-    text model
-    int connection_id
-    text connection
-    int tokens_in
-    int tokens_out
-    int latency_ms
-    text status
-    text error_code
-  }
-  connections {
-    int id PK
-    text name UK
-    text provider
-    text base_url
-    text format
-    int responses
-    int enabled
-    text gateway_auth
-    text status
-    text error_code
-    int lists_models
-    int tested_at
-    int rev
-    int sort
-  }
-  connection_secrets {
-    int connection_id PK
-    text name PK
-    text key_id
-    blob nonce
-    blob ciphertext
-    text hint
-    int rev
-    int aad_ver
-  }
-  models {
-    int id PK
-    int connection_id FK
-    text model
-    int manual
-    text status
-    text error_code
-    int usage_option
-    int max_tokens
-    int context
-    int latency_ms
-    int tested_at
-  }
-  model_slots {
-    text slot PK
-    int model_id FK
-    text effort
-    int updated_at
-    text updated_by
-  }
-  assess_latest {
-    int user_id PK
-    text content
-    text lang
-    text model
-    text latest_at
-    int records
-    int answered
-    text day
-    int created_at
-    int runs
-  }
-  study_shared {
-    int id PK
-    text question_id
-    text content_hash
-    text kind
-    text lang
-    text content
-    text model
-    int gen
-    int hits
-    int last_hit_at
-  }
-  settings {
-    int id PK
-    int enabled
-    int retention_days
-    int features_off
-  }
-  limits {
-    int id PK
-    int pace_on
-    int pace_rpm
-    int pace_tpm
-  }
-  geo_settings {
-    int id PK
-    text preset
-    text url_template
-    blob key_ciphertext
-    int updated_by
-  }
-  meta {
-    text key PK
-    text value
-  }
-  audit_outbox {
-    int id PK
-    int at
-    text message
-  }
+  connections |o..o{ usage : "connection_id (ソフトな参照、外部キーなし)"
+  connections |o..o{ gen_calls : "connection_id (ソフトな参照、外部キーなし)"
 ```
 
 | テーブル | 用途 | キーと関係 | 補足 |
@@ -1262,6 +1444,8 @@ erDiagram
 |---|---|---|
 | `users.id` + `users.stamp` | `users.id` + `users.uid` | `stamp` が違えば別人。AI のデータは削除される |
 | `chats.ref` | `attempts.session_key`（または `r<recordId>@<at>`） | 検索キーとしてのみ使う |
+| —（AI のテーブルなし） | `push_outbox` | ai-service はキューにある暗号化済みのジョブを `/internal/ai/push/next` で取りに行き、結果を報告します。何も保存せず、鍵も見ません |
+| `chats.ref` | `saved_sessions.session_key` | 同じ 32 桁の 16 進のセッションキーが、練習や試験のチャットの名前になり、未完了のセッションの印にもなります（検索キーのみ） |
 | `chats.record_id` | `attempts.id` | 表示のみで、検索には使わない（復元後は ID が再利用されうる） |
 | `messages.question_id`、`study_shared.question_id` | `questions.id` | ゆるい関係。`study_shared.content_hash` が問題の変更を防ぐ |
 | `tasks.job_key` | `banks.ai_job` | メインのデータベースの部分ユニークインデックスで、ジョブ 1 つにつき問題集 1 つ |
@@ -1275,3 +1459,4 @@ erDiagram
 - メインのデータベースの外部キーは `ON DELETE NO ACTION` と明記します：親は子を削除してからでないと削除できません（`CASCADE` も `SET NULL` も使いません）。AI のデータベースは 9.2 に書いたとおり `CASCADE` と `SET NULL` を使います。
 - 既存の名前と、メインのデータベースの古いテキスト形式の時刻の列はそのままにします。
 - **あえて残した不一致**（記録しただけで、v2.0 では変えていません）：メインのデータベースは時刻をテキスト（`YYYY-MM-DD HH:MM:SS`）で、AI のデータベースは UNIX 秒で持ちます。`updated_by` は `system_settings` ではユーザー ID、AI のデータベースではユーザー名（TEXT）です。`study_shared.lang` は `zh`、`messages.lang` は `zh-CN` を使います。名前には歴史的なものがあります（`attempts` はアプリでいう学習記録、`legacy_ids`、`banks.filename`）。
+- スキーマ 13 の新しいテーブルも同じ規則に従います。時刻の列はすべて `INTEGER` の Unix 秒、真偽値にはすべて `CHECK (… IN (0, 1))`、列挙にはすべて `CHECK` があり、外部キーはすべて `ON DELETE NO ACTION` と明記されています。

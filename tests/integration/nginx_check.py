@@ -35,6 +35,10 @@ v1.3 (N1): the header blocks of the proxied locations live in /etc/nginx/snippet
   /api/ai/admin/connections/test location; gzip on JSON and not on the event stream; ETag / If-None-Match / 304 pass through; coded
   error bodies (net.tooLarge, net.backendDown).
 
+v3.1: /sw.js and /manifest.webmanifest have their own exact locations (200, JavaScript / application/manifest+json, no-cache,
+  the security headers repeated, the CSP on the worker), the three new PNGs (/badge-96.png, /icon-maskable-192.png,
+  /icon-maskable-512.png) are served as image/png, and look-alike paths (/sw.js/, /sw.js.map, /service-worker.js) stay 404.
+
 v1.9: the upstreams and the DNS resolver are no longer fixed names in nginx.conf: 16-xexam-upstreams.sh renders
   /tmp/xexam-upstreams.conf from XEXAM_BACKEND_UPSTREAM / XEXAM_AI_UPSTREAM / XEXAM_NGINX_RESOLVER (defaults = the one-host
   names and Docker's DNS, no proxy_ssl lines). Checked here: the defaults and the `set` lines (read from nginx -T after every
@@ -412,6 +416,38 @@ try:
                   ('/apple-touch-icon.png', 'png')):
         st, h3, b3 = req('GET', p, host='localhost:%d' % PORT)
         ok(st == 200 and ct in h3.get('content-type', '') and len(b3) > 0, '%s is served (%s). Actual %d %r' % (p, ct, st, h3.get('content-type')))
+    for p in ('/badge-96.png', '/icon-maskable-192.png', '/icon-maskable-512.png'):
+        st, h3, b3 = req('GET', p, host='localhost:%d' % PORT)
+        ok(st == 200 and h3.get('content-type', '').split(';')[0].strip() == 'image/png' and b3[1:4] == b'PNG',
+           '%s is served as image/png (v3.1). Actual %d %r' % (p, st, h3.get('content-type')))
+
+    # -- v3.1: the service worker and the web app manifest (own locations, headers repeated) --
+    st, h3, b3 = req('GET', '/sw.js', host='localhost:%d' % PORT)
+    ok(st == 200 and len(b3) > 0, '/sw.js is served. Actual %d' % st)
+    ok(h3.get('content-type', '').split(';')[0].strip() in ('application/javascript', 'text/javascript'),
+       '/sw.js Content-Type is JavaScript. Actual %r' % h3.get('content-type'))
+    ok(h3.get('cache-control') == 'no-cache', '/sw.js: Cache-Control: no-cache. Actual %r' % h3.get('cache-control'))
+    for k, want in (('x-content-type-options', 'nosniff'), ('x-frame-options', 'DENY'), ('referrer-policy', 'no-referrer'),
+                    ('permissions-policy', 'camera=(), microphone=(), geolocation=()')):
+        ok(h3.get(k) == want, '/sw.js security header %s: %s. Actual %r' % (k, want, h3.get(k)))
+    csp_sw = h3.get('content-security-policy', '')
+    ok("default-src 'self'" in csp_sw and "script-src 'self'" in csp_sw and "frame-ancestors 'none'" in csp_sw,
+       '/sw.js carries the strict CSP. Actual %r' % csp_sw[:80])
+    st, h3, b3 = req('GET', '/manifest.webmanifest', host='localhost:%d' % PORT)
+    ok(st == 200 and len(b3) > 0, '/manifest.webmanifest is served. Actual %d' % st)
+    ok(h3.get('content-type', '').split(';')[0].strip() == 'application/manifest+json',
+       '/manifest.webmanifest Content-Type is application/manifest+json. Actual %r' % h3.get('content-type'))
+    ok(h3.get('cache-control') == 'no-cache', '/manifest.webmanifest: Cache-Control: no-cache. Actual %r' % h3.get('cache-control'))
+    for k, want in (('x-content-type-options', 'nosniff'), ('x-frame-options', 'DENY'), ('referrer-policy', 'no-referrer')):
+        ok(h3.get(k) == want, '/manifest.webmanifest security header %s: %s. Actual %r' % (k, want, h3.get(k)))
+    for p in ('/sw.js/', '/sw.js.map', '/manifest.webmanifest/x', '/service-worker.js'):
+        st, _, _ = req('GET', p, host='localhost:%d' % PORT)
+        ok(st == 404, '%s is not served (404). Actual %d' % (p, st))
+    st, h3, _ = req('GET', '/sw.js', host='localhost:%d' % PORT, headers={'Accept-Encoding': 'gzip'})
+    ok(st == 200, '/sw.js with Accept-Encoding: gzip is served. Actual %d' % st)
+    st, h3, _ = req('GET', '/manifest.webmanifest', host='localhost:%d' % PORT, headers={'Accept-Encoding': 'gzip'})
+    ok(st == 200 and h3.get('content-type', '').split(';')[0].strip() == 'application/manifest+json',
+       'The manifest keeps its media type with Accept-Encoding: gzip. Actual %d %r' % (st, h3.get('content-type')))
 
     # -- Security headers --
     for k, want in (('x-content-type-options', 'nosniff'), ('x-frame-options', 'DENY'), ('referrer-policy', 'no-referrer')):

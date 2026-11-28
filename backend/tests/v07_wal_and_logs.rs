@@ -335,6 +335,7 @@ fn app() -> App {
         ai_link: Default::default(),
         activity: Default::default(),
         gates: Default::default(),
+        push: Default::default(),
     }));
     App {
         router: build_router(state),

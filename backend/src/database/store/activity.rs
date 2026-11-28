@@ -30,6 +30,8 @@ pub const PAGE_MERGE_MAX_SECS: i64 = 86_400;
 pub const REFUSED_MERGE_SECS: i64 = 60;
 /// Rows deleted per retention / clearing statement.
 pub const BATCH: i64 = 5000;
+/// v3.1: refused sign-in rows (`auth.signin`, result `fail`) are deleted this many days after their latest merged attempt.
+pub const REFUSED_SIGNIN_DAYS: i64 = 90;
 const OBJECT_MAX: usize = 200;
 const DETAIL_MAX: usize = 2000;
 const UA_MAX: usize = 256;
@@ -432,11 +434,14 @@ impl Store {
         facets_of(&g)
     }
 
-    /// Deletes the rows older than `days` days in batches of [`BATCH`], then the oldest rows beyond `cap`. Sign-in rows
-    /// (`auth.signin`) are exempt from both rules and are not counted against the cap, so the cap loop always ends.
-    /// Returns how many rows were deleted. The lock is released between batches.
+    /// Deletes the rows older than `days` days in batches of [`BATCH`], then the oldest rows beyond `cap`. Accepted sign-in
+    /// rows (`auth.signin`, result ok) are exempt from both rules and are not counted against the cap, so the cap loop
+    /// always ends. v3.1: refused sign-ins (`auth.signin` with result `fail`) go after a fixed [`REFUSED_SIGNIN_DAYS`] days
+    /// without a newer merged attempt (`last_ts`). Returns how many rows were deleted (the refused ones included). The lock
+    /// is released between batches.
     pub fn activity_retention(&self, now: i64, days: i64, cap: i64) -> Result<i64, DbError> {
         let cutoff = now.saturating_sub(days.saturating_mul(86_400));
+        let refused_cutoff = now.saturating_sub(REFUSED_SIGNIN_DAYS.saturating_mul(86_400));
         let mut total = 0;
         loop {
             let n = {
@@ -469,6 +474,23 @@ impl Store {
                     Ok(c.execute(
                         "DELETE FROM activity_log WHERE id IN (SELECT id FROM activity_log WHERE action <> 'auth.signin' \n                         ORDER BY id LIMIT ?1)",
                         params![excess],
+                    )?)
+                })?
+            };
+            total += i64::try_from(n).unwrap_or(0);
+            if n == 0 {
+                break;
+            }
+        }
+        // v3.1: refused sign-ins, by the time of the latest attempt merged into the row (`last_ts` is NOT NULL)
+        loop {
+            let n = {
+                let g = self.lock();
+                run_tx(&g, |c| {
+                    Ok(c.execute(
+                        "DELETE FROM activity_log WHERE id IN (SELECT id FROM activity_log WHERE action = 'auth.signin' \
+                         AND result = 'fail' AND last_ts < ?1 LIMIT ?2)",
+                        params![refused_cutoff, BATCH],
                     )?)
                 })?
             };
@@ -528,7 +550,8 @@ impl Store {
         })
     }
 
-    /// v1.6: every distinct stored address that has at least one record without a place: `activity_log.ip` with
+    /// v1.6: every distinct stored address that has at least one record without a place (v3.1: the `devices` sign-in and
+    /// activity addresses too): `activity_log.ip` with
     /// `country`, `region` and `city` all NULL, `users.last_login_ip` with the three `last_login_*` NULL and
     /// `users.last_active_ip` with the three `last_active_*` NULL; the address seen most recently first (activity time,
     /// `last_login_at`, `last_active_at`). The addresses are returned as stored: the caller parses, normalizes, keeps the
@@ -547,6 +570,14 @@ impl Store {
                 SELECT last_active_ip, MAX(COALESCE(CAST(strftime('%s', last_active_at, 'utc') AS INTEGER), 0)) FROM users \
                   WHERE last_active_ip IS NOT NULL AND last_active_country IS NULL AND last_active_region IS NULL \
                   AND last_active_city IS NULL GROUP BY last_active_ip \
+                UNION ALL \
+                SELECT signin_ip, MAX(COALESCE(signin_at, 0)) FROM devices \
+                  WHERE signin_ip IS NOT NULL AND signin_country IS NULL AND signin_region IS NULL \
+                  AND signin_city IS NULL GROUP BY signin_ip \
+                UNION ALL \
+                SELECT active_ip, MAX(COALESCE(active_at, 0)) FROM devices \
+                  WHERE active_ip IS NOT NULL AND active_country IS NULL AND active_region IS NULL \
+                  AND active_city IS NULL GROUP BY active_ip \
              ) GROUP BY ip ORDER BY MAX(seen) DESC, ip",
         )?;
         let rows = st.query_map([], |r| r.get::<_, String>(0))?;
@@ -582,6 +613,19 @@ impl Store {
                 "UPDATE users SET last_active_country=?1, last_active_region=?2, last_active_city=?3 \
                  WHERE last_active_ip IN (?4, ?5) AND last_active_country IS NULL AND last_active_region IS NULL \
                  AND last_active_city IS NULL",
+                params![place.country, place.region, place.city, ip, alt],
+            )?;
+            // v3.1: the device records follow, under the same guards
+            changed += c.execute(
+                "UPDATE devices SET signin_country=?1, signin_region=?2, signin_city=?3 \
+                 WHERE signin_ip IN (?4, ?5) AND signin_country IS NULL AND signin_region IS NULL \
+                 AND signin_city IS NULL",
+                params![place.country, place.region, place.city, ip, alt],
+            )?;
+            changed += c.execute(
+                "UPDATE devices SET active_country=?1, active_region=?2, active_city=?3 \
+                 WHERE active_ip IN (?4, ?5) AND active_country IS NULL AND active_region IS NULL \
+                 AND active_city IS NULL",
                 params![place.country, place.region, place.city, ip, alt],
             )?;
             changed += c.execute(

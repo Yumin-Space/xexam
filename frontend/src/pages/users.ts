@@ -27,14 +27,21 @@
 // explanation are (i) tips, the facts are one per line), the AI+ switch sits in the action row (never under a button), the bank line
 // is one 44 px row that opens the bank dialog, a new user's row is scrolled into view and highlighted, and a paused AI+ tag links
 // to AI settings.
+// v3.1: a devices icon in every row opens a dialog with the user's signed-in devices (components/device-list.ts, administrator
+// mode: the notification state is shown read-only) where an administrator signs out one device or all of them; the existing
+// per-user facts stay as they are. The bank dialog groups the banks by category when categories exist (tri-state category box).
 import '../styles/paged-table.css';
 import '../styles/users.css';
 import { fetchBanks } from '../api/bank.ts';
 import { ApiError } from '../api/client.ts';
 import { deleteGeo, enableGeo, fetchGeo, saveGeo, testGeo } from '../api/geo.ts';
+import { fetchUserDevices, signOutUserDevice } from '../api/devices.ts';
 import { clearSigninInfo, createUser, deleteUser, fetchUsers, resetUserPassword, setGeoSource, setSigninInfo, unlockUser, updateUser, type UsersList } from '../api/users.ts';
 import { aiBadge, aiSetBadge } from '../components/ai-badge.ts';
 import { pageHead } from '../components/common.ts';
+import { deviceList } from '../components/device-list.ts';
+import { groupBanks, triState } from '../domain/categories.ts';
+import { signOutTargets } from '../domain/devices.ts';
 import { pager } from '../components/pager.ts';
 import { field, passwordLengthOk, usernameOk } from '../components/fields.ts';
 import { looksLikeEmail } from '../domain/user-name.ts';
@@ -64,8 +71,8 @@ import {
 } from '../state/bank-access.ts';
 import { aiStatus } from '../state/ai.ts';
 import { S } from '../state/store.ts';
-import type { BankSummary, GeoPlace, GeoPresetId, GeoSource, GeoState, Role, UserRow } from '../types/api.ts';
-import { ask, formDialog } from '../utils/dialog.ts';
+import type { BankSummary, Device, GeoPlace, GeoPresetId, GeoSource, GeoState, Role, UserDevicesResponse, UserRow } from '../types/api.ts';
+import { ask, dialogTitleId, formDialog } from '../utils/dialog.ts';
 import { h, scrollToY, type Child } from '../utils/dom.ts';
 import { PHONE_MQ, TOUCH_MQ, matches } from '../utils/media.ts';
 
@@ -430,6 +437,9 @@ function bankChecklist(o: ChecklistOptions): Checklist {
     onchange: () => o.set({ ...o.get(), later: later.checked }),
   });
 
+  // v3.1: the category boxes (tri-state; a category ticks / unticks every bank of its group in the draft)
+  const catBoxes: Array<{ box: HTMLInputElement; ids: number[] }> = [];
+
   const rows = o.banks.map((b) => {
     const box = h('input', {
       type: 'checkbox', id: `${id}-b${b.id}`, value: String(b.id),
@@ -464,6 +474,12 @@ function bankChecklist(o: ChecklistOptions): Checklist {
       box.checked = isTicked(d, bankId);
       box.disabled = off;
     }
+    for (const c of catBoxes) {
+      const st = triState(c.ids.map(String), new Set(c.ids.filter((bankId) => isTicked(d, bankId)).map(String)));
+      c.box.checked = st === 'all';
+      c.box.indeterminate = st === 'some';
+      c.box.disabled = off || c.ids.length === 0;
+    }
     const state = toolState(d, o.banks);
     all.checked = !noBanks && state === 'all';
     all.indeterminate = state === 'some';
@@ -473,6 +489,42 @@ function bankChecklist(o: ChecklistOptions): Checklist {
     if (state === 'none' && !none.disabled) none.setAttribute('aria-disabled', 'true');
     else none.removeAttribute('aria-disabled');
   };
+
+  // v3.1: with categories, each group is a header row (tri-state box, name, count, fold button) and its banks (unchanged rows)
+  const rowOf = new Map<number, HTMLElement>(o.banks.map((b, i) => [b.id, rows[i] as HTMLElement]));
+  const groups = groupBanks(o.banks, S.categories);
+  const groupRows = (g: { category: { id: number; name: string } | null; banks: readonly BankSummary[] }): HTMLElement[] => {
+    const ids = g.banks.map((b) => b.id);
+    const name = g.category ? g.category.name : t('banks.cat.none' as MsgKey);
+    const members = ids.map((id) => rowOf.get(id)).filter((li): li is HTMLElement => li != null);
+    const box = h('input', {
+      type: 'checkbox', class: 'us-cat-box', 'aria-label': t('banks.cat.selectAll' as MsgKey, { name }),
+      onchange: () => {
+        let d = o.get();
+        for (const id of ids) d = toggleBank(d, id, box.checked);
+        o.set(d);
+        sync();
+      },
+    });
+    catBoxes.push({ box, ids });
+    const fold = h('button', {
+      type: 'button', class: 'us-cat-fold', 'aria-expanded': 'true', 'aria-label': t('banks.cat.fold' as MsgKey, { name }),
+      onclick: () => {
+        const open = fold.getAttribute('aria-expanded') !== 'true';
+        fold.setAttribute('aria-expanded', String(open));
+        fold.setAttribute('aria-label', t((open ? 'banks.cat.fold' : 'banks.cat.unfold') as MsgKey, { name }));
+        for (const li of members) li.hidden = !open;
+      },
+    }, miniIcon('chevDown', 'us-cat-chev'));
+    const head = h('li', { class: 'us-cat-row' },
+      h('label', { class: 'us-cat-l' }, box,
+        h('span', { class: 'us-cat-n' }, name),
+        h('span', { class: 'us-cat-c' }, tn('banks.cat.count' as MsgKey, ids.length))),
+      fold);
+    return [head, ...members];
+  };
+  // A category without a bank has nothing to tick: it is left out (as on the Exam & practice page)
+  const listRows: HTMLElement[] = groups.hasCategories ? groups.groups.filter((g) => g.banks.length > 0).flatMap(groupRows) : rows;
 
   const el = h('fieldset', { class: 'fld us-banksfld' },
     h('legend', { class: 'fld-l' }, t('users.field.banks')),
@@ -494,7 +546,7 @@ function bankChecklist(o: ChecklistOptions): Checklist {
         holdOnTouch(h('label', { class: 'us-bank us-later', for: later.id }, later, miniIcon('clockPlus'),
           h('span', { class: 'us-bank-n' }, t('users.banks.later'))), t('users.tip.later')),
         tipEl(`${id}-tip-later`, t('users.tip.later')))),
-      rows,
+      listRows,
       o.banks.length ? null : h('li', { class: 'us-banks-empty' }, t('users.banks.noneYet'))));
   sync();
   return {
@@ -718,6 +770,143 @@ async function guarded(fn: () => Promise<void>): Promise<void> {
     await fn();
   } finally {
     asking = false;
+  }
+}
+
+/**
+ * v3.1: the devices dialog of one user (administrators): the list with a sign-out icon per signed-in / expired device and
+ * "Sign out all devices" in the footer. Notifications are shown read-only (they are the user's own choice). The dialog stays
+ * open after a change and shows the answer; `changed` is called after each successful change so the list behind is read again
+ * once the dialog is closed (nothing is redrawn behind it meanwhile).
+ */
+function devicesDialog(u: UserRow, changed: () => void): Promise<void> {
+  return new Promise((resolve) => {
+    let data: UserDevicesResponse | null = null;
+    let error: string | null = null;
+    let busyDev: number | null = null;
+    let allBusy = false;
+    let gone = false;
+    const titleId = dialogTitleId();
+    const body = h('div', { class: 'us-devbody', tabindex: '-1' });
+    const acts = h('div', { class: 'acts' });
+    const dlg = h('dialog', { class: 'dlg dlg-wide us-devdlg', 'aria-labelledby': titleId },
+      h('h3', { id: titleId, tabindex: '-1' }, t('users.devices.title', { name: u.username })),
+      h('p', { class: 'us-dev-note' }, t('users.devices.note')),
+      body, acts);
+
+    const close = h('button', { class: 'btn', type: 'button', id: 'us-dev-close', onclick: () => dlg.close('cancel') }, t('common.close'));
+
+    function draw(): void {
+      dlg.setAttribute('aria-busy', busyDev != null || allBusy || (!data && !error) ? 'true' : 'false');
+      if (data) {
+        body.replaceChildren(deviceList({ devices: data.devices, signinInfo: data.signinInfo, mode: 'admin', busyId: busyDev, onSignOut: (d) => void signOutOne(d) }));
+      } else if (error) {
+        body.replaceChildren(h('div', { class: 'err', role: 'alert' }, h('p', null, t('users.devices.loadFailed', { reason: error })),
+          h('button', {
+            class: 'btn', type: 'button', id: 'us-dev-retry',
+            onclick: () => {
+              error = null;
+              draw();
+              void load();
+            },
+          }, t('common.retry'))));
+      } else {
+        body.replaceChildren(h('p', { class: 'us-dev-loading', role: 'status' }, t('common.loading')));
+      }
+      const any = data != null && signOutTargets(data.devices).length > 0;
+      const allOut = h('button', {
+        class: 'btn danger', type: 'button', id: 'us-dev-allout', disabled: allBusy || busyDev != null, onclick: () => void signOutAll(),
+      }, t('users.devices.allOut'));
+      acts.replaceChildren(...(any ? [allOut, close] : [close]));
+    }
+
+    async function load(): Promise<void> {
+      try {
+        data = await fetchUserDevices(u.id);
+        error = null;
+      } catch (e) {
+        error = errorText(e);
+      }
+      if (!gone) draw();
+    }
+
+    async function signOutOne(d: Device): Promise<void> {
+      if (busyDev != null || allBusy) return;
+      const stop = d.state === 'expired';
+      busyDev = d.id;
+      draw();
+      try {
+        data = await signOutUserDevice(u.id, d.id);
+        changed();
+        toast(t(stop ? 'devices.stop.done' : 'devices.signOut.done'));
+      } catch (e) {
+        toast(t('devices.signOut.failed', { reason: errorText(e) }), 6000);
+        data = null;
+        void load();
+      } finally {
+        busyDev = null;
+      }
+      if (gone) return;
+      draw();
+      body.focus({ preventScroll: true });
+    }
+
+    async function signOutAll(): Promise<void> {
+      if (busyDev != null || allBusy || !data) return;
+      const yes = await ask({
+        title: t('users.devices.allOut.confirmTitle', { name: u.username }),
+        body: t('users.devices.allOut.confirmBody'),
+        ok: t('devices.signOut.ok'),
+        cancel: t('common.cancel'),
+        danger: true,
+      });
+      if (!yes || gone || !data) return;
+      const n = signOutTargets(data.devices).length;
+      allBusy = true;
+      draw();
+      try {
+        data = await signOutUserDevice(u.id, null);
+        changed();
+        toast(tn('users.devices.allOut.done', n, { name: u.username }));
+      } catch (e) {
+        toast(t('devices.signOut.failed', { reason: errorText(e) }), 6000);
+        data = null;
+        void load();
+      } finally {
+        allBusy = false;
+      }
+      if (gone) return;
+      draw();
+      body.focus({ preventScroll: true });
+    }
+
+    // Esc while a sign-out runs: wait for it
+    dlg.addEventListener('cancel', (e) => {
+      if (busyDev != null || allBusy) e.preventDefault();
+    });
+    dlg.addEventListener('close', () => {
+      gone = true;
+      dlg.remove();
+      resolve();
+    });
+    draw();
+    document.body.append(dlg);
+    if (typeof dlg.showModal === 'function') dlg.showModal();
+    else dlg.setAttribute('open', '');
+    dlg.querySelector<HTMLElement>('#' + titleId)?.focus({ preventScroll: true });
+    void load();
+  });
+}
+
+/** The devices icon of a row: opens the dialog, refreshes the list quietly afterwards when something changed */
+async function openDevices(u: UserRow): Promise<void> {
+  let changed = false;
+  await guarded(() => devicesDialog(u, () => {
+    changed = true;
+  }));
+  if (changed) {
+    focusNext = `us-devices-${u.id}`;
+    quietRefresh();
   }
 }
 
@@ -1461,9 +1650,19 @@ function act(id: string, ic: MiniIcon, aria: string, blocked: boolean, reason: s
  * in a visually hidden #us-access-<id>. It opens the bank dialog (US-4). An administrator sees every bank: the icon is greyed
  * with the reason as its tip.
  */
+/** v3.1 (owner): the small green check on the bank icon of anyone who may manage question banks (administrators always may) */
+function markManager(el: HTMLElement): void {
+  const btn = el.classList.contains('ibtn') ? el : el.querySelector<HTMLElement>('.ibtn');
+  if (!btn) return;
+  btn.classList.add('us-bank-mgr');
+  btn.append(h('span', { class: 'us-mgr-check', 'aria-hidden': 'true' }, miniIcon('check')));
+}
+
 function bankIcon(u: UserRow, blocked: boolean): HTMLElement[] {
   if (u.role !== 'user') {
-    return [act(`us-banks-${u.id}`, 'database', t('users.act.banksAria', { name: u.username }), blocked, t('users.tip.adminBanks'), () => undefined)];
+    const el = act(`us-banks-${u.id}`, 'database', t('users.act.banksAria', { name: u.username }), blocked, t('users.tip.adminBanks'), () => undefined);
+    markManager(el);
+    return [el];
   }
   const v = accessView(u, S.banks);
   if (v.kind === 'admin') return [];
@@ -1471,9 +1670,14 @@ function bankIcon(u: UserRow, blocked: boolean): HTMLElement[] {
   const main = v.kind === 'all' ? t('users.banks.all')
     : v.kind === 'some' ? t(v.later ? 'users.banks.someLater' : 'users.banks.some', { n: v.names.length, names: v.names.join(sep) })
       : t(v.later ? 'users.banks.noneLater' : 'users.banks.none');
-  const summary = v.own.length ? main + (uiLang() === 'en' ? '. ' : '。') + t('users.banks.own', { names: v.own.join(sep) }) : main;
+  const end = uiLang() === 'en' ? '. ' : '。';
+  const base = v.own.length ? main + end + t('users.banks.own', { names: v.own.join(sep) }) : main;
+  // v3.1 (owner): a user who may manage question banks gets the green check (markManager); the tip says it too
+  const summary = u.canManageBanks ? base + end + t('users.tag.manager') : base;
+  const btn = act(`us-banks-${u.id}`, 'database', t('users.act.banksTip', { name: u.username, summary }), blocked, null, () => void chooseBanks(u));
+  if (u.canManageBanks) markManager(btn);
   return [
-    act(`us-banks-${u.id}`, 'database', t('users.act.banksTip', { name: u.username, summary }), blocked, null, () => void chooseBanks(u)),
+    btn,
     h('span', { class: 'sr-only', id: `us-access-${u.id}`, 'aria-hidden': 'true' }, summary),
   ];
 }
@@ -1621,6 +1825,7 @@ function userRow(u: UserRow, list: readonly UserRow[]): HTMLElement {
       act(`us-records-${u.id}`, 'book', t('users.act.recordsAria', { name: u.username }), blocked, u.records === 0 ? t('users.act.recordsNone') : null,
         () => navigate({ name: 'userRecords', user: u.id })),
       ...bankIcon(u, blocked),
+      act(`us-devices-${u.id}`, 'devices', t('users.act.devicesAria', { name: u.username, n: u.devices ?? 0 }), blocked, null, () => void openDevices(u)),
       act(`us-edit-${u.id}`, 'pencil', t('users.act.editAria', { name: u.username }), blocked, null, () => void editUser(u, lim)),
       act(`us-reset-${u.id}`, 'keyRound', t('users.act.resetAria', { name: u.username }), blocked, lim.self ? lim.why : null, () => void resetPassword(u)),
       u.disabled

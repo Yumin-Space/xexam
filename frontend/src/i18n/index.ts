@@ -20,6 +20,8 @@ import aigen from './catalog/aigen.ts';
 import act from './catalog/act.ts';
 import dash from './catalog/dash.ts';
 import profile from './catalog/profile.ts';
+import guide from './catalog/guide.ts';
+import devices from './catalog/devices.ts';
 
 export type MsgKey =
   | keyof typeof common.en
@@ -38,11 +40,13 @@ export type MsgKey =
   | keyof typeof aigen.en
   | keyof typeof act.en
   | keyof typeof dash.en
-  | keyof typeof profile.en;
+  | keyof typeof profile.en
+  | keyof typeof guide.en
+  | keyof typeof devices.en;
 
 export type Params = Record<string, string | number>;
 
-const ALL = [common, home, banks, records, settings, quiz, result, about, auth, users, logs, ai, aiplus, aigen, act, dash, profile];
+const ALL = [common, home, banks, records, settings, quiz, result, about, auth, users, logs, ai, aiplus, aigen, act, dash, profile, guide, devices];
 
 const tables: Record<UiLang, Dict> = {
   en: Object.assign({}, ...ALL.map((c) => c.en)) as Dict,

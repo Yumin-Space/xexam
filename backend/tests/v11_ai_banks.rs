@@ -2280,11 +2280,14 @@ async fn the_bank_list_names_the_source_banks_the_viewer_can_see() {
             .find(|b| b["id"] == json!(id))
             .cloned()
     };
-    // the administrator: every source bank; the key comes last, after `manageable`
+    // the administrator: every source bank; the key comes last, after `manageable` and the v3.1 `categoryId`, `sort`
     let admin_list = at(&l.admin).await;
     let mine = find(&admin_list, bank).expect("listed");
     let ks = keys(&mine);
-    assert_eq!(ks[ks.len() - 2..], ["manageable", "ai"]);
+    assert_eq!(
+        ks[ks.len() - 4..],
+        ["manageable", "categoryId", "sort", "ai"]
+    );
     assert_eq!(
         mine["ai"],
         json!({"source": "bank", "from": ["Kitchen basics", "Pantry"], "author": "alexandra_kitchen", "made": 20, "goal": 20, "at": "2026-11-12 09:30:00"})

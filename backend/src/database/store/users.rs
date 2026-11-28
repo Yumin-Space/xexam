@@ -15,8 +15,14 @@
 //!   use AI Chat while AI is enabled) and the identity stamp `uid` (32 random lower-case hex digits, set by SQLite's
 //!   `randomblob` when the account is created and never changed; never sent to the browser). The AI service keeps the
 //!   stamp next to the user id, so an id that belongs to another account after a restore is never taken for the old one.
+//! - Schema v13 (v3.1): every session belongs to a device (`sessions.device_id`, see `store::devices`); a sign-in, an own
+//!   password change and the administrators' sign-out paths go through the device rows (A.7): sessions first, then the push
+//!   rows (`store::push`), then `signed_out_at`; deleting a user deletes the push rows, the sessions and the devices first.
+//!   Granting existing banks queues the push of D11 inside the `update_user` transaction.
 //! - Schema v10 (v1.6): the permission to download the banks a user can see (`can_download_banks`), stored like
 //!   `can_manage_banks` (kept across role changes) and always true for administrators.
+use super::devices::signout_user_devices;
+use super::push::{push_delete_user, push_enqueue_grant};
 use super::{run_tx, Store};
 use crate::auth::{self, Role, MAX_SESSIONS_PER_USER, SESSION_REFRESH_SECS, SESSION_TTL_SECS};
 use crate::error::DbError;
@@ -62,6 +68,8 @@ pub struct NewSession<'a> {
     /// `None` while the sign-in info switch is off
     pub ip: Option<&'a str>,
     pub ua: Option<&'a str>,
+    /// v3.1: the device (browser) the session belongs to (`sessions.device_id`); `None` = no device
+    pub device_id: Option<i64>,
 }
 
 /// The stored facts of a session ([`Store::session_user_ro`]).
@@ -75,6 +83,8 @@ pub struct SessionRow {
     pub remember: bool,
     pub ip: Option<String>,
     pub ua: Option<String>,
+    /// v3.1: the device (browser) the session belongs to; `None` = not linked yet
+    pub device_id: Option<i64>,
 }
 
 /// What [`Store::touch_session`] writes.
@@ -144,7 +154,16 @@ fn clear_signin_rows(c: &Connection) -> Result<i64, DbError> {
         [],
     )?;
     let sessions = c.execute("UPDATE sessions SET ip=NULL WHERE ip IS NOT NULL", [])?;
-    Ok(i64::try_from(users + sessions).unwrap_or(i64::MAX))
+    // v3.1: the addresses and places of the device records go too (`devices.ua` is not an address and stays)
+    let devices = c.execute(
+        "UPDATE devices SET signin_ip=NULL, signin_country=NULL, signin_region=NULL, signin_city=NULL, \
+         active_ip=NULL, active_country=NULL, active_region=NULL, active_city=NULL \
+         WHERE signin_ip IS NOT NULL OR signin_country IS NOT NULL OR signin_region IS NOT NULL \
+         OR signin_city IS NOT NULL OR active_ip IS NOT NULL OR active_country IS NOT NULL \
+         OR active_region IS NOT NULL OR active_city IS NOT NULL",
+        [],
+    )?;
+    Ok(i64::try_from(users + sessions + devices).unwrap_or(i64::MAX))
 }
 
 /// Unix seconds as `YYYY-MM-DD HH:MM:SS` in the local time zone (the format of `last_login_at`, with seconds).
@@ -319,6 +338,13 @@ fn user_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<UserRow> {
     })
 }
 
+/// The ids of the banks in the `user_banks` rows of `user`, ascending.
+fn bank_ids_of(c: &Connection, user: i64) -> Result<Vec<i64>, DbError> {
+    let mut st = c.prepare("SELECT bank_id FROM user_banks WHERE user_id=?1 ORDER BY bank_id")?;
+    let rows = st.query_map(params![user], |r| r.get(0))?;
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
+
 /// Stores the existing banks `user` may see (inside the caller's transaction): replaces their `user_banks` rows with one row
 /// per bank of `access` (`All`: every bank that exists now). Does not touch "include banks imported later". Every id must be
 /// an existing bank, else nothing is written and the result is `false`.
@@ -426,7 +452,11 @@ fn insert_session(
     Ok(())
 }
 
-fn delete_sessions_of(c: &Connection, user_id: i64) -> Result<(), DbError> {
+/// Signs every device of the user out (v3.1, A.7): all sessions of the user are deleted, every device loses its push
+/// subscription and queued pushes and gets `signed_out_at = now`. Used by an administrator's password reset, disabling and
+/// role change, and the `reset-password` command.
+fn delete_sessions_of(c: &Connection, user_id: i64, now: i64) -> Result<(), DbError> {
+    signout_user_devices(c, user_id, now, None, None)?;
     c.execute("DELETE FROM sessions WHERE user_id=?1", params![user_id])?;
     Ok(())
 }
@@ -608,7 +638,7 @@ fn users_json(c: &Connection) -> Result<Value, DbError> {
     Ok(json!({ "users": out, "signinInfo": signin_info }))
 }
 
-/// Deletes a user's own rows: sessions, exam records (with their detail), wrong-answer statistics, settings, which banks they
+/// Deletes a user's own rows: sessions, devices (with their push rows), exam records (with their detail), wrong-answer statistics, settings, which banks they
 /// may see, then the user. The banks they own move to `heir` (the administrator deleting them), so no bank is left without an
 /// owner.
 fn delete_user_rows(c: &Connection, id: i64, heir: i64) -> Result<(), DbError> {
@@ -617,7 +647,10 @@ fn delete_user_rows(c: &Connection, id: i64, heir: i64) -> Result<(), DbError> {
         params![heir, id],
     )?;
     c.execute("DELETE FROM user_banks WHERE user_id=?1", params![id])?;
-    delete_sessions_of(c, id)?;
+    // v3.1 (A.7): push rows (outbox, subscriptions, saved sessions), then the sessions, then the devices
+    push_delete_user(c, id)?;
+    c.execute("DELETE FROM sessions WHERE user_id=?1", params![id])?;
+    c.execute("DELETE FROM devices WHERE user_id=?1", params![id])?;
     c.execute(
         "DELETE FROM attempt_items WHERE attempt_id IN (SELECT id FROM attempts WHERE user_id=?1)",
         params![id],
@@ -785,7 +818,8 @@ impl Store {
             .query_row(
                 "SELECT s.user_id, s.started_at, s.last_seen_at, s.expires_at, s.remember, s.ip, s.ua, \
                  u.id, u.username, u.password_hash, u.role, u.disabled, u.created_at, u.last_login_at, \
-                 u.must_change_password, u.new_banks, u.can_manage_banks, u.ai_enabled, u.uid, u.can_download_banks, u.display_name \
+                 u.must_change_password, u.new_banks, u.can_manage_banks, u.ai_enabled, u.uid, u.can_download_banks, u.display_name, \
+                 s.device_id \
                  FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash=?1",
                 params![token_hash],
                 |r| {
@@ -797,6 +831,7 @@ impl Store {
                         remember: r.get::<_, i64>(4)? != 0,
                         ip: r.get(5)?,
                         ua: r.get(6)?,
+                        device_id: r.get(21)?,
                     };
                     let user = UserRow {
                         id: r.get(7)?,
@@ -832,8 +867,8 @@ impl Store {
         run_tx(&g, |c| {
             ensure_active(c, s.user_id)?;
             c.execute(
-                "INSERT INTO sessions(token_hash, user_id, created_at, last_seen_at, expires_at, started_at, remember, ip, ua) \
-                 VALUES(?1,?2,?3,?4,?5,?4,?6,?7,?8)",
+                "INSERT INTO sessions(token_hash, user_id, created_at, last_seen_at, expires_at, started_at, remember, ip, ua, device_id) \
+                 VALUES(?1,?2,?3,?4,?5,?4,?6,?7,?8,?9)",
                 params![
                     s.token_hash,
                     s.user_id,
@@ -842,7 +877,8 @@ impl Store {
                     s.expires_at,
                     s.remember,
                     s.ip,
-                    s.ua
+                    s.ua,
+                    s.device_id
                 ],
             )?;
             c.execute(
@@ -878,6 +914,21 @@ impl Store {
         t: &Touch,
         facts: Option<&ActiveFacts>,
     ) -> Result<(), DbError> {
+        self.touch_session_device(token_hash, user_id, now, t, facts, None)
+    }
+
+    /// [`Store::touch_session_with`] that also writes (v3.1, only with `t.session`) the device the session belongs to:
+    /// `active_at = now`, the User-Agent when given and, while the eye is open, the address with its place (the three
+    /// parts together).
+    pub fn touch_session_device(
+        &self,
+        token_hash: &str,
+        user_id: i64,
+        now: i64,
+        t: &Touch,
+        facts: Option<&ActiveFacts>,
+        device_id: Option<i64>,
+    ) -> Result<(), DbError> {
         if !t.session && !t.active {
             return Ok(());
         }
@@ -889,6 +940,22 @@ impl Store {
                      WHERE token_hash=?3",
                     params![now, t.expires_at, token_hash],
                 )?;
+                if let Some(d) = device_id {
+                    let ua = facts
+                        .and_then(|f| f.ua.as_deref())
+                        .map(|u| u.chars().take(256).collect::<String>());
+                    c.execute(
+                        "UPDATE devices SET active_at=?1, ua=COALESCE(?2, ua) WHERE id=?3 AND user_id=?4",
+                        params![now, ua, d, user_id],
+                    )?;
+                    if let Some((ip, p)) = facts.and_then(|f| f.ip_place.as_ref()) {
+                        c.execute(
+                            "UPDATE devices SET active_ip=?1, active_country=?2, active_region=?3, active_city=?4 \
+                             WHERE id=?5 AND user_id=?6",
+                            params![ip, p.country, p.region, p.city, d, user_id],
+                        )?;
+                    }
+                }
             }
             if t.active {
                 c.execute(
@@ -1038,6 +1105,7 @@ impl Store {
                     remember: true,
                     ip: None,
                     ua: None,
+                    device_id: None,
                 },
                 None,
             )? {
@@ -1086,10 +1154,19 @@ impl Store {
                     params![name, user_id],
                 )?;
             }
-            delete_sessions_of(c, user_id)?;
+            // v3.1 (D4): every OTHER device is signed out (sessions, subscription, queued pushes); the device the change was
+            // made on keeps its subscription and gets the new session. Every session of the user ends either way.
+            signout_user_devices(c, user_id, s.now, s.device_id, None)?;
+            c.execute("DELETE FROM sessions WHERE user_id=?1", params![user_id])?;
+            if let Some(d) = s.device_id {
+                c.execute(
+                    "UPDATE devices SET signed_out_at=NULL WHERE id=?1 AND user_id=?2",
+                    params![d, user_id],
+                )?;
+            }
             c.execute(
-                "INSERT INTO sessions(token_hash, user_id, created_at, last_seen_at, expires_at, started_at, remember, ip, ua)                  VALUES(?1,?2,?3,?4,?5,?4,?6,?7,?8)",
-                params![s.token_hash, user_id, at, s.now, s.expires_at, s.remember, s.ip, s.ua],
+                "INSERT INTO sessions(token_hash, user_id, created_at, last_seen_at, expires_at, started_at, remember, ip, ua, device_id)                  VALUES(?1,?2,?3,?4,?5,?4,?6,?7,?8,?9)",
+                params![s.token_hash, user_id, at, s.now, s.expires_at, s.remember, s.ip, s.ua, s.device_id],
             )?;
             Ok(
                 match user_by_id(c, user_id)?.as_ref().map(SessionUser::from) {
@@ -1291,6 +1368,7 @@ impl Store {
         id: i64,
         change: &UserUpdate,
     ) -> Result<UserChange<UpdatedUser>, DbError> {
+        let now = self.clock.unix();
         let g = self.lock();
         run_tx(&g, |c| {
             let Some(u) = user_by_id(c, id)? else {
@@ -1328,12 +1406,23 @@ impl Store {
                 ],
             )?;
             if let Some(banks) = &change.banks {
+                let before = bank_ids_of(c, id)?;
                 if !set_bank_access(c, id, banks)? {
                     return Err(DbError::UnknownBanks);
                 }
+                // v3.1 (D11): the banks newly granted to a user get a push (none for an administrator: they see every bank)
+                if role != Role::Admin {
+                    let granted: Vec<i64> = bank_ids_of(c, id)?
+                        .into_iter()
+                        .filter(|b| !before.contains(b))
+                        .collect();
+                    if !granted.is_empty() {
+                        push_enqueue_grant(c, id, &granted, now)?;
+                    }
+                }
             }
             if role != u.role || (disabled && !u.disabled) {
-                delete_sessions_of(c, id)?;
+                delete_sessions_of(c, id, now)?;
             }
             // `username` is COLLATE NOCASE: a change of case only is a rename too (the stored text changed)
             let renamed_from = (username != u.username).then_some(u.username);
@@ -1359,6 +1448,7 @@ impl Store {
         hash: &str,
     ) -> Result<UserChange<String>, DbError> {
         let at = self.clock.now();
+        let now = self.clock.unix();
         let g = self.lock();
         run_tx(&g, |c| {
             let Some(u) = user_by_id(c, id)? else {
@@ -1371,7 +1461,7 @@ impl Store {
                 "UPDATE users SET password_hash=?1, password_changed_at=?2, must_change_password=1 WHERE id=?3",
                 params![hash, at, id],
             )?;
-            delete_sessions_of(c, id)?;
+            delete_sessions_of(c, id, now)?;
             Ok(UserChange::Done(u.username))
         })
     }
@@ -1403,6 +1493,7 @@ impl Store {
         hash: &str,
     ) -> Result<Option<String>, DbError> {
         let at = self.clock.now();
+        let now = self.clock.unix();
         let g = self.lock();
         run_tx(&g, |c| {
             let Some(u) = user_by_name(c, username)? else {
@@ -1412,7 +1503,7 @@ impl Store {
                 "UPDATE users SET password_hash=?1, password_changed_at=?2, must_change_password=1, disabled=0 WHERE id=?3",
                 params![hash, at, u.id],
             )?;
-            delete_sessions_of(c, u.id)?;
+            delete_sessions_of(c, u.id, now)?;
             Ok(Some(u.username))
         })
     }

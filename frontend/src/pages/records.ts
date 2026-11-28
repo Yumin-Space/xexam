@@ -19,6 +19,7 @@ import { pager } from '../components/pager.ts';
 import { matches, PHONE_MQ } from '../utils/media.ts';
 import { UR, cachedUserRecord, clearUserRecords, enterUserRecords, loadUserRecord, loadUserRecords, newListUi, type ListUi } from '../state/user-records.ts';
 import { reviewItem, reviewParts, stripKey, type ReviewFilter, type ReviewParts, type ReviewRow } from '../components/review.ts';
+import { groupBanks } from '../domain/categories.ts';
 import { defaultFilter, resultCounts } from '../domain/exam-timer.ts';
 import { inNotebook, masterStreakOf, percentOf, shuffle } from '../domain/grading.ts';
 import { errorText } from '../i18n/errors.ts';
@@ -167,6 +168,22 @@ async function removeAll(): Promise<void> {
 }
 
 // ---------------------------------------------------------------- list (#/records)
+
+/**
+ * v3.1: the <option>s of a bank filter. With categories they sit in <optgroup>s (category order, then "Uncategorised"; banks
+ * that no longer exist are uncategorised); without categories the plain list in the given order.
+ */
+function bankOptions<B extends { id: number }>(banks: readonly B[], label: (b: B) => string): HTMLElement[] {
+  const placed = banks.map((b) => {
+    const cur = S.banks.find((x) => x.id === b.id);
+    return { b, id: b.id, categoryId: cur?.categoryId ?? null, sort: cur?.sort ?? 0 };
+  });
+  const { hasCategories, groups } = groupBanks(placed, S.categories);
+  const option = (b: B): HTMLElement => h('option', { value: String(b.id) }, label(b));
+  if (!hasCategories) return banks.map(option);
+  return groups.filter((g) => g.banks.length > 0).map((g) =>
+    h('optgroup', { label: g.category?.name ?? t('banks.cat.none') }, g.banks.map((x) => option(x.b))));
+}
 
 /** Every bank that appears in the records (first occurrence = newest name); existing banks first, then deleted ones */
 function banksInRecords(records: readonly RecordSummary[]): RecordBank[] {
@@ -404,7 +421,7 @@ function renderList(tg: number | null): HTMLElement {
   // Filter controls: changing one updates the summary and the list in place (no full re-render, focus stays put)
   const bankSel = h('select', { class: 'rec-bank-sel' },
     h('option', { value: 'all' }, t('records.filter.allBanks')),
-    banks.map((b) => h('option', { value: String(b.id) }, b.deleted ? t('common.deletedBank', { name: b.name }) : b.name)));
+    bankOptions(banks, (b) => (b.deleted ? t('common.deletedBank', { name: b.name }) : b.name)));
   bankSel.value = filters.bank;
   const kindSel = h('select', null,
     h('option', { value: 'all' }, t('records.filter.allKinds')),
@@ -814,7 +831,7 @@ function renderWrong(): HTMLElement {
   if (bankIds.length > 1) {
     const sel = h('select', { class: 'rec-bank-sel' },
       h('option', { value: 'all' }, t('records.wrong.bankOption', { name: t('records.filter.allBanks'), n: all.length })),
-      bankIds.map((id) => h('option', { value: String(id) }, t('records.wrong.bankOption', { name: bankName(id), n: all.filter((q) => q.bank === id).length }))));
+      bankOptions(bankIds.map((id) => ({ id })), ({ id }) => t('records.wrong.bankOption', { name: bankName(id), n: all.filter((q) => q.bank === id).length })));
     sel.value = String(wrongBank);
     sel.addEventListener('change', () => {
       wrongBank = sel.value === 'all' ? 'all' : Number(sel.value);

@@ -132,8 +132,8 @@ def fx1_case(rc, lang, theme, size):
         r = d.js(RESET_JS)
         if not r or r['fx'] is not True:
             p.append('after the reset the server answerFx is %r (status %r), expected true' % (r and r['fx'], r and r['status']))
-        elif r['keys'][-2:] != ['questionLang', 'answerFx']:
-            p.append('the /api/settings keys end with %s, expected questionLang, answerFx' % r['keys'][-2:])
+        elif 'questionLang' not in r['keys'] or 'answerFx' not in r['keys']:
+            p.append('the /api/settings keys are %s, expected questionLang and answerFx among them' % r['keys'])
         d.save_settings(answerFx=True)       # the reset also reset the language and theme of this device: put them back
         goto(d, '#/settings', 1.8)
         until(d, "document.querySelector('.set-switch')", 8.0)

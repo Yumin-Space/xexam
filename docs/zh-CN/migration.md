@@ -4,6 +4,7 @@
 
 > 本文覆盖每一条升级路径，最新的在前：
 >
+> - **v3.0 → v3.1**（000000000000000000 节）：只需要 `docker compose pull` 和 `docker compose up -d`，不必做别的。主库在启动时先写备份 `backups/xexam-schema12-<日期-时间>.db`，然后升到 schema 13（5 张新表、3 个新列：题库分类、登录设备、通知、未完成练习的标记）；AI 库仍是 schema 11。有两个可选的新变量（`XEXAM_PUSH_SUBJECT`、`XEXAM_PUSH_VAPID_KEY`），标准安装不必改 `docker-compose.yml` 或 Nginx。回退到 v3.0 不需要恢复数据；回退之后如果要删除用户，需要 000000000000000000.4 节里的那段 SQL。
 > - **v2.9 → v3.0**（00000000000000000 节）：除了 `docker compose pull` 和 `docker compose up -d` 不用做别的。数据库没有变化（主库 schema 12，AI 库 schema 11），没有新变量，也不用改 `docker-compose.yml` 或 Nginx。回退到 v2.9 不需要恢复数据。
 > - **v2.8 → v2.9**（0000000000000000 节）：除了 `docker compose pull` 和 `docker compose up -d` 不用做别的。数据库没有变化（主库 schema 12，AI 库 schema 11），没有新变量，也不用改 `docker-compose.yml` 或 Nginx。回退到 v2.8 不需要恢复数据。
 > - **v2.7 → v2.8**（000000000000000 节）：除了 `docker compose pull` 和 `docker compose up -d` 不用做别的。数据库没有变化（主库 schema 12，AI 库 schema 11），没有新变量，也不用改 `docker-compose.yml` 或 Nginx。回退到 v2.7 不需要恢复数据。
@@ -34,6 +35,39 @@
 > **从更早的版本直接升级到 v1.0**，用当前的镜像会一次做完下面各节的每一步：写一份以数据库原来的 schema 命名的备份，然后迁移到当前的 schema（主数据库是 6，AI 数据库是 4）。下面各节是为它们升级到的那个版本写的，所以某一节写 schema 5 的地方，v1.0 最后停在 schema 6，日志里会写 `Upgraded the database to schema 6`，`/api/info` 显示 `1.0`，ai-service 创建的数据库是 schema 4。
 >
 > **从 v0.6 或更早的版本升级，都会下架你所有的题。** 从 v0.7 起只能导入六列 Excel 格式，每次启动都会下架从以前版本的三列和四列格式导入的题；v0.6 及更早版本的每道题都是这两种格式之一。题库、学习记录和统计保留。升级之前请为每份工作簿准备好六列格式的版本（见 [usage.md](usage.md) 第 12 节），升级之后用它更新每个题库（第 2.4 节）。
+
+## 000000000000000000. 从 v3.0 升级到 v3.1
+
+这一节编号 000000000000000000，因为它是最新的。旧各节的编号不变。
+
+### 000000000000000000.1 有什么变化
+
+- **主数据库**在 v3.1 后端第一次启动时，一次性地从 schema 12 升到 **schema 13**，先写备份 `backups/xexam-schema12-<日期-时间>.db`（只有文件里有数据时才写；从更旧的 schema 升级会直接升到 13，只留那个更旧 schema 的一份备份）。这一步只做添加：表 `bank_categories`、`devices`、`push_subscriptions`、`saved_sessions`、`push_outbox`，列 `banks.category_id`、`banks.sort`、`sessions.device_id`，五个索引；并删除一个没有人用的索引（`idx_questions_sheet`）。不改动任何一行。请留出和数据库差不多大的磁盘空间给备份。详情见 [database.md](database.md) 第 6.21 节。
+- **AI 数据库**保持 **schema 11**，什么都不变。两个服务之间的心跳没有变，所以 v3.0 的后端配 v3.1 的 ai-service，或者反过来，都还能工作（只是没有通知；见 [architecture.md](architecture.md) 第 5 节）。
+- **通知**需要三样东西：新的 xexam-ai-service（由它投递）、Xexam 的 `https` 地址（Cloudflare Tunnel 或 `localhost`；在普通局域网地址上按钮是灰的并说明原因），以及每个用户在每台设备上开启一次。服务器在第一次启动时在 `xexam.db` 旁边的 `push-vapid.key` 里创建 VAPID 密钥；它不在数据库里，也不在备份里，所以**复制整个数据卷会带上它**，只恢复 `xexam.db` 则不会（设备之后会重新订阅）。两个可选变量：`XEXAM_PUSH_SUBJECT` 和 `XEXAM_PUSH_VAPID_KEY`（见 [deployment.md](deployment.md) 第 3 节）。第一次启动的版本推送不会送到任何人（还没有设备订阅）；第一条有用的是 v3.1 → 下一个版本。
+- **设备**：每个已有的会话在它的浏览器下一次请求时关联到一台设备（应用在启动时自己完成这件事），在那之前设备列表里看不到它。不会有人被退出登录。
+- **网络**：ai-service 现在还会连接推送服务（`fcm.googleapis.com`、`updates.push.services.mozilla.com`、`web.push.apple.com`、`*.push.apple.com`、`*.notify.windows.com`）。如果你限制了它的出站流量，请放行这些地址；不放行时，通知只会在队列里等到有效期结束后过期，别的不受影响。
+- **Nginx**：前端镜像会为 `/sw.js` 和 `/manifest.webmanifest` 单独设置响应头。如果你把镜像里的 Nginx 配置换成了自己的，请加上这两个 `location` 块（见 [deployment.md](deployment.md) 第 4 节）。在 Cloudflare Access 后面，请测试安装图标；如果没有出现，给静态路径加一个 Access 绕过规则（绝不要对 `/api/` 加）。
+- **调用 API 的脚本**：`GET /api/banks` 多了 `categories`，每个题库多了 `categoryId` 和 `sort`；`GET /api/auth/state` 多了 `categories`；`GET /api/users` 的每一行多了 `devices`；`GET` / `POST /api/settings` 多了键 `push` 和 `tz`；新增 13 条路由。见 [api.md](api.md) 第 7 节的“v3.1 的变化”。
+
+### 000000000000000000.2 升级
+
+`docker compose pull`，再 `docker compose up -d`。数据卷保持不变。后端日志会写 `Upgraded the database to schema 13. A copy of the previous version was saved first: /data/backups/xexam-schema12-….db …`，同一次启动里还有关于密钥的 `push: …` 几行。
+
+### 000000000000000000.3 检查
+
+应用菜单显示 **Xexam v3.1**。**设置** 里有 **通知**、**安装为应用**（只在手机和平板上）和 **登录设备**（本设备排第一）；**个人资料** 里有 **时区**；管理员的 **题库** 页有 **分类管理**；**用户管理** 的每一行都有设备图标。在手机上，主页会出现一次设置引导。开启通知后点 **发送测试**，一分钟内会收到一条通知（如果没有收到，说明 xexam-ai-service 容器没有运行，或者连不上推送服务：请看 `docker compose logs ai-service`）。
+
+### 000000000000000000.4 回退到 v3.0
+
+把三个镜像的 `:latest` 改成 `:v3.0`，再 `docker compose up -d`。**不需要恢复数据**：v3.0 的后端可以原样打开 schema 13 的文件（它把更新的 schema 当作当前版本，忽略新表和新列，它创建的会话没有设备）。它新建的题库是未分类的；设置键 `push` 和 `tz` 会被忽略。之后唯一会失败的是**删除在 `devices`、`push_subscriptions` 或 `saved_sessions` 里有行的用户**（FOREIGN KEY constraint failed；事务会回滚，什么都不会丢）。先执行一次下面这段，再删除一次（停掉后端，或者在后端运行时用 `sqlite3` 执行）：
+
+```sql
+DELETE FROM push_outbox; DELETE FROM push_subscriptions; DELETE FROM saved_sessions;
+UPDATE sessions SET device_id = NULL; DELETE FROM devices;
+```
+
+如果想回到升级之前的确切状态，停掉后端并恢复 `backups/xexam-schema12-<日期-时间>.db`（之后写入的一切都会丢失）。再次升到 v3.1 只是一次普通的打开：文件已经是 schema 13，设备在下一次请求时重新登记，手机在下一次打开应用时重新订阅。`push-vapid.key` 留在数据卷里，v3.0 会忽略它。
 
 ## 00000000000000000. 从 v2.9 升级到 v3.0
 

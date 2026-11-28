@@ -334,5 +334,45 @@ dialog .us-banklist { max-height: none; overflow: visible; }
 .us-disp.none { opacity: .8; }
 .us-row.off .us-disp { opacity: .8; }
 
+/* ---------- v3.1: the devices dialog and the category rows of the bank choice ---------- */
+dialog.us-devdlg { max-width: 560px; }
+.us-dev-note { margin: 0 0 12px; }
+.us-devbody { min-width: 0; }
+.us-devbody:focus { outline: none; }
+.us-dev-loading { margin: 0; color: var(--ink3); }
+.us-devdlg > .acts .btn { min-height: 40px; }
+@media (pointer: coarse), (max-width: 480px) { .us-devdlg > .acts .btn { min-height: 44px; } }
+/* An author display value would beat the hidden attribute: a folded category hides its bank rows */
+.us-banklist li[hidden] { display: none; }
+.us-cat-row { display: flex; align-items: center; gap: 4px; margin: 4px 0 0; padding: 0 0 0 2px; border-bottom: 1px solid var(--line-soft); background: var(--fill); border-radius: 6px 6px 0 0; }
+.us-cat-l { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 4px 6px; cursor: pointer; font-weight: 600; }
+.us-cat-box { margin: 0; flex: none; accent-color: var(--print); }
+.us-cat-n { min-width: 0; overflow-wrap: anywhere; color: var(--ink); }
+.us-cat-c { flex: none; font-size: 12.5px; font-weight: 400; color: var(--ink3); }
+.us-cat-fold { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border: 0; border-radius: 6px; background: transparent; color: var(--ink3); cursor: pointer; }
+.us-cat-chev { width: 16px; height: 16px; transition: transform .12s ease; }
+.us-cat-fold[aria-expanded="false"] .us-cat-chev { transform: rotate(-90deg); }
+.us-cat-fold:focus-visible { outline: 2px solid var(--print); outline-offset: -2px; }
+@media (hover: hover) { .us-cat-fold:hover { background: var(--hover); } }
+@media (pointer: coarse), (max-width: 480px) {
+  .us-cat-l { min-height: 44px; }
+  .us-cat-fold { width: 44px; height: 44px; }
+  .us-cat-box { width: 18px; height: 18px; }
+}
+@media (prefers-reduced-motion: reduce) { .us-cat-chev { transition: none; } }
+
 /* v2.7: the shared numbered pager (components/pager.ts) sits under the user list; it may wrap to two centred lines on a phone */
 .us-pagerhost { margin-bottom: 4px; }
+
+/* v3.1 (owner): the bank icon of anyone who may manage question banks (a bank manager, every administrator) carries a small
+   green check in its corner; it stays green on the administrator's greyed icon */
+.ibtn.us-bank-mgr { position: relative; }
+.us-mgr-check {
+  position: absolute; top: 3px; right: 3px; width: 15px; height: 15px; border-radius: 50%;
+  display: grid; place-items: center; pointer-events: none;
+  background: var(--answer-right-solid); color: var(--on-answer-solid, #fff); box-shadow: 0 0 0 1.5px var(--card);
+}
+.us-icons .ibtn .us-mgr-check svg { width: 11px; height: 11px; stroke-width: 2.4; color: var(--on-answer-solid, #fff); stroke: currentColor; opacity: 1; }
+/* The greyed administrator icon fades only its own glyph, so the check keeps its full colour */
+.us-icons .ibtn.us-bank-mgr[aria-disabled="true"] { opacity: 1; }
+.us-icons .ibtn.us-bank-mgr[aria-disabled="true"] > svg { opacity: .45; }

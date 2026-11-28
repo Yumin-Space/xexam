@@ -20,7 +20,7 @@
 cd backend
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
-cargo test --all-targets          # 382 件のテスト
+cargo test --all-targets          # 919 件のテスト
 cargo run -- serve --data ../data --no-browser     # 127.0.0.1:8765 で待ち受け
 ```
 
@@ -43,7 +43,7 @@ AI サービスは `ai-service/` にある独立したクレート（パッケ�
 cd ai-service
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
-cargo test --all-targets          # 383 件のテスト（と、ドキュメントテスト 1 件、`cargo test --doc`：ヒントのプロンプトは解答を受け取ってはならない）
+cargo test --all-targets          # 1393 件のテスト（と、ドキュメントテスト 1 件、`cargo test --doc`：ヒントのプロンプトは解答を受け取ってはならない）
 cargo tree -e normal --target all | grep -E 'aws-lc|openssl-sys|native-tls'   # 何も出力しないこと（CI の TLS ガード）
 ```
 
@@ -213,8 +213,8 @@ python tools/phone-walk/walk.py --out <dir> --chrome <path>
 |---|---|
 | `check` | `VERSION` に `CODE_VERSION=` と `RELEASE_VERSION=` の行が**ちょうど 1 つずつ**あり、どちらも `0.7` や `0.6.5` のような形で、`RELEASE_VERSION` が `CODE_VERSION` より新しくないこと。3 つの更新履歴（`docs/en/changelog.md`、`docs/ja/changelog.md`、`docs/zh-CN/changelog.md`）それぞれの最新の項目 = `CODE_VERSION` で、3 つとも同じ `### vX.Y — 日付` の見出しが同じ順に並ぶこと。どの README にも更新履歴の項目がなく、それぞれが自分の言語の更新履歴へリンクしていること。各 README の冒頭のリリースバッジ = `RELEASE_VERSION`。`backend/Cargo.toml`、`ai-service/Cargo.toml`、`frontend/package.json` が `CODE_VERSION` であること。配置（ルートの README は `README.md` だけ、残り 2 つの README は `README/`、compose ファイルと `.env.example` は `docker/`）、`docker/docker-compose.yml` が 3 つのイメージを Docker Hub から pull すること、ドキュメントのチェック（9 節）。このジョブの出力 `version`（`CODE_VERSION`）を後のジョブが使います |
 | `frontend · test (x86)` | 型チェック、単体テスト、ビルド |
-| `backend · test (x86)` | fmt、clippy、382 件のテスト、および `progress.json` の移行チェック。Rust キャッシュは毎回新しいキーを使い、同じ `Cargo.lock` の最新キャッシュを読み込む |
-| `ai-service · test (x86)` | fmt、clippy、ai-service の 383 件のテスト、そして TLS ガード：`cargo tree` に `aws-lc`、`openssl-sys`、`native-tls` が含まれないこと。Rust キャッシュは `backend` と同じ扱い |
+| `backend · test (x86)` | fmt、clippy、919 件のテスト、および `progress.json` の移行チェック。Rust キャッシュは毎回新しいキーを使い、同じ `Cargo.lock` の最新キャッシュを読み込む |
+| `ai-service · test (x86)` | fmt、clippy、ai-service の 1393 件のテスト、そして TLS ガード：`cargo tree` に `aws-lc`、`openssl-sys`、`native-tls` が含まれないこと。Rust キャッシュは `backend` と同じ扱い |
 | `<component> · image build (x86\|arm64)` | 同じ名前の 3 つのジョブ：x86 のフロントエンドイメージ単独（`Nginx · test` ができ次第始められるように）、x86 のバックエンドと ai-service のイメージ、arm64 のイメージ。合わせて、3 つのイメージ（frontend、backend、ai-service）を、それぞれ両方のアーキテクチャでネイティブにビルド（x86 は `ubuntu-latest`、arm64 は `ubuntu-24.04-arm`、エミュレーションなし。最大 60 分）。`check` の直後、テストと並行して実行。各ビルドは、レイヤーを GitHub Actions のキャッシュにスコープ `<component>-<arch>`（たとえば `backend-x86`）で書き込み、その後イメージを起動して確認します：バックエンドは `/api/info` で正しいアーキテクチャ（`x86_64` または `aarch64`）と `CODE_VERSION` を返し、フロントエンドは `/healthz` に応答して `index.html` を配信し、ai-service は単独でヘルスチェック（`xexam-ai-service healthcheck`）に通り、`/healthz` で同じものを返す |
 | `Nginx · test (x86)` | x86 のフロントエンドイメージのビルドの後（ほかの 2 つは待たない）：`frontend-x86` のキャッシュから `xexam-frontend` イメージをもう一度ビルドし（npm の作業なし）、141 項目の Nginx チェックを実行 |
 | `end-to-end · test (x86)` | x86 の 3 つのイメージのビルドがすべて終わった後：compose スタック全体を起動（3 つのイメージは、統合した compose ファイルと `crazy-max/ghaction-github-runtime` を通じて、同じキャッシュのスコープ `backend-x86`、`frontend-x86`、`ai-service-x86` からビルドされ、再コンパイルはなし。架空の AI プロバイダー）し、314 項目のエンドツーエンドのチェックを実行（最大 45 分） |
@@ -248,6 +248,7 @@ python tools/phone-walk/walk.py --out <dir> --chrome <path>
 - 言語ごとに 1 つのフォルダがあります：`docs/en`（英語、原文）、`docs/ja`（日本語）、`docs/zh-CN`（簡体字中国語）。どのフォルダにも同じ 9 つのドキュメントがあります：`api`、`architecture`、`changelog`（v0.9.1 から。以前は README の中にありました）、`database`、`deployment`、`development`、`migration`、`security`、そして v0.7.5 からは `usage`（アプリの使い方。README から移しました）。それぞれのフォルダに専用の `screenshots/` があります。
 - `docs/zh-CN/history/` には、Rust へ切り替えたときの古いドキュメント（監査、計画、リスク評価）があります。中国語のみで、今後は更新しません。
 - `docs/en/openapi.yaml` はすべての言語で共有します。日本語と中国語のドキュメントは `../en/openapi.yaml` にリンクします。
+- **データベースの図はずれません（v3.1）。** `database.md` のすべての図（第 3 節、8.2 節、第 9 節）は、`cargo test` の一部として、`backend/tests/docs_diagrams.rs`（メインのデータベース）と `ai-service/tests/docs_diagrams.rs`（AI のデータベース）が新規のデータベースと照合します。テーブル、列とその順序、宣言された型、`PK` / `FK` の印、全体図の外部キー、そして 3 言語で同じエンティティと列であることです。テーブルや列を変えるときは、同じコミットで `docs/en`、`docs/ja`、`docs/zh-CN` の図も変えてください。そうしないと、違いのある言語、節、エンティティ、列がテストに示されます。図の中のコメントは言語ごとに違っていて構いません。
 - README は短くしてあります：Xexam でできること、クイックスタート、設定、アップグレード、ドキュメントへのリンク、更新履歴（同じ言語の `changelog.md`）へのリンクです。アプリの使い方、Excel の形式、インポートの規則は `usage.md` に、デプロイの詳細、バックアップ、セキュリティ、アーキテクチャ、開発はそれぞれのドキュメントにあります。詳細は 1 か所に書き、そこへリンクしてください。
 - どのドキュメントも、ほかの 2 つのフォルダにある同じドキュメントへのリンクを並べた言語バーで始まります。リンクはファイル自身のフォルダからの相対パスで、リポジトリのルートは `../../` です。
 - 先に英語のドキュメントを変更し、同じ変更の中で日本語と中国語のドキュメントも更新します。UI の項目名は、その言語のカタログのとおりに太字で書きます。問題の言語の切り替えは、常に **English** / **中文** / **日本語** です。
@@ -255,7 +256,7 @@ python tools/phone-walk/walk.py --out <dir> --chrome <path>
 
 ### 9.1 スクリーンショット
 
-README とドキュメントの画像（`docs/<lang>/screenshots`。言語ごとにデスクトップ 28 枚と iPhone 10 枚、v2.6 から合わせて 38 枚）は、リポジトリのルートで `python tools/screenshots/retake.py` を実行して作ります。このツールは `backend/Dockerfile` と `ai-service/Dockerfile` からバックエンドと ai-service のイメージを一意のタグ（`xexam-shots-backend:<hex>`、`xexam-shots-ai-service:<hex>`）でビルドし、新しい Docker ネットワーク上で、新しいボリューム（それぞれに `/data`、共有のリンクボリューム。ai-service には読み取り専用）と `TZ=UTC` で、架空の AI プロバイダー `tests/integration/ai_stub.py`（ネットワーク上の名前は `ai-stub`）と並べて動かします。フロントエンドを Vite でビルドし、空いているポートで `vite preview` で配信してから（認証のプラグインが、Nginx と同じく AI のリクエストをすべてバックエンドに確認します）、API を通じて架空のデモ用問題集、ユーザー、記録をインスタンスに入れ、架空のプロバイダーと架空のキーで AI を設定します。そのあとで初めて sam と alex に AI+ 機能を与え（AI+ が利用可能でない間は、バックエンドが拒否します）、alex の AI+ 機能を一時停止するので、画像には明るいバッジ、暗いバッジ、バッジなしと、**利用中** の行と **一時停止中** の行が写ります。再起動の後は、`GET /api/users` が `aiAvailable: true` を返すまで待ちます。システムログにログインとユーザーの変更の短い流れだけが出るようにバックエンドを再起動し、それから言語ごとにヘッドレス Chrome で本物の UI を操作します：AI チャットの場面は管理者のフリーモードをオンにして（緑の **フリーモード** タグが出ます）チャットを始め、ページから 2 つ目の質問を送り（その実行の言語で送るので、回答もその言語になります）、終わったらチャットを削除してフリーモードをオフに戻します。v0.9 の学習用の場面は、練習の問題の AI ヒントのウィンドウ、試験の結果のカードの AI 解析のウィンドウ、学習記録の AI まとめのウィンドウを開き（`desktop-17-ai-hint`、`desktop-18-ai-result`、`desktop-19-ai-summary`、`iphone-5-ai-hint`）、架空のプロバイダーの文を表示します。同じ実行でレイアウトも確認します（確認に失敗すると止まります）：練習のアクションバーは 390 px で最大 2 行、学習記録は 800 px（英語と日本語）でカードのレイアウトになり、横スクロールがないことです。AI 設定の場面は **テスト** を押し、ページを 2 枚の画像で見せます（設定と、AI+ 機能の列付きの AI+ ユーザー、そして使用量、保存期間、安全上限）。そのため、使用量の数字は言語ごとに少し違います。画像は、文やカードが途中で切れない位置で切り取り、PNG のメタデータを取り除きます。コンテナ、ボリューム、ネットワーク、イメージのタグ、一時フォルダ、プロセスは、エラーの後でも最後に削除します。
+README とドキュメントの画像（`docs/<lang>/screenshots`。言語ごとにデスクトップ 30 枚と iPhone 12 枚、v3.1 から合わせて 42 枚）は、リポジトリのルートで `python tools/screenshots/retake.py` を実行して作ります。このツールは `backend/Dockerfile` と `ai-service/Dockerfile` からバックエンドと ai-service のイメージを一意のタグ（`xexam-shots-backend:<hex>`、`xexam-shots-ai-service:<hex>`）でビルドし、新しい Docker ネットワーク上で、新しいボリューム（それぞれに `/data`、共有のリンクボリューム。ai-service には読み取り専用）と `TZ=UTC` で、架空の AI プロバイダー `tests/integration/ai_stub.py`（ネットワーク上の名前は `ai-stub`）と並べて動かします。フロントエンドを Vite でビルドし、空いているポートで `vite preview` で配信してから（認証のプラグインが、Nginx と同じく AI のリクエストをすべてバックエンドに確認します）、API を通じて架空のデモ用問題集、ユーザー、記録をインスタンスに入れ、架空のプロバイダーと架空のキーで AI を設定します。そのあとで初めて sam と alex に AI+ 機能を与え（AI+ が利用可能でない間は、バックエンドが拒否します）、alex の AI+ 機能を一時停止するので、画像には明るいバッジ、暗いバッジ、バッジなしと、**利用中** の行と **一時停止中** の行が写ります。再起動の後は、`GET /api/users` が `aiAvailable: true` を返すまで待ちます。システムログにログインとユーザーの変更の短い流れだけが出るようにバックエンドを再起動し、それから言語ごとにヘッドレス Chrome で本物の UI を操作します：AI チャットの場面は管理者のフリーモードをオンにして（緑の **フリーモード** タグが出ます）チャットを始め、ページから 2 つ目の質問を送り（その実行の言語で送るので、回答もその言語になります）、終わったらチャットを削除してフリーモードをオフに戻します。v0.9 の学習用の場面は、練習の問題の AI ヒントのウィンドウ、試験の結果のカードの AI 解析のウィンドウ、学習記録の AI まとめのウィンドウを開き（`desktop-17-ai-hint`、`desktop-18-ai-result`、`desktop-19-ai-summary`、`iphone-5-ai-hint`）、架空のプロバイダーの文を表示します。同じ実行でレイアウトも確認します（確認に失敗すると止まります）：練習のアクションバーは 390 px で最大 2 行、学習記録は 800 px（英語と日本語）でカードのレイアウトになり、横スクロールがないことです。AI 設定の場面は **テスト** を押し、ページを 2 枚の画像で見せます（設定と、AI+ 機能の列付きの AI+ ユーザー、そして使用量、保存期間、安全上限）。そのため、使用量の数字は言語ごとに少し違います。画像は、文やカードが途中で切れない位置で切り取り、PNG のメタデータを取り除きます。コンテナ、ボリューム、ネットワーク、イメージのタグ、一時フォルダ、プロセスは、エラーの後でも最後に削除します。
 
 オプション：`--lang en|ja|zh-CN|all`、`--out DIR`（`DIR/<lang>/` に書き込むので、`docs/` に触れる前に比べられます）、`--only desktop-13-logs.png,...`、`--chrome PATH`（または `XEXAM_CHROME` / `CHROME_PATH`）、Docker が使えないときの `--backend cargo`（この場合、システムログの画像は撮りません）。Python 3.8+ と `openpyxl`、Node.js、Docker、Chrome または Chromium が必要です。`tools/screenshots/README.md` を参照してください。`--backend cargo` では、`backend/` と `ai-service/` を cargo でビルドし、架空のプロバイダーをローカルの Python のプロセスとして動かします。2 つのページは、カードが画像の中で終わるように、ページそのものの中で短くしてあります：問題集の管理では形式のガイドを最初の 2 つの部分だけ開いた状態にし、「Xexam について」では最新のバージョンの最初の項目だけを表示します。2 回か 3 回の実行を同時に行えます（ほかの実行に先にポートを取られたときは新しいポートでやり直し、`npm ci` はロックファイルの後ろで実行されます）。`python -I` ではなく `python tools/screenshots/retake.py` として起動してください：`-I` は、`openpyxl` がたいていインストールされているユーザーの site-packages を隠します。UI やバージョンを変えたら画像を撮り直し、目で確かめてから `docs/` に書き込んでください。
 

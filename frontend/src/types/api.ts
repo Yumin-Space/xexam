@@ -267,6 +267,10 @@ export interface BankSummary {
   owner: string | null;
   /** Whether the signed-in user may update / replace and delete this bank (an administrator, or a bank manager who owns it) */
   manageable: boolean;
+  /** v3.1: the bank category (null = uncategorised) */
+  categoryId: number | null;
+  /** v3.1: position inside its category (0 = not placed yet) */
+  sort: number;
   /** v1.1 (API-M1): present exactly for AI-generated / AI-imported banks */
   ai?: BankAi;
 }
@@ -288,6 +292,8 @@ export interface BankAi {
 
 export interface BanksResponse {
   banks: BankSummary[];
+  /** v3.1: bank categories in (sort, id) order (only those with visible banks for a plain user) */
+  categories: BankCategory[];
 }
 
 /** Response of POST /api/banks/delete */
@@ -396,6 +402,10 @@ export interface Settings {
   questionLang: QuestionLang;
   /** Practice: confetti for a right answer, claw marks for a wrong one, when an answer is checked (default on) */
   answerFx: boolean;
+  /** v3.1: notifications for this account (all devices); default true, not reset by "Reset" */
+  push: boolean;
+  /** v3.1: 'auto' or an IANA zone, used for the quiet hours 00:00–08:00 (Profile) */
+  tz: TzSetting;
 }
 
 // ---------------------------------------------------------------- v0.6: users and sign-in
@@ -429,6 +439,8 @@ export interface AuthState {
   user: AuthUser | null;
   /** Signed in: an opaque stamp of the shared question banks; it changes when a bank is imported, replaced or deleted */
   library?: string;
+  /** v3.1, signed in: stamp of the categories and the visible banks' places in them */
+  categories?: string;
   /**
    * Not signed in: the username of an enabled administrator that still has the default password `admin` (the sign-in page
    * says how to sign in for the first time, with that name), else null
@@ -501,6 +513,8 @@ export interface UserRow {
    * main service; always false for administrators). The row then shows the dark badge.
    */
   aiSuspended: boolean;
+  /** v3.1: number of device rows of the user */
+  devices?: number;
   /** v1.3: the last request of this user (minute precision); null = never active */
   lastActiveAt?: string | null;
   /** v1.3: the last sign-in IP; null while the sign-in info eye is closed or nothing was recorded */
@@ -1077,3 +1091,28 @@ export interface AiModelList {
 export interface GenItem { no: number; kind: 'single' | 'multi' | 'multiple'; stem: string;
   options: { text: string; correct: boolean }[]; explanation: string }
 export interface GenJobAnswer { job: GenJob; items?: GenItem[]; last?: number; gone?: number[] }
+
+// ---------------------------------------------------------------- v3.1
+/** `Settings.tz`: 'auto' (the device's zone) or an IANA zone name */
+export type TzSetting = string;
+
+export interface BankCategory { id: number; name: string; sort: number }
+
+export type DeviceState = 'active' | 'expired' | 'signedOut';
+export interface Device {
+  id: number; current: boolean; state: DeviceState; ua: string | null; app: boolean; createdAt: string;
+  signinAt: string | null; signinIp: string | null; signinLocation: GeoLocation | null;
+  activeAt: string; activeIp: string | null; activeLocation: GeoLocation | null; push: boolean;
+}
+export interface DevicesResponse { devices: Device[]; signinInfo: boolean; count?: number }
+export interface UserDevicesResponse extends DevicesResponse { user: { id: number; username: string; displayName: string | null } }
+export type PushPermission = 'granted' | 'denied' | 'default' | 'unsupported';
+export interface DeviceHello { tz: string | null; app: boolean; permission: PushPermission }
+export interface PushConfig { publicKey: string | null; keyId: string | null; courier: boolean }
+export interface PushSubscribeBody { endpoint: string; keys: { p256dh: string; auth: string }; expirationTime: number | null; keyId: string }
+export interface PushTestResponse { ok: true; courier: boolean }
+/** `timeLeft`: timed exam only, seconds left at this save (`remaining(limit, elapsed())`); null otherwise */
+export interface SavedReport { key: string; kind: AttemptKind; answered: number; total: number; startedAt: number; timeLeft: number | null }
+export type CategoryEdit =
+  | { op: 'create'; name: string } | { op: 'rename'; id: number; name: string } | { op: 'delete'; id: number }
+  | { op: 'order'; ids: number[] } | { op: 'bankOrder'; categoryId: number | null; ids: number[] };

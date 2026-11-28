@@ -32,6 +32,7 @@ import { renderStudy } from './pages/study.ts';
 import { renderUsers } from './pages/users.ts';
 import { boot, isRetryingStart, refreshAi, retryStartup, setRenderer } from './state/actions.ts';
 import { aiStatus, onCallBlockChange } from './state/ai.ts';
+import { captureInstallPrompt, registerServiceWorker } from './state/push.ts';
 import { installAiGen } from './state/ai-gen.ts';
 import { applySettings, watchSystemTheme } from './state/preferences.ts';
 import { S, canOpenBanks, isAdmin } from './state/store.ts';
@@ -243,4 +244,7 @@ document.addEventListener('visibilitychange', () => {
 });
 installTooltips();
 installQuizKeys();
+// v3.1: the install prompt is kept for the guide, and the push-only service worker is registered (secure contexts only)
+captureInstallPrompt();
+registerServiceWorker();
 void boot();

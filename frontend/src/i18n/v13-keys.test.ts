@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { afterEach, test } from 'node:test';
 import { ApiError } from '../api/client.ts';
 import { aiCodeText, errorText, genCodeText, knownAiCode } from './errors.ts';
-import { hasKey, setUiLang, t, type MsgKey } from './index.ts';
+import { hasKey, setUiLang, t, tn, type MsgKey } from './index.ts';
 
 afterEach(() => setUiLang('en'));
 
@@ -22,6 +22,7 @@ const ACTIONS = [
   'ai.settings.retention', 'ai.users.features', 'ai.admin.viewChats', 'ai.admin.clear', 'ai.gen.create', 'ai.import.create',
   'ai.system.connection', 'ai.system.paused', 'ai.system.resumed',
   'users.geoSource', 'ai.geo.test', 'ai.geo.save', 'ai.geo.enable', 'ai.geo.delete',
+  'auth.signoutDevice', 'auth.signoutOthers', 'users.signoutDevice', 'settings.pushOn', 'settings.pushOff', 'settings.pushTest', 'bank.categories', 'bank.categoryMove', 'system.pushVersion', 'system.pushAuth',
 ];
 const REASONS = ['idle', 'hard', 'badPassword', 'disabled', 'locked', 'changed', 'unknownUser'];
 
@@ -198,4 +199,66 @@ test('v1.3: one name for the analysis and one label for the hint + analysis swit
     // the caps tip names the analysis once
     assert.equal(t('ai.set.caps.tip' as MsgKey).split(name).length - 1, 1, lang);
   }
+});
+
+// ---------------------------------------------------------------- v3.1: Settings (notifications, install, devices), Profile time zone,
+// the device list and the devices dialog of User management
+const V31_KEYS: string[] = [
+  'settings.notify', 'settings.notify.account.label', 'settings.notify.account.desc', 'settings.notify.device',
+  'settings.notify.state.on', 'settings.notify.state.off', 'settings.notify.state.blocked',
+  'settings.notify.state.needsInstall', 'settings.notify.state.insecure', 'settings.notify.state.unsupported',
+  'settings.notify.state.iosOld', 'settings.notify.state.accountOff', 'settings.notify.state.serverOff',
+  'settings.notify.enable', 'settings.notify.enabling', 'settings.notify.test', 'settings.notify.testSent',
+  'settings.notify.testFailed', 'settings.notify.enableFailed', 'settings.notify.quiet', 'settings.notify.noCourier.admin',
+  'settings.notify.noCourier.user', 'settings.install', 'settings.install.done', 'settings.install.button',
+  'settings.install.insecure', 'settings.install.android', 'settings.install.ios', 'settings.install.iosOther',
+  'settings.install.guide', 'settings.devices', 'settings.devices.desc', 'settings.devices.othersOut',
+  'settings.devices.othersOut.confirmTitle', 'settings.devices.othersOut.confirmBody', 'settings.devices.othersOut.done',
+  'settings.devices.loadFailed', 'devices.thisDevice', 'devices.app', 'devices.unknown', 'devices.state.active',
+  'devices.state.expired', 'devices.state.signedOut', 'devices.push.on', 'devices.push.off', 'devices.signinAt',
+  'devices.activeAt', 'devices.signinIp', 'devices.signinPlace', 'devices.activeIp', 'devices.activePlace',
+  'devices.placeUnknown', 'devices.full', 'devices.signOutAria', 'devices.signOut.confirmTitle', 'devices.signOut.confirmBody',
+  'devices.signOut.ok', 'devices.signOut.done', 'devices.signOut.failed', 'devices.stopAria', 'devices.stop.confirmTitle',
+  'devices.stop.confirmBody', 'devices.stop.ok', 'devices.stop.done', 'devices.empty', 'users.act.devicesAria',
+  'users.devices.title', 'users.devices.note', 'users.devices.allOut', 'users.devices.allOut.confirmTitle',
+  'users.devices.allOut.confirmBody', 'users.devices.allOut.done', 'users.devices.loadFailed', 'profile.tz', 'profile.tz.desc',
+  'profile.tz.auto', 'profile.tz.autoUnknown', 'profile.tz.failed',
+];
+const V31_PLURALS = ['settings.devices.othersOut.done', 'users.devices.allOut.done'];
+
+test('every v3.1 key of Settings, Profile, User management, devices and the activity log exists in en, zh and ja', () => {
+  const missing: string[] = [];
+  for (const k of V31_KEYS) for (const l of ['en', 'zh', 'ja'] as const) if (!hasKey(l, k)) missing.push(`${l}:${k}`);
+  for (const k of V31_PLURALS) if (!hasKey('en', `${k}_one`)) missing.push(`en:${k}_one`);
+  assert.deepEqual(missing, []);
+  assert.equal(new Set(V31_KEYS).size, V31_KEYS.length, 'the v3.1 list has a duplicate');
+});
+
+test('v3.1 zh and ja texts are translated (none is the English text)', () => {
+  const same: string[] = [];
+  for (const k of V31_KEYS) {
+    setUiLang('en');
+    const en = t(k as MsgKey);
+    for (const l of ['zh', 'ja'] as const) {
+      setUiLang(l);
+      const text = t(k as MsgKey);
+      if (text === en) same.push(`${l}:${k}`);
+    }
+  }
+  assert.deepEqual(same, []);
+});
+
+test('v3.1 device texts: the stop wording for an expired device and the quiet hours are the contract ones', () => {
+  setUiLang('en');
+  assert.equal(t('devices.state.expired'), 'Sign-in expired');
+  assert.equal(t('devices.stop.ok'), 'Stop');
+  assert.equal(t('settings.notify.quiet'), 'No notifications between 00:00 and 08:00 in your time zone (Profile).');
+  assert.equal(tn('settings.devices.othersOut.done', 1), 'Signed out 1 device.');
+  assert.equal(tn('settings.devices.othersOut.done', 3), 'Signed out 3 devices.');
+  assert.equal(tn('users.devices.allOut.done', 1, { name: 'a@example.com' }), 'Signed out 1 device of a@example.com.');
+  setUiLang('zh');
+  assert.match(t('settings.notify.quiet'), /00:00/);
+  assert.match(t('settings.notify.quiet'), /08:00/);
+  setUiLang('ja');
+  assert.match(t('profile.tz.desc'), /00:00.*08:00/);
 });

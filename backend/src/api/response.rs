@@ -65,6 +65,20 @@ pub const MSG_AI_BANK_SHEETS: &str = "AI 题集只有一个工作表，请删除
 /// `"code"` of the [`MSG_AI_SERVICE_OFF`] answer (the frontend translates by it)
 pub const CODE_AI_SERVICE_OFF: &str = "ai.serviceOff";
 
+// v3.1 (each answer carries a `"code"`, see `AppError::Coded`; the frontend translates by the message)
+pub const MSG_CATEGORY_NAME_BAD: &str = "分类名称需要 1–60 个字，不能包含控制字符。";
+pub const MSG_CATEGORY_TAKEN: &str = "已经有同名的分类了。";
+pub const MSG_CATEGORY_NOT_FOUND: &str = "这个分类不存在（可能已被删除），请刷新页面后再试。";
+pub const MSG_CATEGORY_ORDER: &str = "分类或题库的顺序已经变了，请刷新页面后再试。";
+pub const MSG_DEVICE_NOT_FOUND: &str = "这台设备不存在（可能已退出登录），请刷新页面后再试。";
+pub const MSG_DEVICE_CURRENT: &str = "不能在这里退出当前这台设备，请用菜单里的「退出登录」。";
+pub const MSG_PUSH_BAD_ENDPOINT: &str = "这个浏览器的推送地址不受支持。";
+pub const MSG_PUSH_BAD_KEYS: &str = "推送订阅的密钥不对。";
+pub const MSG_PUSH_STALE_KEY: &str = "推送密钥已更换，请重新开启通知。";
+pub const MSG_PUSH_OFF: &str = "你的账号已关闭通知，请先在设置里打开。";
+pub const MSG_PUSH_NO_DEVICE: &str = "这台设备还没有开启通知。";
+pub const MSG_PUSH_TEST_BUSY: &str = "测试通知发得太频繁了，请稍后再试。";
+
 pub fn make(status: StatusCode, ctype: &'static str, body: Vec<u8>, head_only: bool) -> Response {
     let len = body.len();
     let mut resp = Response::new(if head_only {
@@ -191,6 +205,11 @@ pub fn error_response(e: AppError, head_only: bool) -> Response {
         AppError::SessionExpired => json_resp(
             StatusCode::UNAUTHORIZED,
             &json!({ "error": super::auth::MSG_SESSION_EXPIRED, "code": "auth.expired" }),
+            head_only,
+        ),
+        AppError::Coded { status, msg, code } => json_resp(
+            StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+            &json!({ "error": msg, "code": code }),
             head_only,
         ),
         AppError::TooManyLogins { retry_after } => {

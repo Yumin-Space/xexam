@@ -40,11 +40,22 @@ Every route has one access level (the route table `ROUTES` in `backend/src/api/a
 | POST | `/api/reset` | Signed in | Clear your study records | Yes |
 | POST | `/api/settings` | Signed in | Change your interface settings *(v0.5)* | Yes |
 | POST | `/api/settings/reset` | Signed in | Restore your default interface settings *(v0.5)* | Yes |
+| GET | `/api/devices` | Signed in | The caller's signed-in devices *(v3.1)* | No |
+| POST | `/api/devices/hello` | Signed in | The app's start report (time zone, installed or not, notification permission); links an older session to its device *(v3.1)* | Yes (the device row) |
+| POST | `/api/devices/signout` | Signed in | Sign one of your other devices out *(v3.1)* | Yes |
+| POST | `/api/devices/signout-others` | Signed in | Sign out all your other devices *(v3.1)* | Yes |
+| GET | `/api/push/config` | Signed in | The server's public push key and whether a courier is connected *(v3.1)* | No |
+| POST | `/api/push/subscribe` | Signed in | Store this device's push subscription *(v3.1)* | Yes |
+| POST | `/api/push/test` | Signed in | Queue a test notification for this device *(v3.1)* | Yes (one outbox row) |
+| POST | `/api/study/saved` | Signed in | Report an unfinished practice or exam *(v3.1)* | Yes |
+| POST | `/api/study/saved/discard` | Signed in | Drop that report *(v3.1)* | Yes |
 | GET | `/api/imports` | Bank manager | The last 12 import records (a bank manager: of their own banks) | No |
 | POST | `/api/upload` | Bank manager | Upload an .xlsx file and get a **preview** and a one-time confirmation code; optional header `X-Bank-Target` *(v0.5)* | **No** (staged in memory only) |
 | POST | `/api/import/confirm` | Bank manager | Confirm the import | **Yes** (one transaction) |
 | POST | `/api/import/cancel` | Bank manager | Cancel your pending import | No |
 | POST | `/api/banks/delete` | Bank manager | Delete a question bank (optionally with its study data) *(v0.5)* | Yes |
+| POST | `/api/banks/categories` | Admin | Create, rename, delete and reorder bank categories and the banks inside them *(v3.1)* | Yes |
+| POST | `/api/banks/category` | Admin | Move banks to a category or out of one *(v3.1)* | Yes |
 | GET | `/api/users` | Admin | Every account, with its permissions and sign-in lock *(v0.6)* | No |
 | GET | `/api/users/records?user=<int>` | Admin | Another user's study records, read only *(v2.7)* | No (one activity row) |
 | GET | `/api/users/record?user=<int>&id=<int>` | Admin | One study record of another user with its detail, read only *(v2.7)* | No (one activity row) |
@@ -53,6 +64,8 @@ Every route has one access level (the route table `ROUTES` in `backend/src/api/a
 | POST | `/api/users/password` | Admin | Give another user a new initial password *(v0.6)* | Yes |
 | POST | `/api/users/delete` | Admin | Delete a user and their study data *(v0.6)* | Yes |
 | POST | `/api/users/unlock` | Admin | Clear a user's sign-in lock *(v0.6)* | No (memory only) |
+| GET | `/api/users/devices?user=<int>` | Admin | The devices of a user, read only *(v3.1)* | No |
+| POST | `/api/users/devices/signout` | Admin | Sign one or all devices of a user out *(v3.1)* | Yes |
 | GET | `/api/logs` | Admin | The recent lines of the system log *(v0.7)* | No |
 | POST | `/api/shutdown` | Admin | Shut down the program (available only when running on the local machine; always 403 in Docker) | No |
 
@@ -67,6 +80,7 @@ Every route has one access level (the route table `ROUTES` in `backend/src/api/a
 - `Cache-Control: no-store` and `X-Content-Type-Options: nosniff`, and no `Server` header.
 - JSON is UTF-8, and Japanese and Chinese characters are not escaped as `\uXXXX`. The separators are `", "` and `": "` (a space after the colon), and the key order is fixed (the order shown in this document and in [openapi.yaml](openapi.yaml)). **This is part of the contract**: the golden tests (`backend/tests/api_golden.rs`) compare the JSON byte for byte with the responses of the old version.
 - Errors look like `{"error": "<reason>"}`. The reason is a Chinese sentence that can be shown to the user as is (the frontend translates it into the interface language); section 4 lists every one of them with its English meaning. Only the low-level answers of the request layer keep the short English text of the old version: `bad content type` (415), `too large` (413), `bad json` (400), `not found` (404) and `method not allowed` (405). The 429 answer of a sign-in lock adds one key, `retryAfter`.
+- *(v3.1)* New error answers carry a second key: `{"error": "<Chinese message>", "code": "<code>"}` (for example `banks.categoryTaken`, `devices.current`, `push.staleKey`). The `code` is stable and meant for programs; the message is the sentence for people. The codes are listed with the messages in section 4.
 - The backend never puts exception names, file paths or SQLite error messages in a response; the details go to the log only.
 
 ## 3. Guards (every request goes through them first)
@@ -156,12 +170,13 @@ Public. Signed out (no cookie, or a session that is not valid any more):
 Signed in (also while the account must choose a new password):
 
 ```json
-{"user": {"id": 1, "username": "admin", "displayName": "Ann", "needsName": false, "role": "admin", "mustChangePassword": false, "canManageBanks": true, "canDownloadBanks": true, "aiAllowed": true}, "library": "3f0c9a7d5e21b4c88a9d0e6f17b2c453", "aiAvailable": true, "aiService": {"connected": true, "stopped": false, "lastSeen": 1789900000, "version": "0.9", "enabled": true, "link": true}}
+{"user": {"id": 1, "username": "admin", "displayName": "Ann", "needsName": false, "role": "admin", "mustChangePassword": false, "canManageBanks": true, "canDownloadBanks": true, "aiAllowed": true}, "library": "3f0c9a7d5e21b4c88a9d0e6f17b2c453", "categories": "9b1e7c3a4d5f60821c7e0a4b3d9f5e12", "aiAvailable": true, "aiService": {"connected": true, "stopped": false, "lastSeen": 1789900000, "version": "0.9", "enabled": true, "link": true}}
 ```
 
 - *(v2.6)* `username` is the **login** (since v2.6 an e-mail address for every account the screens create; older logins such as `admin` stay valid). `displayName` is the user's own **username**, the name the screens show to everyone (the leaderboard, the greeting, the top bar, the menu), or `null` while it is not set; `needsName` is `true` exactly then. A session with `needsName` (or `mustChangePassword`) is held at the setup pages: see "Session and access level" in section 3.
 - `role` is `admin` or `user`. `canManageBanks` *(v0.7)* is `true` for every administrator, and for a plain user with the **Bank manager** permission. `canDownloadBanks` *(v1.6)* is `true` for every administrator, and for a plain user with the **Download banks** permission. `aiAllowed` *(v0.8)* is `true` for every administrator, and for a plain user with **AI+**; whether the user can use AI right now is in `GET /api/ai/status`. The same `user` object is in the answers of sign-in and of the password change.
 - `library` is an opaque stamp of the question banks the user may see: 32 hexadecimal digits, a digest that publishes none of the numbers it is made of. It changes whenever one of those banks is imported, replaced or deleted (also by the `import` command, from another process), and *(v0.7)* whenever the banks the user may see or manage change (an administrator assigned banks or changed the permission, a bank changed owner). Open pages compare it and re-read the banks when it changes. For a user limited to some banks, the stamp is made only of those banks: it neither reveals nor follows the size, the question count or the update times of the banks they cannot see.
+- `categories` *(v3.1)*, right after `library`, signed in only: an opaque stamp (32 hexadecimal digits) of the categories and the places of the banks the user can see in them. It changes when an administrator creates, renames, deletes or reorders categories or moves banks, and also when the set of visible banks changes. Open pages compare it and re-read `GET /api/banks` when it changes; `library` is not affected by category edits.
 
 - `aiAvailable` *(v0.8, round 2)* is `true` while AI+ is available: ai-service has reported to the backend less than 60 seconds ago (and did not say it was stopping) **and** its **AI+ feature** switch in AI settings is on. It is the same for every signed-in user. The User management page uses it to decide whether to show the AI+ switches, and the backend uses it to refuse them (`POST /api/users/update` and `create`, below).
 - `aiService` *(v0.8, round 2)* is in the answer for **administrators only** (a plain user's answer has no such key). It is what the backend knows about ai-service, from its last report (the backend never calls ai-service; ai-service reports every 25 seconds, at once after a change, and once when it stops: section 6, `POST /internal/ai/heartbeat`). The report is kept in memory, so after a backend restart `lastSeen` is `null` until the next report arrives (within 25 seconds).
@@ -214,7 +229,7 @@ Signed in, also while the name is the only thing missing; while the account must
 Admin. Every account, ordered by id:
 
 ```json
-{"users": [{"id": 2, "username": "cook@example.com", "displayName": "Cook", "role": "user", "disabled": false, "createdAt": "2026-11-10 14:00", "lastLoginAt": "2026-11-10 15:02", "mustChangePassword": false, "records": 12, "banks": [1, 3], "newBanks": true, "canManageBanks": true, "canDownloadBanks": false, "ai": true, "ownedBanks": [3], "lock": null, "aiSuspended": false}], "aiAvailable": true}
+{"users": [{"id": 2, "username": "cook@example.com", "displayName": "Cook", "role": "user", "disabled": false, "createdAt": "2026-11-10 14:00", "lastLoginAt": "2026-11-10 15:02", "mustChangePassword": false, "records": 12, "banks": [1, 3], "newBanks": true, "canManageBanks": true, "canDownloadBanks": false, "ai": true, "ownedBanks": [3], "lock": null, "aiSuspended": false, "devices": 2}], "aiAvailable": true}
 ```
 
 - `displayName` *(v2.6)*, after `username` (the login): the username the user chose, or `null` while it is not set. It is read only here; only the user sets it (`POST /api/auth/name`).
@@ -226,6 +241,7 @@ Admin. Every account, ordered by id:
 - `canDownloadBanks` *(v1.6)*, after `canManageBanks`: the stored **Download banks** permission (default `false`). It is kept across role changes like `canManageBanks`, matters only while the account is a plain user, and administrators may always download.
 - `ai` *(v0.8)*: the stored **AI+ feature** switch of the user. It matters only for plain users (administrators may always use AI while it is on) and only while the AI+ feature is on in AI settings. It is kept when AI+ is not available.
 - `aiSuspended` *(v0.8, round 2)*, after `lock`: `true` when an administrator paused the user's **AI+ feature** in AI settings (section 5, `suspend`; the screens say Pause / Paused, the JSON keeps the name `suspended`). It comes from ai-service's last report, so it is `false` for everybody while the backend has no report (for example right after a restart) and always `false` for administrators, who cannot be suspended. It is separate from `ai`: a pause does not change the stored switch.
+- `devices` *(v3.1)*, the last key (after `aiSuspended`): the number of device rows of the user (section 4.10 of [database.md](database.md)). The user's devices themselves are in `GET /api/users/devices`.
 - `aiAvailable` *(v0.8, round 2)*, a top-level key next to `users`: the same value as in `GET /api/auth/state`. **Every answer that returns the user list** has it (`create`, `update`, `password`, `delete`, `unlock` too).
 - `ownedBanks` *(v0.7)*: the ids of the banks the user imported as new banks (they own them), ascending.
 - `lock`: the in-memory sign-in state of the account. `null` while it is in the first round and not locked; otherwise:
@@ -303,7 +319,7 @@ A hotspot question in `zh` / `en` / `ja` has one more key, `choices`: the option
 Signed in. A question bank is one imported workbook. The banks the user may see, ordered by `id`:
 
 ```json
-{"banks": [{"id": 1, "name": "Kitchen basics", "filename": "Kitchen basics.xlsx", "legacy": true, "createdAt": "2026-11-10 14:00", "updatedAt": "2026-11-10 15:00", "total": 5, "inactive": 0, "sheets": [{"name": "Cooking", "usable": 3, "inactive": 0}, {"name": "Safety", "usable": 2, "inactive": 0}], "studied": 4, "records": 3, "ownerId": 1, "owner": "admin", "manageable": true}]}
+{"banks": [{"id": 1, "name": "Kitchen basics", "filename": "Kitchen basics.xlsx", "legacy": true, "createdAt": "2026-11-10 14:00", "updatedAt": "2026-11-10 15:00", "total": 5, "inactive": 0, "sheets": [{"name": "Cooking", "usable": 3, "inactive": 0}, {"name": "Safety", "usable": 2, "inactive": 0}], "studied": 4, "records": 3, "ownerId": 1, "owner": "admin", "manageable": true, "categoryId": 1, "sort": 1}], "categories": [{"id": 1, "name": "Everyday life", "sort": 0}]}
 ```
 
 - `name` is the file name without `.xlsx` when the bank was created (` (2)`, ` (3)`, … are appended when another bank already has that name); updating the bank changes `filename` and `updatedAt`, never `name`.
@@ -312,6 +328,9 @@ Signed in. A question bank is one imported workbook. The banks the user may see,
 - `studied` = how many of the bank's questions (active or not) have statistics; `records` = how many study records name this bank. For an administrator they count every user's data (what a deletion with study data removes); for everyone else *(v0.7)* only their own.
 - `ownerId` / `owner` *(v0.7)*: the id and username of the user who imported the bank as a new bank (banks from before v0.7 belong to the first administrator). Only administrators get both; any other user gets `ownerId` only for their own banks (`null` otherwise) and `owner` always `null`, so the bank list never names other accounts.
 - `manageable` *(v0.7)*: whether this user may update and delete the bank (administrators: always; bank managers: their own banks; others: never).
+- `categoryId` and `sort` *(v3.1)*, after `manageable`: the category of the bank (`null` = uncategorised) and its position in its group (1 to n once placed; `0` = not placed yet). The banks of a group are ordered by `((sort = 0), sort, id)`, so a bank that was never placed comes after the placed ones. Moving a bank never changes `updatedAt`. The AI-bank key `ai` (below) stays last.
+- `categories` *(v3.1)*, a top-level key after `banks`: `[{"id": 1, "name": "Everyday life", "sort": 0}]`, ordered by `(sort, id)`. An administrator gets every category; everyone else only the categories that hold at least one bank they can see (empty when no category exists, and then every page looks as before). Section 4.11 of [database.md](database.md).
+- The `ETag` of this answer (section 4, `GET /api/bank`) changes with the categories and with every bank's place too, so a page that is open refreshes when only the order changed; the `library` stamp does not (it follows the questions only).
 
 ### `GET /api/dashboard`
 *(v2.5; v2.6)* Signed in; read only (it writes nothing and takes no body). The two blocks of the Home dashboard, from two queries:
@@ -448,7 +467,7 @@ Signed in. Clears the caller's study records (with their per-question detail) an
 Signed in. Settings are stored in the database per user (they survive container restarts and updates, clearing the browser cache and switching browsers):
 
 ```json
-{"theme": "system", "uiLang": "en", "autoAdvance": false, "questionLang": "en", "answerFx": true}
+{"theme": "system", "uiLang": "en", "autoAdvance": false, "questionLang": "en", "answerFx": true, "push": true, "tz": "auto"}
 ```
 
 | Key | Values | Default |
@@ -458,10 +477,14 @@ Signed in. Settings are stored in the database per user (they survive container 
 | `autoAdvance` | `true` · `false` | `false` |
 | `questionLang` | `ja` · `zh` · `en` | `en` (*v2.6*; `ja` before) |
 | `answerFx` | `true` · `false` | `true` (*v3.0*) |
+| `push` | `true` · `false` | `true` (*v3.1*): notifications for this account, on every device |
+| `tz` | `auto` or an IANA zone name (1–64 characters of `A–Z a–z 0–9 _ + - /`, known to the server) | `auto` (*v3.1*): the time zone of the quiet hours; `auto` = the zone the device reported |
 
 *(v2.6)* `questionLang` is the **default question language**: every exam or practice starts in it, and the language switch of the exam page changes only that session (kept with the saved session in the browser, never posted here). A user who never stored a `questionLang` gets the new default `en`; a stored value is kept.
 
-`GET` returns the defaults merged with the stored values (a stored value that is not valid is ignored). `POST /api/settings` takes any subset of these keys and returns the full settings; unknown keys are ignored; a known key with an invalid value → **400** `设置的值不对。` ("A setting has an invalid value.") and nothing is written. `POST /api/settings/reset` (body `{}` or empty) restores `theme`, `uiLang`, `autoAdvance` and `answerFx` to their defaults, keeps `questionLang`, and returns the full settings.
+*(v3.1)* `push` is the account's notification switch (a missing row means on; Settings → **Notifications**), `tz` the time zone for the quiet hours 00:00–08:00 (Profile → **Time zone**). Both are kept by `POST /api/settings/reset`. The answer lists the seven keys in the order of the table.
+
+`GET` returns the defaults merged with the stored values (a stored value that is not valid is ignored). `POST /api/settings` takes any subset of these keys and returns the full settings; unknown keys are ignored; a known key with an invalid value → **400** `设置的值不对。` ("A setting has an invalid value.") and nothing is written. `POST /api/settings/reset` (body `{}` or empty) restores `theme`, `uiLang`, `autoAdvance` and `answerFx` to their defaults, keeps `questionLang`, `push` and `tz`, and returns the full settings.
 
 ### `GET /api/logs` *(v0.7)*
 Admin. The system log the **System log** page shows: the most recent 2000 lines the backend logged since it started, kept in memory only (empty again after a restart; nothing is written to the database). They are the lines `docker compose logs backend` shows (behind the same `XEXAM_LOG` filter), plus the startup and shutdown status lines, *(v0.8)* plus the lines ai-service sends (`target` `xexam_ai_service`, the message starting with `AI: `; they are not in `docker compose logs backend`). Log lines name users by their username (`user "admin" updated user "alex"`), never by id and never a typed name that has no account, and they never contain a password, a token, a cookie value or question text.
@@ -486,6 +509,64 @@ Lines that anyone can cause without signing in (rejected requests, failed sign-i
 
 ### `POST /api/shutdown`
 Admin. Available only when started with `--allow-shutdown` (on Windows, by double-clicking `start.bat`); otherwise **403** `在 Docker 里请用 docker compose stop 停止容器。` ("When Xexam runs in Docker, stop the containers with docker compose stop."). Always 403 in Docker; use `docker compose stop` there.
+
+### Devices *(v3.1)*
+
+A device is one browser of one user, recognised by the random cookie `xexam_did` (section 4.10 of [database.md](database.md)). Every answer that lists devices uses this object (`DeviceJson`, keys in this order):
+
+```json
+{"id": 12, "current": true, "state": "active", "ua": "Mozilla/5.0 (iPhone; …)", "app": true, "createdAt": "2026-11-28 09:00:00", "signinAt": "2026-11-28 09:00:00", "signinIp": "203.0.113.7", "signinLocation": {"country": "XX", "region": null, "city": null}, "activeAt": "2026-11-28 10:15:42", "activeIp": "203.0.113.7", "activeLocation": null, "push": true}
+```
+
+- `state`: `active` (the device has a session that has not run out), `signedOut` (no such session and the device was signed out explicitly) or `expired` (otherwise: the sign-in ran out; the device stays in the list and keeps its notifications until it was unused for 30 days). `current` is `true` only for the device of the requesting session (read from the session row, never from the cookie).
+- `signinIp` / `activeIp` and the two locations are `null` while the sign-in info eye is closed (for the user's own list and for administrators alike). `ua` is the cleaned User-Agent; the page turns it into a name. `push`: the device has a subscription **and** the account switch is on **and** the subscription is eligible (user enabled, device not signed out and used within 30 days, current server key).
+- The list is ordered: the current device first, then by last activity, newest first.
+
+**`GET /api/devices`** (signed in) → `{"devices": [DeviceJson], "signinInfo": true|false}`: the caller's own devices in every state.
+
+**`POST /api/devices/hello`** (signed in) `{"tz": string|null, "app": bool, "permission": "granted"|"denied"|"default"|"unsupported"}` → `{"device": DeviceJson}`. The app sends it at every start after sign-in and when it returns to the foreground after an hour or more. `tz` is stored when it is a valid IANA zone name (else `null`), `app` says whether it runs as the installed app. A `permission` other than `granted` deletes this device's push subscription (activity `settings.pushOff`). A session made before v3.1 (or by an older binary) is linked to its device here, and the answer carries the new `xexam_did` cookie when the browser had none. If another user signed in last with this browser, that user's push subscription on it and the pushes queued for it are deleted here (and at sign-in): a browser belongs to the account that signed in last. A missing or wrongly typed key → **400** `请求的格式不对。`.
+
+**`POST /api/devices/signout`** (signed in) `{"id": <int>}` → `{"devices": [...], "signinInfo": bool}`. Signs one of the caller's other devices out: its sessions, its push subscription and its queued pushes are deleted and the row is kept as `signedOut`. **404** `这台设备不存在（可能已退出登录），请刷新页面后再试。` (`devices.notFound`) when it is not the caller's; **409** `不能在这里退出当前这台设备，请用菜单里的「退出登录」。` (`devices.current`) for the current device. Activity `auth.signoutDevice`.
+
+**`POST /api/devices/signout-others`** (signed in; body `{}`) → `{"devices": [...], "signinInfo": bool, "count": <int>}`: signs out every other device (`count` = those that had a session or a subscription). Activity `auth.signoutOthers`.
+
+**`GET /api/users/devices?user=<int>`** (admin; `user` = 1 to 18 digits) → `{"user": {"id", "username", "displayName"}, "devices": [...], "signinInfo": bool}`; **404** `这个用户不存在…` for an unknown user. It records nothing. Administrators see the push state of the devices, but there is no route to turn a user's notifications on or off.
+
+**`POST /api/users/devices/signout`** (admin) `{"user": <int>, "id": <int>|null}` → the same answer as the `GET` above. With `id`, signs that device of that user out (**404** `devices.notFound` if it is not theirs; for the caller's own current device **409** `devices.current`); with `id` `null`, signs out every device of the user (every device except the current one when the user is the caller). Activity `users.signoutDevice` (`{"all": bool, "count": <int>}`, object: the user's login).
+
+### Push *(v3.1)*
+
+How it works is in section 4.12 of [database.md](database.md) and section 5 of [architecture.md](architecture.md). The browser keys never leave the backend, and a request may not carry anything but the keys below.
+
+**`GET /api/push/config`** (signed in; does not count as activity) → `{"publicKey": "<87 characters, base64url of the 65-byte uncompressed P-256 point>"|null, "keyId": "<16 hex>"|null, "courier": true|false}`. `publicKey` is `null` while push is off (the key file could not be read); Settings then says the server cannot send notifications, and the guide replaces its notifications step with the same sentence. `courier` is `true` when ai-service polled for push jobs within the last 60 seconds.
+
+**`POST /api/push/subscribe`** (signed in) `{"endpoint": "https://…", "keys": {"p256dh": "…", "auth": "…"}, "expirationTime": <number>|null, "keyId": "<16 hex>"}` → `{"device": DeviceJson}`. Checks, in this order: the shape (**400** `请求的格式不对。`); `keyId` equals the server's current key id (**409** `推送密钥已更换，请重新开启通知。`, `push.staleKey`); the endpoint is one of the allowed push services (**400** `这个浏览器的推送地址不受支持。`, `push.badEndpoint`: `https`, port 443 only, no user info, no IP address, and a host of `fcm.googleapis.com`, `updates.push.services.mozilla.com`, `web.push.apple.com`, `*.push.apple.com` or `*.notify.windows.com`); the keys decode (**400** `推送订阅的密钥不对。`, `push.badKeys`: `p256dh` is a valid 65-byte point, `auth` is 16 bytes; base64url with or without padding); the account switch is on (**409** `你的账号已关闭通知，请先在设置里打开。`, `push.off`). A device has one subscription: a new one replaces the old; an endpoint that was on another device (or user) moves to this one; a user keeps at most 10. A re-confirmation of the same endpoint within a day writes nothing. A new subscription records `settings.pushOn`. The session must have a device (call `hello` first), else **400**.
+
+**`POST /api/push/test`** (signed in; body `{}`) → `{"ok": true, "courier": true|false}`: queues one test notification for this device at once (quiet hours do not apply). **409** `你的账号已关闭通知，请先在设置里打开。` (`push.off`); **409** `这台设备还没有开启通知。` (`push.noDevice`); **429** `测试通知发得太频繁了，请稍后再试。` (`push.testBusy`: one per device every 10 seconds). Activity `settings.pushTest`.
+
+### Saved-session marker *(v3.1)*
+
+**`POST /api/study/saved`** (signed in) `{"key": "<32 lower-case hex>", "kind": "exam"|"practice", "answered": <int>, "total": <int>, "startedAt": <int>, "timeLeft": <int>|null}` → `{"ok": true}`. The app reports an unfinished session (at most once a minute per session, and when the page is hidden). `total` 1 to 100000, `answered` 0 to `total`, `startedAt` the browser's start time in unix seconds, `timeLeft` 0 to 36000 seconds for a timed exam (the seconds left at this save; the clock runs only while the exam is open) and `null` otherwise. Any other shape → **400** `请求的格式不对。`. The server keeps one marker per user and key and one per browser: a new session replaces the browser's older one; the reminders restart at every save. Nothing is written for a disabled account. Not logged. A marker disappears with the successful `POST /api/attempt` of that session.
+
+**`POST /api/study/saved/discard`** (signed in) `{"key": "<32 lower-case hex>"}` → `{"ok": true}`: deletes the caller's marker (no marker is not an error). Not logged.
+
+### Question bank categories *(v3.1)*
+
+Categories group the banks on one level; only administrators change them. `GET /api/banks` returns them (below). Both POST routes answer with the same body as `GET /api/banks` for the caller, fresh, without an `ETag`.
+
+**`POST /api/banks/categories`** (admin) — one operation per call:
+
+| Body | Effect | Errors |
+|---|---|---|
+| `{"op": "create", "name": "…"}` | A new category at the end. The name is cleaned (runs of whitespace become one space, trimmed) and must have 1 to 60 characters | **400** `分类名称需要 1–60 个字，不能包含控制字符。` (`banks.categoryName`); **409** `已经有同名的分类了。` (`banks.categoryTaken`, compared ignoring case) |
+| `{"op": "rename", "id": <int>, "name": "…"}` | Renames it | the same, and **404** `这个分类不存在（可能已被删除），请刷新页面后再试。` (`banks.categoryNotFound`) |
+| `{"op": "delete", "id": <int>}` | Deletes the category; its banks become uncategorised, appended to the end of that group, which is renumbered; the other categories are renumbered | **404** `banks.categoryNotFound` |
+| `{"op": "order", "ids": [<int>]}` | Sets the order: `ids` must be exactly the ids of all categories | **409** `分类或题库的顺序已经变了，请刷新页面后再试。` (`banks.categoryOrder`) |
+| `{"op": "bankOrder", "categoryId": <int>\|null, "ids": [<int>]}` | Sets the order of the banks in that category (`null` = uncategorised): `ids` must be exactly the banks now in it | **404** `banks.categoryNotFound`; **409** `banks.categoryOrder` |
+
+Activity `bank.categories` (`{"op", "name"}`).
+
+**`POST /api/banks/category`** (admin) `{"ids": [<int>, …1000], "categoryId": <int>|null}`: moves the banks (distinct ids) to the category, appended to its end in the given order (`null` = uncategorised); the groups they left are renumbered. **404** `这个题库不存在…` (`MSG_BANK_NOT_FOUND`) for an unknown bank, **404** `banks.categoryNotFound` for an unknown category. Moving a bank never changes its `updatedAt`. Activity `bank.categoryMove` (`{"count", "categoryId"}`).
 
 ### Error messages
 Like every backend message they are Chinese and stable (the frontend translates them). The ones every route can give are in section 3; the upload and parser messages (why a file was rejected, why a row is unreadable) are in `frontend/src/i18n/server-messages.ts` with their translations.
@@ -524,7 +605,19 @@ Like every backend message they are Chinese and stable (the frontend translates 
 | 409 | `不能对自己的账户做这个操作。` | You cannot do this to your own account. | Users: update, password, delete |
 | 409 | `至少要保留一个启用的管理员。` | At least one enabled administrator must remain. | Users: update, delete |
 | 409 | `请先在 AI 设置里开启 AI+ 功能。` (with `"code": "ai.serviceOff"`) | Turn on the AI+ feature in AI settings first. | Users: update with `ai`, create with `ai: true`, while AI+ is not available *(v0.8)* |
+| 400 | `分类名称需要 1–60 个字，不能包含控制字符。` (with `"code": "banks.categoryName"`) | A category name needs 1–60 characters and no control characters. | Categories: create, rename *(v3.1)* |
+| 400 | `这个浏览器的推送地址不受支持。` (`push.badEndpoint`) | This browser's push address is not supported. | `POST /api/push/subscribe` *(v3.1)* |
+| 400 | `推送订阅的密钥不对。` (`push.badKeys`) | The keys of the push subscription are not valid. | `POST /api/push/subscribe` *(v3.1)* |
+| 404 | `这个分类不存在（可能已被删除），请刷新页面后再试。` (`banks.categoryNotFound`) | This category does not exist (it may have been deleted). Reload the page and try again. | Categories *(v3.1)* |
+| 404 | `这台设备不存在（可能已退出登录），请刷新页面后再试。` (`devices.notFound`) | This device does not exist (it may have been signed out). Reload the page and try again. | Devices: sign out *(v3.1)* |
+| 409 | `已经有同名的分类了。` (`banks.categoryTaken`) | A category with this name already exists. | Categories: create, rename *(v3.1)* |
+| 409 | `分类或题库的顺序已经变了，请刷新页面后再试。` (`banks.categoryOrder`) | The order of the categories or banks has changed. Reload the page and try again. | Categories: order, bankOrder *(v3.1)* |
+| 409 | `不能在这里退出当前这台设备，请用菜单里的「退出登录」。` (`devices.current`) | You cannot sign out the device you are using here. Use Sign out in the menu. | Devices: sign out *(v3.1)* |
+| 409 | `推送密钥已更换，请重新开启通知。` (`push.staleKey`) | The server's push key has changed. Enable notifications again. | `POST /api/push/subscribe` *(v3.1)* |
+| 409 | `你的账号已关闭通知，请先在设置里打开。` (`push.off`) | Notifications are off for your account. Turn them on in Settings first. | `POST /api/push/subscribe`, `POST /api/push/test` *(v3.1)* |
+| 409 | `这台设备还没有开启通知。` (`push.noDevice`) | Notifications are not enabled on this device yet. | `POST /api/push/test` *(v3.1)* |
 | 429 | `登录失败次数太多，请稍后再试。` | Too many failed attempts. Please try again later. | Sign-in, password change (with `retryAfter`) |
+| 429 | `测试通知发得太频繁了，请稍后再试。` (`push.testBusy`) | Test notifications were sent too often. Try again in a moment. | `POST /api/push/test` *(v3.1)* |
 | 500 | `写入数据库失败，题库没有任何改动。` | Writing to the database failed. The question bank was not changed. | Confirm |
 | 500 | `服务器内部出错，请稍后再试。` | An internal server error occurred. Please try again later. | Any route |
 
@@ -556,6 +649,18 @@ Like every backend message they are Chinese and stable (the frontend translates 
 - **`xlsx`** keeps all six columns in place and leaves the cells of unticked languages empty (the header row is always full; without `en` the file cannot be imported again). **`docx`** holds only the chosen languages, always English, then Chinese, then Japanese.
 - **File name**: all three languages give `<stem>.<ext>`; a subset gives `<stem>_<codes>.<ext>` with the codes in en, zh, ja order joined by `-` (for example `Garden_en-zh.docx`); the ASCII fallback is `xexam-bank-<id>_<codes>.<ext>`.
 - **Activity**: `bank.download` has the detail `{"format", "langs": ["en", "zh", "ja"] (the chosen subset, in that order), "sheets", "questions"}`.
+
+### v3.1 additions to the public routes *(v3.1)*
+
+- **`POST /api/auth/login`**: besides `xexam_session` (still the first `Set-Cookie`) and `xexam_device`, the answer sets a third cookie, `xexam_did=<43 characters>; HttpOnly; SameSite=Strict; Path=/; Max-Age=34560000` (400 days), with the same `Secure` rule. It is the random identifier of this browser: a sign-in finds or creates the user's device row for it, records the sign-in on the row and links the new session to it. The database stores only its SHA-256, and it is not a credential. A browser keeps it across sign-outs, so the same device row is reused. The `xexam_did` cookie is only ever created where the `Secure` decision is reliable: at sign-in, and on a `POST` that carries an `Origin` (the app's `POST /api/devices/hello` at every start).
+- **`POST /api/auth/logout`**: deletes the session and signs the device out too (its other sessions, its push subscription and its queued pushes go; the device row stays, `signedOut`). The `xexam_did` cookie is kept.
+- **`POST /api/auth/password`**: the account's other devices are signed out (sessions, push subscriptions, queued pushes); the current device keeps its subscription and gets the new session. An administrator's password reset (`POST /api/users/password`), disabling a user or changing their role (`POST /api/users/update`), the command-line `reset-password` and deleting a user (`POST /api/users/delete`) sign out or delete every device of the user.
+- **Sessions of older versions**: a session made before v3.1 has no device; the first `POST /api/devices/hello` (the app sends it at every start) or any `POST` with an `Origin` links it. A `GET` never creates a cookie.
+- **`POST /api/attempt`**: after a successful save the saved-session marker of that session is cleared (a failure to clear it never fails the save).
+- **`POST /api/users/update`**: when an update grants a plain user existing banks, the user's devices get a notification (one per bank; one "N more banks" when several are granted at once); nothing for an administrator. See section 4.12 of [database.md](database.md).
+- **`GET /api/banks`, `GET /api/auth/state`, `GET /api/users`, `GET` / `POST /api/settings`**: the keys above.
+- **Activity log**: the new actions `auth.signoutDevice`, `auth.signoutOthers`, `users.signoutDevice`, `settings.pushOn`, `settings.pushOff`, `settings.pushTest`, `bank.categories`, `bank.categoryMove` and the system rows `system.pushVersion` (`{"from", "to", "devices"}`) and `system.pushAuth` (`{"host"}`). Refused sign-in rows are deleted 90 days after their latest attempt (accepted sign-ins are kept as before).
+- **Nginx**: `/sw.js` and `/manifest.webmanifest` are static files with their own headers (section 4 of [deployment.md](deployment.md)); `/api/` still allows only `GET`, `HEAD` and `POST`.
 
 ## 5. AI routes (`/api/ai/*`, v0.8)
 
@@ -1123,6 +1228,8 @@ These routes are the link between the backend and ai-service. They are **not rea
 | POST | `/internal/ai/record` | ai-service *(v0.9)* | `X-Xexam-Internal-Token` |
 | POST | `/internal/ai/record-info` | ai-service *(v0.9)* | `X-Xexam-Internal-Token` |
 | POST | `/internal/ai/assess` | ai-service *(v2.5)* | `X-Xexam-Internal-Token` |
+| POST | `/internal/ai/push/next` | ai-service *(v3.1)* | `X-Xexam-Internal-Token` |
+| POST | `/internal/ai/push/result` | ai-service *(v3.1)* | `X-Xexam-Internal-Token` |
 
 Anything else under `/internal/`, a wrong method, or a token route with a missing or wrong token (or while no token is loaded) answers 404 `text/plain` `not found`, exactly like an unknown path, so the routes are not revealed; refused tokens are logged at most about once a minute. The token routes need `Content-Type: application/json` and a JSON object; their answers are the backend's usual JSON.
 
@@ -1157,6 +1264,16 @@ The external location lookup uses three more token routes, so that the backend n
 - `POST /internal/ai/geo/source` `{"source": "api" | "cloudflare"}` sets the source, `{}` reads it → `{"source": …}`. Used by `enable` and `delete` of section 5.9.
 
 Like every token route they answer 404 without the token, and the 24-hour memory, the queue and the per-minute cap of hand-outs are the backend's; ai-service applies the reserved-address filter and its own cap of 30 per minute again and keeps no memory.
+
+### v3.1 internal routes *(v3.1)*
+
+Web push is delivered by ai-service, which **pulls** the work like the location lookup, so the backend still never calls ai-service and keeps no internet access. The backend queues the messages, renders their text, encrypts them (RFC 8291, `aes128gcm`) and signs the authorization header (RFC 8292, VAPID); ai-service only forwards ready bytes and never sees the subscription keys, the VAPID private key or the plain text. Both routes follow the rules of the other token routes (token, `Content-Type: application/json`, a JSON object of at most 64 KiB, 404 `not found` for a wrong token, unknown keys → 400).
+
+- **`POST /internal/ai/push/next`** `{"waitMs": 0..20000}` → `{"jobs": [Job]}` (0 to 20 jobs). A long poll: it answers at once when jobs are due, otherwise when one becomes due, the wait ends, or the server stops. Every call records that a courier is present (`courier` in `GET /api/push/config`, for 60 seconds). A `Job` is `{"id": 4711, "tries": 1, "endpoint": "https://fcm.googleapis.com/fcm/send/…", "ttl": 21600, "urgency": "normal", "topic": "remind", "authorization": "vapid t=<jwt>, k=<public key>", "body": "<base64url, no padding>"}`: `ttl` in seconds, `topic` is `null` when none, `body` is the encrypted record (at most 4096 bytes). A handed-out job is leased for 120 seconds; one that is not answered is handed out again.
+- **`POST /internal/ai/push/result`** `{"results": [{"id": 4711, "tries": 1, "outcome": "sent", "status": 201, "retryAfter": null}]}` (1 to 20) → `{"ok": true}`. `outcome` is `sent`, `gone` (the push service says the subscription no longer exists: 404 or 410; the subscription is deleted), `auth` (401 or 403: the subscription is deleted when its key id is not the current one, else it counts as a failure), `retry` (5xx, timeout, 429: tried again with a back-off or the given `retryAfter`, up to 5 tries), `deferred` (not sent because the same push service was rate limiting: tried again later without counting a try) or `rejected` (the message itself was refused: failed). `status` is the push service's HTTP status (0 = network error) or `null`, `retryAfter` 1 to 3600 seconds or `null`. A result is accepted only for a job that is still leased with the same `tries`; late and duplicate results are ignored.
+- **Unchanged**: `POST /internal/ai/heartbeat` keeps its four keys. A v3.1 ai-service does not add a fifth, because a v3.0 backend refuses any other body and AI+ would stop working; so the backend learns that the courier is there from its polls, not from the heartbeat.
+- **Old and new together**: an ai-service of v3.0 never polls, so nothing is delivered and the queued messages expire; a v3.1 ai-service talking to a v3.0 backend gets 404 from `push/next` and pauses for 60 seconds before it tries again.
+- **Allow-list**: ai-service posts only to the push services named in `POST /api/push/subscribe` (the same rules, checked again), refuses addresses that resolve to private networks, and never logs an endpoint, a header or a body (section 11 of [security.md](security.md)).
 
 ## 7. Differences from the old version
 
@@ -1345,6 +1462,14 @@ Only the AI routes change, and every change is additive or a default; the other 
 - **Changed**: the assessment (`POST /api/ai/assess/ask`) is asked as a whole answer, cleaned, checked and retried up to 3 calls, and arrives as one `delta` event; `GET /api/ai/assess/latest` hides a saved text that fails today's checks; a call with a thinking strength gets extra token room (section 5.5).
 - **Unchanged**: every other route, field and message; the databases (main schema 12, AI schema 11); the wire between the backend and ai-service.
 - **Version**: `GET /api/info` reports `"version": "2.7"`, and the AI service's `/healthz` as well.
+
+### Changes in v3.1 (relative to v3.0)
+
+- **New**: thirteen public routes: `GET /api/devices`, `POST /api/devices/hello`, `POST /api/devices/signout`, `POST /api/devices/signout-others`, `GET /api/users/devices`, `POST /api/users/devices/signout`, `GET /api/push/config`, `POST /api/push/subscribe`, `POST /api/push/test`, `POST /api/study/saved`, `POST /api/study/saved/discard`, `POST /api/banks/categories`, `POST /api/banks/category`; and two internal routes, `POST /internal/ai/push/next` and `/internal/ai/push/result`.
+- **Changed**: `GET /api/banks` (`categories`, and `categoryId` and `sort` per bank), `GET /api/auth/state` (`categories`), `GET /api/users` (`devices` per user), `GET` / `POST /api/settings` (the keys `push` and `tz`; `POST /api/settings/reset` keeps both), sign-in, sign-out and password change (the device cookie `xexam_did` and device sign-out), `POST /api/attempt` (clears the saved-session marker), `POST /api/users/update` (bank-grant notifications).
+- **Errors**: new answers with a `code` (section 2 and the error table).
+- **Version**: `GET /api/info` reports `"version": "3.1"`, and the AI service's `/healthz` as well. The main database is schema 13 (section 6.21 of [database.md](database.md)); the AI database stays at schema 11.
+- **Unchanged**: every other route, field and message; the heartbeat between the services; the AI routes.
 
 ## 8. Examples
 

@@ -42,6 +42,7 @@ use super::{blocking, body_flag, body_id, AppState, PyVal};
 use crate::activity::{Actor, ClientInfo, Entry};
 use crate::auth::throttle::{retry_after_secs, Begun, StartedLock};
 use crate::auth::{self, Ended, LockStatus, Role, Rule, SessionTimes, Target, SESSION_PURGE_SECS};
+use crate::database::store::DeviceSignin;
 use crate::database::{
     ActiveFacts, EndedSession, NewSession, PasswordChange, SessionUser, SigninInfo, Touch,
     UserChange, UserUpdate,
@@ -117,6 +118,9 @@ pub const ROUTES: &[Route] = &[
     route("GET", "/api/records", Access::SignedIn),
     route("GET", "/api/record", Access::SignedIn),
     route("GET", "/api/settings", Access::SignedIn),
+    route("GET", "/api/devices", Access::SignedIn),
+    route("GET", "/api/users/devices", Access::Admin),
+    quiet("GET", "/api/push/config", Access::SignedIn),
     route("GET", "/api/users", Access::Admin),
     route("GET", "/api/users/records", Access::Admin),
     route("GET", "/api/users/record", Access::Admin),
@@ -157,6 +161,16 @@ pub const ROUTES: &[Route] = &[
     route("POST", "/api/users/geo-source", Access::Admin),
     route("POST", "/api/activity/settings", Access::Admin),
     route("POST", "/api/activity/visit", Access::SignedIn),
+    route("POST", "/api/devices/hello", Access::SignedIn),
+    route("POST", "/api/devices/signout", Access::SignedIn),
+    route("POST", "/api/devices/signout-others", Access::SignedIn),
+    route("POST", "/api/users/devices/signout", Access::Admin),
+    route("POST", "/api/push/subscribe", Access::SignedIn),
+    route("POST", "/api/push/test", Access::SignedIn),
+    route("POST", "/api/study/saved", Access::SignedIn),
+    route("POST", "/api/study/saved/discard", Access::SignedIn),
+    route("POST", "/api/banks/categories", Access::Admin),
+    route("POST", "/api/banks/category", Access::Admin),
 ];
 
 /// The route for `method` (`GET` or `POST`) and `path`, if the backend serves it.
@@ -183,6 +197,11 @@ pub struct Authed {
     pub remember: bool,
     /// v1.3: the address, device and visitor location of this request (from the Nginx headers)
     pub client: ClientInfo,
+    /// v3.1: the device (browser) this session belongs to, from the session row (`None` for a session without a device)
+    pub device_id: Option<i64>,
+    /// v3.1: a `xexam_did` cookie value this request created or reused while linking an old session to its device; the
+    /// response carries it ([`finish`])
+    new_device_cookie: Option<String>,
 }
 
 fn status(code: StatusCode, msg: &'static str) -> AppError {
@@ -255,6 +274,16 @@ struct Found {
     hard_ends_at: Option<i64>,
     remember: bool,
     resend: bool,
+    device_id: Option<i64>,
+    new_device_cookie: Option<String>,
+}
+
+/// What a request offers for linking a session that has no device yet (B.7 "Linking").
+struct DeviceLink {
+    /// The token-shaped `xexam_did` value of the request, if any
+    did: Option<String>,
+    /// A device (and its cookie) may be created: the request is a POST with an Origin, or the cookie is forced `Secure`
+    create: bool,
 }
 
 /// Deletes every session that ended before `now` and records one `auth.expired` entry for each, at its deadline (the
@@ -330,6 +359,43 @@ fn active_facts(st: &AppState, c: &ClientInfo) -> ActiveFacts {
     }
 }
 
+/// Links the session to a device (B.7): the device of the request's cookie when it is one of this user's, else (when the
+/// request may create one) the device of that cookie, made on the spot, with a fresh cookie value when the request had
+/// none. Returns the device id and, when this call's update linked the session after creating or reusing the cookie of
+/// rule 2, the cookie value to send. A failure is logged and leaves the session unlinked.
+fn link_session(
+    store: &crate::database::Store,
+    token_hash: &str,
+    user_id: i64,
+    l: &DeviceLink,
+    now: i64,
+    ua: Option<&str>,
+) -> Option<(i64, Option<String>)> {
+    let result = (|| -> Result<Option<(i64, Option<String>)>, DbError> {
+        if let Some(did) = &l.did {
+            let hash = auth::token_hash(did);
+            if let Some(found) = store.device_link(token_hash, user_id, &hash, false, now, ua)? {
+                return Ok(Some((found.device_id, None)));
+            }
+        }
+        if !l.create {
+            return Ok(None);
+        }
+        let value = l.did.clone().unwrap_or_else(auth::new_device_id);
+        let hash = auth::token_hash(&value);
+        Ok(store
+            .device_link(token_hash, user_id, &hash, true, now, ua)?
+            .map(|f| (f.device_id, f.changed.then_some(value))))
+    })();
+    match result {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!("could not link a session to its device: {e}");
+            None
+        }
+    }
+}
+
 /// The session `token_hash` at `now` (v1.3). Purges ended sessions at most once an hour (whichever request comes first claims
 /// it). An ended session (by the user's current role) is deleted, recorded and answered [`Looked::Ended`]. With `counts` the
 /// request is activity: the session row and `users.last_active_at` are written at most once a minute per session / user
@@ -341,6 +407,7 @@ async fn session_lookup(
     counts: bool,
     may_resend: bool,
     client: Option<ClientInfo>,
+    link: Option<DeviceLink>,
 ) -> Result<Looked, AppError> {
     let last = st.0.last_session_purge.load(Ordering::Relaxed);
     let purge = now.saturating_sub(last) >= SESSION_PURGE_SECS
@@ -383,6 +450,17 @@ async fn session_lookup(
             }
             return Ok(Looked::Ended);
         }
+        // v3.1: a session without a device gets one (rule 1: the request's cookie names a device of this user; rule 2: a
+        // request whose scheme is known creates the device and the cookie); a GET without Origin never creates a cookie
+        let mut device_id = row.device_id;
+        let mut new_device_cookie = None;
+        if let (None, Some(l)) = (device_id, link.as_ref()) {
+            let ua = client.as_ref().and_then(|c| c.ua.as_deref());
+            if let Some((id, cookie)) = link_session(store, &token_hash, user.id, l, now, ua) {
+                device_id = Some(id);
+                new_device_cookie = cookie;
+            }
+        }
         let mut resend = false;
         if counts {
             let plan = st.0.gates.plan(&token_hash, user.id, now);
@@ -399,7 +477,14 @@ async fn session_lookup(
                 // v1.4: the device always, the address and its place only while the eye is open
                 let facts = client.as_ref().map(|c| active_facts(&st, c));
                 // A failed touch must not fail the request that was only about to read something
-                match store.touch_session_with(&token_hash, user.id, now, &touch, facts.as_ref()) {
+                match store.touch_session_device(
+                    &token_hash,
+                    user.id,
+                    now,
+                    &touch,
+                    facts.as_ref(),
+                    device_id,
+                ) {
                     Ok(()) => {
                         // A lookup is asked for only here (and at sign-in): later rows read the cache
                         if let (true, Some((ip, _))) = (
@@ -407,11 +492,11 @@ async fn session_lookup(
                             facts.as_ref().and_then(|f| f.ip_place.as_ref()),
                         ) {
                             if let Ok(ip) = ip.parse() {
-                                st.0.activity.geo().request(
-                                    ip,
-                                    crate::geo::Target::Active(user.id),
-                                    now,
-                                );
+                                let geo = st.0.activity.geo();
+                                geo.request(ip, crate::geo::Target::Active(user.id), now);
+                                if let Some(d) = device_id {
+                                    geo.request(ip, crate::geo::Target::DeviceActive(d), now);
+                                }
                             }
                         }
                     }
@@ -427,6 +512,8 @@ async fn session_lookup(
             hard_ends_at,
             remember: row.remember,
             resend,
+            device_id,
+            new_device_cookie,
         }))
     })
     .await
@@ -445,6 +532,7 @@ pub async fn session_user_checked(
         auth::unix_now(),
         true,
         false,
+        None,
         None,
     )
     .await?;
@@ -467,6 +555,7 @@ pub async fn session_user_untouched(
         false,
         false,
         None,
+        None,
     )
     .await?;
     Ok(match found {
@@ -482,6 +571,7 @@ async fn session(
     headers: &HeaderMap,
     origin: Option<&str>,
     counts: bool,
+    is_post: bool,
 ) -> Result<Option<Authed>, AppError> {
     let Some(token) = auth::session_token(headers) else {
         return Ok(None);
@@ -492,6 +582,11 @@ async fn session(
     let now = st.0.store.unix_now();
     let token_hash = auth::token_hash(&token);
     let client = ClientInfo::from_headers(headers);
+    // v3.1: only a request whose scheme is known may create a device cookie (it would lack `Secure` behind HTTPS otherwise)
+    let link = DeviceLink {
+        did: auth::device_id_token(headers),
+        create: force_secure || (is_post && origin.is_some()),
+    };
     let looked = session_lookup(
         st,
         token_hash.clone(),
@@ -499,6 +594,7 @@ async fn session(
         counts,
         may_resend,
         Some(client.clone()),
+        Some(link),
     )
     .await?;
     match looked {
@@ -514,6 +610,8 @@ async fn session(
             hard_ends_at: f.hard_ends_at,
             remember: f.remember,
             client,
+            device_id: f.device_id,
+            new_device_cookie: f.new_device_cookie,
         })),
     }
 }
@@ -534,7 +632,7 @@ pub async fn authorize(
         return Ok(None);
     }
     let counts = route.is_none_or(|r| r.activity);
-    let authed = session(st, headers, origin, counts).await?;
+    let authed = session(st, headers, origin, counts, method == "POST").await?;
     if access == Access::Public {
         return Ok(authed);
     }
@@ -624,7 +722,12 @@ pub async fn introspect(st: &AppState, headers: &HeaderMap) -> IntrospectOutcome
     // The same lookup as every other request: the same deadline rule, and the same touch (somebody who only talks to the AI
     // is active), but never a cookie (it could not reach the browser through this path)
     let client = ClientInfo::from_headers(headers);
-    match session_lookup(st, sid.clone(), now, true, false, Some(client)).await {
+    // v3.1: no response to carry a cookie here, so a session is only linked to a device its cookie already names
+    let link = DeviceLink {
+        did: auth::device_id_token(headers),
+        create: false,
+    };
+    match session_lookup(st, sid.clone(), now, true, false, Some(client), Some(link)).await {
         Err(_) => IntrospectOutcome::Failed,
         Ok(Looked::None | Looked::Ended) => IntrospectOutcome::SignIn,
         Ok(Looked::Found(f)) if f.user.must_change_password => IntrospectOutcome::Password,
@@ -657,12 +760,23 @@ fn set_cookie(resp: &mut Response, value: &str) {
 /// Adds the refreshed session cookie to the response, if the session was refreshed by this request.
 pub fn finish(resp: &mut Response, authed: Option<&Authed>) {
     if let Some(a) = authed.filter(|a| a.refreshed) {
-        // A response that already sets the cookie (logout) keeps its own
-        if !resp.headers().contains_key(header::SET_COOKIE) {
+        // A response that already sets the session cookie (logout, password change) keeps its own
+        let own = resp
+            .headers()
+            .get_all(header::SET_COOKIE)
+            .iter()
+            .any(|v| v.as_bytes().starts_with(b"xexam_session="));
+        if !own {
             set_cookie(
                 resp,
                 &auth::session_cookie_for(&a.token, a.secure, Rule::Remember),
             );
+        }
+    }
+    // v3.1: the browser-id cookie of a session that was just linked to its device, after the session cookie
+    if let Some(a) = authed {
+        if let Some(v) = &a.new_device_cookie {
+            set_cookie(resp, &auth::device_id_cookie(v, a.secure));
         }
     }
 }
@@ -732,12 +846,16 @@ pub async fn state(st: &AppState, authed: Option<&Authed>) -> Result<Value, AppE
     match authed {
         Some(a) => {
             let v = viewer(st, a).await?;
+            let v_cat = v.clone();
+            let store_cat = store.clone();
             let library = blocking(move || store.library_stamp_as(&v)).await?;
+            let categories = blocking(move || store_cat.categories_stamp_as(&v_cat)).await?;
             let link = &st.0.ai_link;
             let service = link.state();
             let mut out = json!({
                 "user": a.user.to_json(),
                 "library": library,
+                "categories": categories,
                 "aiAvailable": service.ai_available(),
                 "session": session_json(a.rule, a.hard_ends_at),
                 // Whether the page reports the pages a user opens: always for administrators, else the switch in the log settings
@@ -1026,22 +1144,40 @@ pub async fn login(
     let verified = phc.clone();
     let hash_for_row = token_hash.clone();
     let stamp = local_second(now);
+    // v3.1: this browser's id (a new one when the request has none or a malformed one); its SHA-256 is the device key
+    let did_value = auth::device_id_token(headers).unwrap_or_else(auth::new_device_id);
+    let did_hash = auth::token_hash(&did_value);
     let signed_in = blocking(move || {
-        let created = store.create_session(&NewSession {
-            token_hash: &hash_for_row,
-            user_id: id,
-            now,
-            expires_at: deadline,
-            remember,
+        // Closed eye: `None` leaves the stored sign-in info untouched (only the times move)
+        let info = keep.then_some(SigninInfo {
             ip: ip.as_deref(),
-            ua: ua.as_deref(),
+            country: country.as_deref(),
+            region: region.as_deref(),
+            city: city.as_deref(),
         });
-        match created {
-            Ok(()) => {}
+        let created = store.create_session_on_device(
+            &NewSession {
+                token_hash: &hash_for_row,
+                user_id: id,
+                now,
+                expires_at: deadline,
+                remember,
+                ip: ip.as_deref(),
+                ua: ua.as_deref(),
+                device_id: None,
+            },
+            &DeviceSignin {
+                cookie_hash: &did_hash,
+                ua: ua.as_deref(),
+                info,
+            },
+        );
+        let device_id = match created {
+            Ok(d) => d,
             // Deleted or disabled while the password was being verified
             Err(DbError::NoUser) => return Ok(None),
             Err(e) => return Err(e),
-        }
+        };
         // The password verified above must still be the user's: a password changed or reset while the (slow) verify ran
         // must not leave a session signed in with the old password. (A change after this check ends every session.)
         let Some(u) = store
@@ -1051,18 +1187,11 @@ pub async fn login(
             store.delete_session(&hash_for_row)?;
             return Ok(None);
         };
-        // Closed eye: `None` leaves the stored sign-in info untouched (only the times move)
-        let info = keep.then_some(SigninInfo {
-            ip: ip.as_deref(),
-            country: country.as_deref(),
-            region: region.as_deref(),
-            city: city.as_deref(),
-        });
         store.note_signin_with_ua(id, &stamp, info.as_ref(), ua.as_deref())?;
-        Ok(Some(SessionUser::from(&u)))
+        Ok(Some((SessionUser::from(&u), device_id)))
     })
     .await?;
-    let Some(signed_in) = signed_in else {
+    let Some((signed_in, device_id)) = signed_in else {
         note_failed_sign_in(
             st,
             &format!(
@@ -1086,6 +1215,8 @@ pub async fn login(
             let geo = st.0.activity.geo();
             geo.request(ip, crate::geo::Target::Signin(id), now);
             geo.request(ip, crate::geo::Target::Active(id), now);
+            geo.request(ip, crate::geo::Target::DeviceSignin(device_id), now);
+            geo.request(ip, crate::geo::Target::DeviceActive(device_id), now);
         }
     }
     tracing::info!("user {:?} signed in", signed_in.username);
@@ -1100,16 +1231,20 @@ pub async fn login(
         "user": signed_in.to_json(),
         "session": session_json(rule, hard),
     }));
+    // The order is part of the contract: the session cookie first (test helpers and tools read the first `Set-Cookie`),
+    // then the known-browser cookie, then the browser id (always, so its 400 days restart)
     set_cookie(&mut resp, &auth::session_cookie_for(&token, secure, rule));
     set_device_cookie(&mut resp, signed_in.id, &phc, secure);
+    set_cookie(&mut resp, &auth::device_id_cookie(&did_value, secure));
     Ok(resp)
 }
 
-/// `POST /api/auth/logout` → `{"ok": true}` and an expired cookie; the session is deleted.
+/// `POST /api/auth/logout` → `{"ok": true}` and an expired cookie; the session is deleted and (v3.1) its device is signed
+/// out: its other sessions, push subscription and queued pushes go too. The browser keeps its `xexam_did` cookie.
 pub async fn logout(st: &AppState, a: &Authed, origin: Option<&str>) -> Result<Response, AppError> {
     let store = st.0.store.clone();
     let hash = a.token_hash.clone();
-    blocking(move || store.delete_session(&hash)).await?;
+    blocking(move || store.logout_session(&hash)).await?;
     st.0.gates.forget(&a.token_hash);
     st.0.activity
         .record(Entry::new(Actor::of(&a.user), "auth.signout").client(&a.client));
@@ -1243,6 +1378,8 @@ pub async fn change_password(
         .map(|i| i.to_string());
     let ua = a.client.ua.clone();
     let name_to_store = new_name.clone();
+    // v3.1 (D4): every other device is signed out; this one keeps its subscription and gets the new session
+    let device_id = a.device_id;
     let (updated, old_name) = match blocking(move || {
         store.change_own_password_as(
             id,
@@ -1256,6 +1393,7 @@ pub async fn change_password(
                 remember,
                 ip: ip.as_deref(),
                 ua: ua.as_deref(),
+                device_id,
             },
             name_to_store.as_deref(),
         )
@@ -1315,6 +1453,8 @@ fn lock_json(s: Option<LockStatus>) -> Value {
 async fn users_json(st: &AppState) -> Result<Value, AppError> {
     let store = st.0.store.clone();
     let mut users = blocking(move || store.users()).await?;
+    let store = st.0.store.clone();
+    let device_counts = blocking(move || store.device_counts()).await?;
     let t = &st.0.throttle;
     let now = t.now();
     let service = st.0.ai_link.state();
@@ -1327,6 +1467,9 @@ async fn users_json(st: &AppState) -> Result<Value, AppError> {
             if let Some(obj) = u.as_object_mut() {
                 obj.insert("lock".to_string(), lock);
                 obj.insert("aiSuspended".to_string(), Value::Bool(suspended));
+                // v3.1: the number of device rows of the user, the last key
+                let devices = id.and_then(|id| device_counts.get(&id)).copied();
+                obj.insert("devices".to_string(), json!(devices.unwrap_or(0)));
             }
         }
     }

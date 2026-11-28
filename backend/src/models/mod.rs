@@ -378,20 +378,26 @@ pub struct DeletedBank {
     pub name: String,
 }
 
-/// Settings stored in the `settings` table: key, allowed values, default. The JSON key order of `/api/settings` is this order.
+/// Settings stored in the `user_settings` table: key, allowed values, default. The JSON key order of `/api/settings` is this order.
 pub const SETTING_THEME: &str = "theme";
 pub const SETTING_UI_LANG: &str = "uiLang";
 pub const SETTING_AUTO_ADVANCE: &str = "autoAdvance";
 pub const SETTING_QUESTION_LANG: &str = "questionLang";
 pub const SETTING_ANSWER_FX: &str = "answerFx";
-pub const SETTING_KEYS: [&str; 5] = [
+/// v3.1: whether the account receives push notifications (a missing row means on)
+pub const SETTING_PUSH: &str = "push";
+/// v3.1: the user's time zone, `"auto"` or an IANA zone name (quiet hours of the push notifications)
+pub const SETTING_TZ: &str = "tz";
+pub const SETTING_KEYS: [&str; 7] = [
     SETTING_THEME,
     SETTING_UI_LANG,
     SETTING_AUTO_ADVANCE,
     SETTING_QUESTION_LANG,
     SETTING_ANSWER_FX,
+    SETTING_PUSH,
+    SETTING_TZ,
 ];
-/// Keys removed by `/api/settings/reset` (`questionLang` is kept).
+/// Keys removed by `/api/settings/reset` (`questionLang`, `push` and `tz` are kept).
 pub const RESETTABLE_SETTINGS: [&str; 4] = [
     SETTING_THEME,
     SETTING_UI_LANG,
@@ -407,6 +413,8 @@ pub fn setting_default(key: &str) -> Option<Value> {
         SETTING_AUTO_ADVANCE => Value::Bool(false),
         SETTING_QUESTION_LANG => Value::from("en"),
         SETTING_ANSWER_FX => Value::Bool(true),
+        SETTING_PUSH => Value::Bool(true),
+        SETTING_TZ => Value::from("auto"),
         _ => return None,
     })
 }
@@ -417,8 +425,26 @@ pub fn setting_valid(key: &str, value: &Value) -> bool {
     match key {
         SETTING_THEME => one_of(&["system", "light", "dark"]),
         SETTING_UI_LANG => one_of(&["en", "zh", "ja"]),
-        SETTING_AUTO_ADVANCE | SETTING_ANSWER_FX => value.is_boolean(),
+        SETTING_AUTO_ADVANCE | SETTING_ANSWER_FX | SETTING_PUSH => value.is_boolean(),
         SETTING_QUESTION_LANG => one_of(&["ja", "zh", "en"]),
+        SETTING_TZ => tz_valid(value),
         _ => false,
     }
+}
+
+/// `"auto"`, or an IANA zone name: 1..=64 ASCII chars of `[A-Za-z0-9_+\-/]`, not starting with `/`, no `..`, and
+/// `jiff::tz::TimeZone::get(name)` succeeds.
+pub fn tz_valid(value: &Value) -> bool {
+    value.as_str().is_some_and(|s| s == "auto" || tz_name_ok(s))
+}
+
+/// The same rule for a plain string (used for `devices.tz`); `"auto"` is not a zone name here.
+pub fn tz_name_ok(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= 64
+        && !s.starts_with('/')
+        && !s.contains("..")
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'+' | b'-' | b'/'))
+        && jiff::tz::TimeZone::get(s).is_ok()
 }

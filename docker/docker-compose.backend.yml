@@ -53,6 +53,12 @@ services:
       # XEXAM_LOG:  info
       # Or: XEXAM_LOG:  debug
       XEXAM_LOG:
+      # Web push (v3.1) works with no setting: the VAPID key is made at first start and kept next to the database
+      # (push-vapid.key in the data volume). Nothing below is enabled by default; see docs/en/deployment.md.
+      # XEXAM_PUSH_SUBJECT:  (derived from the https host in XEXAM_ALLOWED_HOSTS / XEXAM_ALLOWED_ORIGINS, else mailto:admin@localhost)
+      # Or: XEXAM_PUSH_SUBJECT:  https://xexam.example.com (or mailto:admin@example.com) - the contact the push services see
+      # XEXAM_PUSH_VAPID_KEY:  (the key file above)
+      # Or: XEXAM_PUSH_VAPID_KEY:  <base64url PKCS#8, see deployment.md> (the same key on several hosts; replaces the file)
       # Required on separate machines (there is no shared volume to hold a random one). The same value on the backend and the
       # ai-service machines: the output of openssl rand -hex 32 (at least 32 printable ASCII characters, no spaces).
       XEXAM_INTERNAL_TOKEN: "${XEXAM_INTERNAL_TOKEN:?set XEXAM_INTERNAL_TOKEN in .env, the same value on the backend and ai-service machines (for example the output of openssl rand -hex 32)}"

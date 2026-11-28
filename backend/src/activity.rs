@@ -707,6 +707,17 @@ pub const ROUTE_ACTIONS: &[(&str, &str, bool)] = &[
     ("/api/users/geo-source", "users.geoSource", false),
     ("/api/activity/settings", "logs.settings", false),
     ("/api/activity/visit", "", false),
+    // v3.1: devices, push, the saved-session marker and the bank categories
+    ("/api/devices/hello", "", false),
+    ("/api/devices/signout", "auth.signoutDevice", true),
+    ("/api/devices/signout-others", "auth.signoutOthers", true),
+    ("/api/users/devices/signout", "users.signoutDevice", false),
+    ("/api/push/subscribe", "", false),
+    ("/api/push/test", "settings.pushTest", false),
+    ("/api/study/saved", "", false),
+    ("/api/study/saved/discard", "", false),
+    ("/api/banks/categories", "bank.categories", true),
+    ("/api/banks/category", "bank.categoryMove", true),
 ];
 
 /// The reason code of a failed request, from its status.

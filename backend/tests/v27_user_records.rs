@@ -98,6 +98,7 @@ fn app_with_throttle(
         ai_link: Default::default(),
         activity: Default::default(),
         gates: Default::default(),
+        push: Default::default(),
     }));
     App {
         router: build_router(state.clone()),

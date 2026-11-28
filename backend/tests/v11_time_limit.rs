@@ -885,7 +885,11 @@ fn a_fresh_database_is_schema_7_with_four_columns_and_two_indexes() {
     let attempts = cols("attempts");
     assert_eq!(&attempts[attempts.len() - 2..], ["time_limit", "ended"]);
     let banks = cols("banks");
-    assert_eq!(&banks[banks.len() - 2..], ["ai_job", "ai_meta"]);
+    // v3.1 (schema 13) appends category_id and sort after the AI columns
+    assert_eq!(
+        &banks[banks.len() - 4..banks.len() - 2],
+        ["ai_job", "ai_meta"]
+    );
     assert!(
         !cols("attempt_items").iter().any(|c| c == "unanswered"),
         "unanswered is derived, never stored"

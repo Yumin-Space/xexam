@@ -14,6 +14,7 @@
 // open) with a "Collapse" at its end, and a code chip never separates from the punctuation next to it.
 import '../styles/banks.css';
 import { deleteBank, deleteSheets, downloadBank, fetchBanks } from '../api/bank.ts';
+import { editCategories, moveBanks } from '../api/categories.ts';
 import { ApiError } from '../api/client.ts';
 import { cancelImport, confirmImport, fetchImports, uploadWorkbook } from '../api/import.ts';
 import { aiSetBadge } from '../components/ai-badge.ts';
@@ -30,16 +31,17 @@ import {
 } from '../domain/bank-download.ts';
 import { copyOutsidePrompt, outsidePrompt } from '../domain/outside-prompt.ts';
 import { retiredOnly } from '../domain/bank-status.ts';
+import { groupBanks, moveInList, type BankGroup } from '../domain/categories.ts';
 import { deletionPlan, selectionCount, sheetSelKey, type SelBank } from '../domain/bank-select.ts';
 import { sheetWarnings, warningTotal, type RowWarning } from '../domain/import-warnings.ts';
 import { errorText, LocalError, serverText } from '../i18n/errors.ts';
 import { t, tn, type MsgKey } from '../i18n/index.ts';
 import { applyBankDeleted, navigate, onRouteChange, onSignedIn, refreshLibrary, render } from '../state/actions.ts';
 import { bankPageView, listedBanks, manageableBanks, mayDownloadBanks, ownerView } from '../state/bank-access.ts';
-import { bankById, isAdmin, S } from '../state/store.ts';
-import type { BankSummary, ImportPlan, ImportPreview, ImportRecord, ImportTarget, SheetPlan } from '../types/api.ts';
+import { bankById, isAdmin, S, setBankData } from '../state/store.ts';
+import type { BankCategory, BankSummary, BanksResponse, CategoryEdit, ImportPlan, ImportPreview, ImportRecord, ImportTarget, SheetPlan } from '../types/api.ts';
 import { copyText } from '../utils/clipboard.ts';
-import { ask, askCheck, askPick } from '../utils/dialog.ts';
+import { ask, askCheck, askPick, dialogTitleId, formDialog } from '../utils/dialog.ts';
 import { saveFile } from '../utils/download.ts';
 import { h, scrollToY, type Child } from '../utils/dom.ts';
 import { PHONE_MQ, TOUCH_MQ, matches } from '../utils/media.ts';
@@ -1084,6 +1086,10 @@ function drawBar(): void {
     h('span', { class: 'bk-selcount', role: 'status' }, tn('banks.sel.count', n)),
     h('div', { class: 'bk-selacts' },
       selectedGenButton(scope),
+      // v3.1: administrators move the banks of the checked sheets into a category
+      isAdmin() && S.categories.length > 0 ? h('button', {
+        class: 'btn ghost bk-selmove', id: 'bk-movecat', type: 'button', disabled: busy !== null || n === 0, onclick: () => void moveSelectedBanks(),
+      }, t('banks.cat.move')) : null,
       h('button', {
         class: 'btn danger bk-seldel', type: 'button', disabled: busy !== null || n === 0, 'aria-label': t('banks.sel.delete'), onclick: () => void removeSelected(),
       }, t('banks.sel.deleteShort')),
@@ -1137,6 +1143,310 @@ async function removeSelected(): Promise<void> {
   if (onBanksPage()) render();
 }
 
+// ---------------------------------------------------------------- v3.1: bank categories
+
+/** Ids of the categories folded on the page (all open by default); 0 stands for the uncategorised group. In memory only. */
+const catFolded = new Set<number>();
+
+/** Takes the fresh bank list a category call answers with */
+function applyBanks(r: BanksResponse): void {
+  if (S.bank) setBankData(S.bank, r.banks, r.categories);
+  else {
+    S.banks = r.banks;
+    S.categories = r.categories;
+  }
+}
+
+/** The banks of the checked sheets, in list order (a bank counts once however many of its sheets are checked) */
+function selectedBankIds(): number[] {
+  const ids = new Set([...sel.values()].map((v) => v.bank));
+  return managed().filter((b) => ids.has(b.id)).map((b) => b.id);
+}
+
+/** The pick dialog of "Move to category…": one radio per category (in order) and "Uncategorised"; the move happens on submit */
+async function moveSelectedBanks(): Promise<void> {
+  if (busy || asking) return;
+  const ids = selectedBankIds();
+  if (!ids.length) return;
+  const options: Array<{ id: number | null; label: string }> = [
+    ...S.categories.map((c) => ({ id: c.id, label: c.name })),
+    { id: null, label: t('banks.cat.none') },
+  ];
+  // Start on the category every selected bank already shares (a move to it is then a no-op), else on the first one
+  const homes = new Set(ids.map((id) => S.banks.find((b) => b.id === id)?.categoryId ?? null));
+  const shared = homes.size === 1 ? [...homes][0]! : undefined;
+  const startAt = Math.max(0, options.findIndex((o) => o.id === shared));
+  let chosen: number | null = options[startAt]!.id;
+  const list = h('div', { class: 'bkc-picks', role: 'radiogroup', 'aria-label': tn('banks.cat.moveTitle', ids.length) },
+    options.map((o, i) => {
+      const radio = h('input', {
+        type: 'radio', name: 'bk-movecat-to', value: String(o.id ?? ''), checked: i === startAt,
+        onchange: () => {
+          chosen = o.id;
+        },
+      });
+      return h('label', { class: 'bkc-pick' }, radio, h('span', { class: 'bkc-pickname' }, o.label));
+    }));
+  asking = true;
+  try {
+    await formDialog({
+      title: tn('banks.cat.moveTitle', ids.length),
+      content: h('div', null, S.categories.length ? null : h('p', { class: 'dim' }, t('banks.cat.empty')), list),
+      ok: t('banks.cat.moveOk'),
+      busy: t('common.saving'),
+      submit: async () => {
+        if (shared !== undefined && chosen === shared) return null; // nothing would move
+        try {
+          applyBanks(await moveBanks(ids, chosen));
+        } catch (e) {
+          return t('banks.cat.failed', { reason: errorText(e) });
+        }
+        toast(tn('banks.cat.moved', ids.length));
+        return null;
+      },
+    });
+  } finally {
+    asking = false;
+  }
+  if (onBanksPage()) render();
+}
+
+/** The cleaned form of a category name (the server cleans the same way): whitespace runs become one space, trimmed */
+const cleanCategoryName = (raw: string): string => raw.replace(/\s+/g, ' ').trim();
+const validCategoryName = (name: string): boolean => {
+  const n = [...name].length;
+  return n >= 1 && n <= 60;
+};
+
+/**
+ * The category manager (administrators): add, rename, delete and re-order the categories, and re-order the banks inside each
+ * group. One call per action; every answer is the fresh bank list, so the dialog and the page behind it redraw from the store.
+ */
+function openCategoryManager(): void {
+  const titleId = dialogTitleId();
+  /** Category being renamed (its inline field is open) */
+  let renaming: number | null = null;
+  let draft = '';
+  /** Groups whose bank list is open: category ids, 0 = uncategorised */
+  const openLists = new Set<number>();
+  let working = false;
+  let error: string | null = null;
+  /** The text typed into the create field (kept across redraws; cleared after a successful create) */
+  let createDraft = '';
+  const body = h('div', { class: 'bkc-body' });
+  const d = h('dialog', { class: 'dlg dlg-wide bkc-dlg', 'aria-labelledby': titleId },
+    h('h3', { id: titleId, tabindex: '-1' }, t('banks.cat.title')),
+    body,
+    h('div', { class: 'acts' }, h('button', { class: 'btn primary', type: 'button', onclick: () => d.close('done') }, t('banks.cat.close'))));
+
+  async function run(op: CategoryEdit, focusId?: string): Promise<boolean> {
+    if (working) return false;
+    working = true;
+    error = null;
+    draw();
+    let ok = true;
+    try {
+      applyBanks(await editCategories(op));
+    } catch (e) {
+      ok = false;
+      error = t('banks.cat.failed', { reason: errorText(e) });
+    }
+    working = false;
+    draw(focusId);
+    if (ok && onBanksPage()) render();
+    return ok;
+  }
+
+  const iconBtn = (ic: MiniIcon, label: string, onClick: () => void, o: { disabled?: boolean; id?: string; tone?: 'danger' } = {}): HTMLButtonElement => {
+    const b = iconButton({ icon: ic, label, tone: o.tone ?? 'default', onClick });
+    b.classList.add('bkc-ib');
+    b.disabled = !!o.disabled || working;
+    if (o.id) b.id = o.id;
+    return b;
+  };
+
+  /** The re-orderable list of one group's banks */
+  function bankList(g: BankGroup<BankSummary>): HTMLElement {
+    const key = g.category?.id ?? 0;
+    const ids = g.banks.map((b) => b.id);
+    const categoryId = g.category?.id ?? null;
+    if (!g.banks.length) return h('p', { class: 'dim bkc-none', id: `bkc-banks-${key}` }, t('banks.cat.noBanks'));
+    return h('ol', { class: 'bkc-banklist', id: `bkc-banks-${key}` }, g.banks.map((b, i) => h('li', { class: 'bkc-bank' },
+      h('span', { class: 'bkc-bankname', title: b.name }, b.name),
+      h('span', { class: 'bkc-btns' },
+        iconBtn('up', t('banks.cat.upAria', { name: b.name }), () => void run({ op: 'bankOrder', categoryId, ids: moveInList(ids, b.id, -1) }, `bkc-bup-${b.id}`),
+          { disabled: i === 0, id: `bkc-bup-${b.id}` }),
+        iconBtn('down', t('banks.cat.downAria', { name: b.name }), () => void run({ op: 'bankOrder', categoryId, ids: moveInList(ids, b.id, 1) }, `bkc-bdown-${b.id}`),
+          { disabled: i === ids.length - 1, id: `bkc-bdown-${b.id}` })))));
+  }
+
+  /** The toggle that opens a group's bank list ("Banks in {name}") */
+  function listToggle(g: BankGroup<BankSummary>): HTMLButtonElement {
+    const key = g.category?.id ?? 0;
+    const open = openLists.has(key);
+    const label = g.category ? t('banks.cat.banksOf', { name: g.category.name }) : t('banks.cat.banksNone');
+    return h('button', {
+      class: 'btn quiet bkc-toggle', type: 'button', 'aria-expanded': String(open), 'aria-controls': `bkc-banks-${key}`, id: `bkc-toggle-${key}`,
+      onclick: () => {
+        if (openLists.has(key)) openLists.delete(key);
+        else openLists.add(key);
+        draw(`bkc-toggle-${key}`);
+      },
+    }, miniIcon('chevDown', 'bkc-chev'), h('span', null, label));
+  }
+
+  function categoryRow(g: BankGroup<BankSummary>, i: number, all: readonly BankCategory[]): HTMLElement {
+    const c = g.category!;
+    const key = c.id;
+    const orderIds = all.map((x) => x.id);
+    let head: HTMLElement;
+    if (renaming === c.id) {
+      const input = h('input', {
+        type: 'text', class: 'bkc-input', maxlength: '60', value: draft, id: `bkc-edit-${key}`, 'aria-label': t('banks.cat.renameAria', { name: c.name }),
+        autocomplete: 'off', oninput: () => {
+          draft = input.value;
+        },
+      });
+      head = h('form', {
+        class: 'bkc-line bkc-edit', novalidate: true,
+        onsubmit: (e: SubmitEvent) => {
+          e.preventDefault();
+          const name = cleanCategoryName(input.value);
+          if (!validCategoryName(name)) {
+            error = t('banks.cat.nameBad');
+            draw(`bkc-edit-${key}`);
+            return;
+          }
+          if (name === c.name) {
+            renaming = null;
+            draw(`bkc-rename-${key}`);
+            return;
+          }
+          void run({ op: 'rename', id: c.id, name }).then((ok) => {
+            if (ok) renaming = null;
+            draw(ok ? `bkc-rename-${key}` : `bkc-edit-${key}`);
+          });
+        },
+      },
+      input,
+      h('span', { class: 'bkc-btns' },
+        h('button', { class: 'btn primary bkc-btn', type: 'submit', disabled: working }, t('banks.cat.save')),
+        h('button', {
+          class: 'btn bkc-btn', type: 'button', disabled: working,
+          onclick: () => {
+            renaming = null;
+            error = null;
+            draw(`bkc-rename-${key}`);
+          },
+        }, t('banks.cat.cancel'))));
+    } else {
+      head = h('div', { class: 'bkc-line' },
+        h('span', { class: 'bkc-name', title: c.name }, miniIcon('folder', 'bkc-ico'), h('span', null, c.name)),
+        h('span', { class: 'bkc-btns' },
+          iconBtn('up', t('banks.cat.upAria', { name: c.name }), () => void run({ op: 'order', ids: moveInList(orderIds, c.id, -1) }, `bkc-up-${key}`),
+            { disabled: i === 0, id: `bkc-up-${key}` }),
+          iconBtn('down', t('banks.cat.downAria', { name: c.name }), () => void run({ op: 'order', ids: moveInList(orderIds, c.id, 1) }, `bkc-down-${key}`),
+            { disabled: i === all.length - 1, id: `bkc-down-${key}` }),
+          iconBtn('pencil', t('banks.cat.renameAria', { name: c.name }), () => {
+            renaming = c.id;
+            draft = c.name;
+            error = null;
+            draw(`bkc-edit-${key}`);
+          }, { id: `bkc-rename-${key}` }),
+          iconBtn('trash', t('banks.cat.deleteAria', { name: c.name }), () => void deleteCategory(c), { tone: 'danger', id: `bkc-del-${key}` })));
+    }
+    return h('li', { class: 'bkc-cat' }, head, listToggle(g), openLists.has(key) ? bankList(g) : null);
+  }
+
+  async function deleteCategory(c: BankCategory): Promise<void> {
+    if (working) return;
+    const yes = await ask({
+      title: t('banks.cat.delete.confirmTitle', { name: c.name }), body: t('banks.cat.delete.confirmBody'), ok: t('common.delete'), danger: true,
+    });
+    if (!yes || !d.isConnected) return;
+    if (renaming === c.id) renaming = null;
+    openLists.delete(c.id);
+    await run({ op: 'delete', id: c.id }, 'bkc-name');
+  }
+
+  function draw(focusId?: string): void {
+    const { hasCategories, groups } = groupBanks(S.banks, S.categories);
+    const cats = groups.filter((g) => g.category != null);
+    const rest = groups.find((g) => g.category == null && g.banks.length > 0) ?? null;
+    const nameIn = h('input', { type: 'text', class: 'bkc-input', id: 'bkc-name', maxlength: '60', placeholder: t('banks.cat.namePh'), 'aria-label': t('banks.cat.namePh'), autocomplete: 'off', value: createDraft,
+      oninput: () => {
+        createDraft = nameIn.value;
+      } });
+    const create = h('form', {
+      class: 'bkc-create', novalidate: true,
+      onsubmit: (e: SubmitEvent) => {
+        e.preventDefault();
+        const name = cleanCategoryName(nameIn.value);
+        if (!validCategoryName(name)) {
+          error = t('banks.cat.nameBad');
+          draw('bkc-name');
+          return;
+        }
+        void run({ op: 'create', name }, 'bkc-name').then((ok) => {
+          if (ok) createDraft = '';
+        });
+      },
+    }, nameIn, h('button', { class: 'btn primary bkc-btn', type: 'submit', disabled: working }, t('banks.cat.create')));
+    const allCats = S.categories;
+    const parts: Node[] = [create];
+    if (error) parts.push(h('div', { class: 'err', role: 'alert' }, h('p', null, error)));
+    parts.push(
+      hasCategories ? h('ul', { class: 'bkc-cats' }, cats.map((g, i) => categoryRow(g, i, allCats))) : h('p', { class: 'dim bkc-empty' }, t('banks.cat.empty')),
+      rest ? h('div', { class: 'bkc-cat bkc-rest' },
+        h('div', { class: 'bkc-line' }, h('span', { class: 'bkc-name' }, miniIcon('folder', 'bkc-ico'), h('span', null, t('banks.cat.none')))),
+        listToggle(rest), openLists.has(0) ? bankList(rest) : null) : document.createComment(''));
+    body.replaceChildren(...parts);
+    d.toggleAttribute('aria-busy', working);
+    if (focusId) {
+      const el = body.querySelector<HTMLElement>('#' + focusId) ?? body.querySelector<HTMLElement>('#bkc-name');
+      el?.focus({ preventScroll: true });
+    }
+  }
+
+  d.addEventListener('close', () => {
+    d.remove();
+    // The button that opened the dialog gets the focus back
+    document.getElementById('bk-catmanage')?.focus({ preventScroll: true });
+  });
+  draw();
+  document.body.append(d);
+  d.showModal();
+  d.querySelector<HTMLElement>('#' + titleId)?.focus({ preventScroll: true });
+}
+
+/** One category group of the bank list: a head with the fold button, the name and the count, then the bank cards */
+function categorySection(g: BankGroup<BankSummary>): HTMLElement {
+  const id = g.category?.id ?? 0;
+  const name = g.category?.name ?? t('banks.cat.none');
+  const open = !catFolded.has(id);
+  const bodyId = `bk-catbody-${id}`;
+  const label = (isOpen: boolean): string => t(isOpen ? 'banks.cat.fold' : 'banks.cat.unfold', { name });
+  const cards = h('div', { class: 'bk-banks bk-catbanks', id: bodyId, hidden: !open }, g.banks.map(bankCard));
+  const fold = h('button', {
+    class: 'bk-catfold', type: 'button', 'aria-expanded': String(open), 'aria-controls': bodyId, 'aria-label': label(open),
+    onclick: () => toggle(),
+  }, icon(ICON_CHEVRON, 'ico bk-catchev'));
+  function toggle(): void {
+    const now = cards.hidden;
+    cards.hidden = !now;
+    if (now) catFolded.delete(id);
+    else catFolded.add(id);
+    fold.setAttribute('aria-expanded', String(now));
+    fold.setAttribute('aria-label', label(now));
+  }
+  return h('section', { class: 'bk-cat', 'aria-labelledby': `bk-catname-${id}` },
+    h('div', { class: 'bk-cathead' },
+      fold,
+      h('h3', { class: 'bk-catname', id: `bk-catname-${id}`, title: name, onclick: () => toggle() }, name),
+      h('span', { class: 'bk-catcount' }, tn('banks.cat.count', g.banks.length))),
+    cards);
+}
+
 function banksPanel(): HTMLElement {
   const admin = isAdmin();
   const view = bankPageView(S.user);
@@ -1150,10 +1460,18 @@ function banksPanel(): HTMLElement {
   }
   boxSync = [];
   barHost = h('div', { class: 'bk-selbar', role: 'group', 'aria-label': t('banks.sel.group') });
-  const cards = list.map(bankCard);
+  // v3.1: with categories the list is grouped (a plain user's groups without a bank to show are left out)
+  const grouped = groupBanks(list, S.categories);
+  const cards = grouped.hasCategories
+    ? grouped.groups.filter((g) => admin || g.banks.length > 0).map(categorySection)
+    : list.map(bankCard);
   drawBar();
   return h('section', { class: 'panel bk-list', 'aria-labelledby': 'bk-list-h', 'aria-busy': busy === 'delete' ? 'true' : null },
-    h('h2', { id: 'bk-list-h', tabindex: '-1' }, t(admin || mayDownloadBanks(S.user) ? 'banks.list.title' : 'banks.list.titleMine')),
+    h('div', { class: 'bk-listhead' },
+      h('h2', { id: 'bk-list-h', tabindex: '-1' }, t(admin || mayDownloadBanks(S.user) ? 'banks.list.title' : 'banks.list.titleMine')),
+      // v3.1: administrators manage the categories (the server enforces it too)
+      admin && !downloadOnly ? h('button', { class: 'btn ghost', id: 'bk-catmanage', type: 'button', onclick: () => openCategoryManager() },
+        miniIcon('folder', 'bk-catmanage-ico'), t('banks.cat.manage')) : null),
     // v1.6: a user who may only download gets one line instead of the management parts
     downloadOnly ? h('p', { class: 'bk-hint' }, t('banks.dl.viewOnly')) : null,
     // v1.1 (GB-7): the progress card of a generation / import at the top of the list

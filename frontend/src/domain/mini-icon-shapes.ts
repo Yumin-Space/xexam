@@ -4,6 +4,14 @@
 export type Shape = { d: string } | { cx: number; cy: number; r: number } | { x: number; y: number; w: number; h: number; rx: number };
 
 export const MINI = {
+  /** A phone and a monitor: devices (User management, Settings) */
+  devices: [{ x: 9.5, y: 5.5, w: 5, h: 8.5, rx: 1.2 }, { d: 'M11.5 3.5V3a1 1 0 0 0-1-1H2.5a1 1 0 0 0-1 1v6.5a1 1 0 0 0 1 1H7.5' }, { d: 'M4.5 13.5h3' }, { d: 'M6 10.5v3' }],
+  /** A bell: notifications */
+  bell: [{ d: 'M4 11.5V7.2a4 4 0 0 1 8 0v4.3l1.2 1.2H2.8z' }, { d: 'M6.6 14.2h2.8' }],
+  /** A folder: bank categories */
+  folder: [{ d: 'M2 4.5a1 1 0 0 1 1-1h3.2l1.5 1.5H13a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1z' }],
+  /** A phone with a down arrow: install as an app */
+  appInstall: [{ x: 4.5, y: 1.5, w: 7, h: 13, rx: 1.5 }, { d: 'M8 4.8v5' }, { d: 'M6 8l2 2 2-2' }],
   /** A key: "Manage banks" */
   key: [{ cx: 5.2, cy: 10.8, r: 2.7 }, { d: 'M7.2 8.8 13.5 2.5' }, { d: 'M11.2 4.8l1.8 1.8' }, { d: 'M9.6 6.4l1.4 1.4' }],
   /** Two ticks: "Select all" */

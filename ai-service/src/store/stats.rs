@@ -121,7 +121,7 @@ pub struct Sums {
 }
 
 /// The calls a statistics read covers: a range of local calendar days (`usage.day`, both ends included) or every call
-/// since a moment (`at >= start`, for "last 12 hours" and "today").
+/// since a moment (`at >= start` plus a day lower bound, for "last 12 hours" and "today").
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Window {
     Days { from: String, to: String },
@@ -144,7 +144,15 @@ impl Window {
                 "day BETWEEN ?1 AND ?2",
                 vec![Value::Text(from.clone()), Value::Text(to.clone())],
             ),
-            Window::Since(at) => ("at >= ?1", vec![Value::Integer(*at)]),
+            // The exact cut is the call time; the day bound (one calendar day of slack, the same as `count_bounds`, for rows
+            // written under another time zone) lets the planner read an index range of `idx_usage_day` instead of the table
+            Window::Since(at) => (
+                "day >= ?2 AND at >= ?1",
+                vec![
+                    Value::Integer(*at),
+                    Value::Text(crate::util::local_date(*at - 86400)),
+                ],
+            ),
         }
     }
 }
@@ -877,6 +885,30 @@ mod tests {
         );
         assert!(all.contains("USING INDEX idx_usage_day (day>?)"), "{all}");
         assert!(!all.contains("SCAN usage"), "{all}");
+    }
+
+    #[test]
+    fn since_windows_read_a_day_index_range() {
+        let (_d, store) = store();
+        // "Last 12 hours" and "Today" are both `Window::Since`: the day bound lets both tables use their day index
+        for start in [NOW - 12 * 3600, NOW - NOW % 86400] {
+            let (f, vals) = Window::Since(start).filter();
+            assert!(f.contains("day >= ?2") && f.contains("at >= ?1"), "{f}");
+            let args: Vec<&dyn rusqlite::ToSql> =
+                vals.iter().map(|v| v as &dyn rusqlite::ToSql).collect();
+            for (table, index) in [
+                ("usage", "idx_usage_day"),
+                ("gen_calls", "idx_gen_calls_day"),
+            ] {
+                let p = plan(
+                    &store,
+                    &format!("SELECT {SUMS} FROM {table} WHERE {f}"),
+                    &args,
+                );
+                assert!(p.contains(&format!("USING INDEX {index} (day>?)")), "{p}");
+                assert!(!p.contains(&format!("SCAN {table}")), "{p}");
+            }
+        }
     }
 
     #[test]

@@ -1,7 +1,7 @@
 // Application state: one typed module-level object. Page-local UI state (filters, open panels, a pending upload preview)
 // lives in module-level variables of the page file itself; only state shared between pages lives here.
 import type {
-  AiService, AttemptKind, AttemptRequest, AuthUser, Bank, BankSummary, HistoryEntry, Info, Mode, Progress, Question, RecordDetail, RecordSummary, Settings,
+  AiService, AttemptKind, AttemptRequest, AuthUser, Bank, BankCategory, BankSummary, HistoryEntry, Info, Mode, Progress, Question, RecordDetail, RecordSummary, Settings,
 } from '../types/api.ts';
 import type { UnsavedState } from './unsaved.ts';
 import { poolOf, type Answer } from '../domain/grading.ts';
@@ -112,6 +112,8 @@ export interface AppState {
   /** All active questions of all banks */
   bank: Bank | null;
   banks: BankSummary[];
+  /** v3.1: bank categories in (sort, id) order */
+  categories: BankCategory[];
   progress: Progress | null;
   /** Exam records, newest first (null until loaded) */
   records: RecordSummary[] | null;
@@ -143,6 +145,7 @@ export const S: AppState = {
   info: { version: '', arch: '', canShutdown: false },
   bank: null,
   banks: [],
+  categories: [],
   progress: null,
   records: null,
   recordsRetention: 500,
@@ -186,9 +189,10 @@ export function syncSelection(): void {
   c.known = keys;
 }
 
-export function setBankData(bank: Bank, banks: BankSummary[]): void {
+export function setBankData(bank: Bank, banks: BankSummary[], categories?: BankCategory[]): void {
   S.bank = bank;
   S.banks = banks;
+  if (categories) S.categories = categories;
   syncSelection();
 }
 

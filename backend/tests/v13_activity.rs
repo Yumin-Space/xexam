@@ -120,6 +120,7 @@ fn session(a: &App, id: i64) -> (String, String) {
             remember: false,
             ip: None,
             ua: None,
+            device_id: None,
         })
         .expect("session");
     (format!("{}={token}", auth::SESSION_COOKIE), token)
@@ -1133,28 +1134,33 @@ fn retention_never_deletes_sign_in_rows_and_the_cap_converges() {
     let before: i64 = raw(&dir.path().join("x.db"))
         .query_row("SELECT COUNT(*) FROM activity_log", [], |r| r.get(0))
         .expect("count");
-    // days = 7 removes the 4 old non-sign-in rows; a tiny cap of 2 then trims the fresh ones, never the sign-ins
+    // days = 7 removes the 4 old non-sign-in rows; a tiny cap of 2 then trims the fresh ones, never the accepted sign-ins;
+    // v3.1: the 3 refused sign-ins (400 days since their last attempt) go too, by their own fixed 90-day rule
     let deleted = store.activity_retention(now, 7, 2).expect("retention");
     let c = raw(&dir.path().join("x.db"));
     let n = |sql: &str| -> i64 { c.query_row(sql, [], |r| r.get(0)).expect("count") };
     assert_eq!(
+        n("SELECT COUNT(*) FROM activity_log WHERE action='auth.signin' AND result='ok'"),
+        3
+    );
+    assert_eq!(
         n("SELECT COUNT(*) FROM activity_log WHERE action='auth.signin'"),
-        6
+        3
     );
     assert_eq!(
         n("SELECT COUNT(*) FROM activity_log WHERE action='auth.signin' AND ip IS NOT NULL"),
-        6
+        3
     );
     assert_eq!(
         n("SELECT COUNT(*) FROM activity_log WHERE action<>'auth.signin'"),
         2
     );
-    assert_eq!(deleted, before - 8);
+    assert_eq!(deleted, before - 5);
     // a second run has nothing left to do
     assert_eq!(store.activity_retention(now, 7, 2).expect("again"), 0);
-    // cap 0: every non-sign-in row goes, the sign-ins stay, and the run ends
+    // cap 0: every non-sign-in row goes, the accepted sign-ins stay, and the run ends
     store.activity_retention(now, 7, 0).expect("cap 0");
-    assert_eq!(n("SELECT COUNT(*) FROM activity_log"), 6);
+    assert_eq!(n("SELECT COUNT(*) FROM activity_log"), 3);
 }
 
 // ---------------------------------------------------------------- marker secret

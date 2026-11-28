@@ -136,7 +136,10 @@ fn fresh_database_is_schema_2_without_a_legacy_bank() {
     let db = dir.path().join("x.db");
     let s = open_fixed(&db);
     assert!(s.migration_backup().is_none());
-    assert_eq!(s.banks().expect("banks"), json!({"banks": []}));
+    assert_eq!(
+        s.banks().expect("banks"),
+        json!({"banks": [], "categories": []})
+    );
     assert_eq!(s.bank().expect("bank")["questions"], json!([]));
     drop(s);
     let c = raw(&db);
@@ -333,7 +336,10 @@ fn migrating_the_python_sample_keeps_every_row_and_writes_a_backup() {
             // v0.6.5: the owner (the default administrator created by the migration) and whether the viewer may manage it
             "ownerId",
             "owner",
-            "manageable"
+            "manageable",
+            // v3.1: the bank's category (null = uncategorised) and its position inside its group
+            "categoryId",
+            "sort"
         ]
     );
     assert_eq!(
@@ -1170,16 +1176,80 @@ fn settings_answer_fx_default_set_reset_and_validation() {
 }
 
 #[test]
+fn settings_push_and_tz_defaults_validation_and_reset() {
+    let dir = tmp();
+    let db = dir.path().join("x.db");
+    let s = open_fixed(&db);
+    let got = s.settings(ADMIN).expect("s");
+    assert_eq!(
+        (got["push"].clone(), got["tz"].clone()),
+        (json!(true), json!("auto"))
+    );
+    let got = s
+        .update_settings(
+            ADMIN,
+            &[
+                ("push".into(), json!(false)),
+                ("tz".into(), json!("UTC")),
+                ("theme".into(), json!("dark")),
+            ],
+        )
+        .expect("update");
+    assert_eq!(
+        (got["push"].clone(), got["tz"].clone()),
+        (json!(false), json!("UTC"))
+    );
+    for bad in [
+        json!("Mars/Phobos"),
+        json!("../x"),
+        json!("/UTC"),
+        json!("a".repeat(65)),
+        json!(""),
+        json!(5),
+        json!(null),
+    ] {
+        assert!(
+            s.update_settings(ADMIN, &[("tz".into(), bad.clone())])
+                .is_err(),
+            "{bad}"
+        );
+    }
+    for bad in [json!("true"), json!(1), json!(null)] {
+        assert!(s.update_settings(ADMIN, &[("push".into(), bad)]).is_err());
+    }
+    assert!(s
+        .update_settings(ADMIN, &[("tz".into(), json!("auto"))])
+        .is_ok());
+    // reset removes neither push nor tz (and keeps questionLang)
+    s.update_settings(ADMIN, &[("tz".into(), json!("Europe/Berlin"))])
+        .expect("tz");
+    let got = s.reset_settings(ADMIN).expect("reset");
+    assert_eq!(got["theme"], "system");
+    assert_eq!(
+        (got["push"].clone(), got["tz"].clone()),
+        (json!(false), json!("Europe/Berlin"))
+    );
+}
+
+#[test]
 fn settings_defaults_update_invalid_and_reset() {
     let dir = tmp();
     let db = dir.path().join("x.db");
     let s = open_fixed(&db);
-    let defaults = json!({"theme": "system", "uiLang": "en", "autoAdvance": false, "questionLang": "en", "answerFx": true});
+    let defaults = json!({"theme": "system", "uiLang": "en", "autoAdvance": false, "questionLang": "en", "answerFx": true, "push": true, "tz": "auto"});
     let got = s.settings(ADMIN).expect("settings");
     assert_eq!(got, defaults);
     assert_eq!(
         keys(&got),
-        ["theme", "uiLang", "autoAdvance", "questionLang", "answerFx"]
+        [
+            "theme",
+            "uiLang",
+            "autoAdvance",
+            "questionLang",
+            "answerFx",
+            "push",
+            "tz"
+        ]
     );
     let got = s
         .update_settings(
@@ -1194,11 +1264,19 @@ fn settings_defaults_update_invalid_and_reset() {
         .expect("update");
     assert_eq!(
         keys(&got),
-        ["theme", "uiLang", "autoAdvance", "questionLang", "answerFx"]
+        [
+            "theme",
+            "uiLang",
+            "autoAdvance",
+            "questionLang",
+            "answerFx",
+            "push",
+            "tz"
+        ]
     );
     assert_eq!(
         got,
-        json!({"theme": "dark", "uiLang": "ja", "autoAdvance": true, "questionLang": "zh", "answerFx": true})
+        json!({"theme": "dark", "uiLang": "ja", "autoAdvance": true, "questionLang": "zh", "answerFx": true, "push": true, "tz": "auto"})
     );
     // one invalid pair: nothing written (v0.6: settings are per user, in user_settings)
     let before = rows(&raw(&db), "SELECT * FROM user_settings ORDER BY key");
@@ -1231,7 +1309,7 @@ fn settings_defaults_update_invalid_and_reset() {
     // reset keeps questionLang
     assert_eq!(
         s.reset_settings(ADMIN).expect("reset"),
-        json!({"theme": "system", "uiLang": "en", "autoAdvance": false, "questionLang": "zh", "answerFx": true})
+        json!({"theme": "system", "uiLang": "en", "autoAdvance": false, "questionLang": "zh", "answerFx": true, "push": true, "tz": "auto"})
     );
     assert_eq!(
         rows(&raw(&db), "SELECT key, value FROM user_settings"),
@@ -1312,7 +1390,7 @@ async fn api_uploads_with_and_without_a_bank_target() {
     let r = get(&a.app, "/api/banks").await;
     assert_eq!(
         (r.status, r.text().as_str()),
-        (StatusCode::OK, r#"{"banks": []}"#)
+        (StatusCode::OK, r#"{"banks": [], "categories": []}"#)
     );
 
     // no header: v0.4 behaviour, the confirm response has no bankId
@@ -1824,13 +1902,13 @@ async fn api_settings_roundtrip_validation_reset_and_restart() {
     let dir = tmp();
     let db = dir.path().join("xexam.db");
     let a = real_app_at(&db);
-    let defaults = r#"{"theme": "system", "uiLang": "en", "autoAdvance": false, "questionLang": "en", "answerFx": true}"#;
+    let defaults = r#"{"theme": "system", "uiLang": "en", "autoAdvance": false, "questionLang": "en", "answerFx": true, "push": true, "tz": "auto"}"#;
     let r = get(&a.app, "/api/settings").await;
     assert_eq!((r.status, r.text().as_str()), (StatusCode::OK, defaults));
     let r = post_json(&a.app, "/api/settings", r#"{"theme": "dark"}"#).await;
     assert_eq!(
         r.text(),
-        r#"{"theme": "dark", "uiLang": "en", "autoAdvance": false, "questionLang": "en", "answerFx": true}"#
+        r#"{"theme": "dark", "uiLang": "en", "autoAdvance": false, "questionLang": "en", "answerFx": true, "push": true, "tz": "auto"}"#
     );
     let r = post_json(
         &a.app,
@@ -1840,7 +1918,7 @@ async fn api_settings_roundtrip_validation_reset_and_restart() {
     .await;
     assert_eq!(
         r.text(),
-        r#"{"theme": "dark", "uiLang": "zh", "autoAdvance": true, "questionLang": "en", "answerFx": true}"#
+        r#"{"theme": "dark", "uiLang": "zh", "autoAdvance": true, "questionLang": "en", "answerFx": true, "push": true, "tz": "auto"}"#
     );
     let r = post_json(&a.app, "/api/settings", "{}").await;
     assert_eq!(r.status, 200, "an empty update just answers the settings");
@@ -1858,6 +1936,11 @@ async fn api_settings_roundtrip_validation_reset_and_restart() {
         r#"{"answerFx": null}"#,
         r#"{"questionLang": 1}"#,
         r#"{"theme": "light", "uiLang": "xx"}"#,
+        r#"{"push": "true"}"#,
+        r#"{"push": null}"#,
+        r#"{"tz": "Mars/Phobos"}"#,
+        r#"{"tz": "../x"}"#,
+        r#"{"tz": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}"#,
     ] {
         let r = post_json(&a.app, "/api/settings", body).await;
         assert_eq!(
@@ -1872,7 +1955,7 @@ async fn api_settings_roundtrip_validation_reset_and_restart() {
     let a = real_app_at(&db);
     assert_eq!(
         get(&a.app, "/api/settings").await.text(),
-        r#"{"theme": "dark", "uiLang": "zh", "autoAdvance": true, "questionLang": "en", "answerFx": true}"#
+        r#"{"theme": "dark", "uiLang": "zh", "autoAdvance": true, "questionLang": "en", "answerFx": true, "push": true, "tz": "auto"}"#
     );
     let r = post_raw(
         &a.app,
@@ -1885,7 +1968,7 @@ async fn api_settings_roundtrip_validation_reset_and_restart() {
         (r.status, r.text().as_str()),
         (
             StatusCode::OK,
-            r#"{"theme": "system", "uiLang": "en", "autoAdvance": false, "questionLang": "en", "answerFx": true}"#
+            r#"{"theme": "system", "uiLang": "en", "autoAdvance": false, "questionLang": "en", "answerFx": true, "push": true, "tz": "auto"}"#
         )
     );
     let r = post_json(&a.app, "/api/settings/reset", "{}").await;

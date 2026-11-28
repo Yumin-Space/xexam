@@ -1,4 +1,4 @@
-//! Schema v1 → v2 (v0.5), run by `Store::open` (the whole chain below ends at schema 11).
+//! Schema v1 → v2 (v0.5), run by `Store::open` (the whole chain below ends at schema 13).
 //!
 //! - `meta.schema` missing or `"1"`: if the database holds any data, first write a consistent copy with `VACUUM INTO` to
 //!   `<dir of the database>/backups/xexam-schema1-<YYYYmmdd-HHMMSS>.db` (never overwriting: `-2`, `-3`, … suffixes). If that fails,
@@ -100,16 +100,24 @@
 //! step in the same transaction; a v11 file gets its single backup (`xexam-schema11-…`) and only this step. The one
 //! `system.migrate` row now says `"to": 12`. A v2.5 binary opens a v12 file unchanged.
 //!
+//! Schema v12 -> v13 (v3.1): the v13 step is additive and runs after the v12 step in the same transaction (a v12 file that holds
+//! data gets its single backup `xexam-schema12-...`): `bank_categories`, `banks.category_id` / `banks.sort` and their index,
+//! `devices`, `sessions.device_id` and its index, `push_subscriptions`, `saved_sessions`, `push_outbox`, and the unused
+//! `idx_questions_sheet` is dropped. The `system.migrate` row now says `"to": 13` and takes its time from the injected clock.
+//! Every open of a schema-13 file also drops `idx_questions_sheet` again when an older binary re-created it. A v3.0 binary
+//! opens a v13 file unchanged.
+//!
 //! Any surprise rolls the whole transaction back: the file is unchanged, the backup stays, `meta.schema` is unchanged and the
 //! next start tries again (with a new backup). A v1.9 binary opens a v11 file as it is (it treats a newer schema as
 //! current), but it re-creates an empty `stats` on every open; the every-open checks drop it again.
 use super::super::pyjson;
 use super::super::schema::{
-    Rebuild, MIGRATE_V2_INDEXES, MIGRATE_V2_TABLES, MIGRATE_V3_INDEXES, MIGRATE_V3_TABLES,
-    MIGRATE_V4_INDEXES, MIGRATE_V4_TABLES, MIGRATE_V7_INDEXES, MIGRATE_V8_INDEXES,
-    MIGRATE_V8_TABLES, SCHEMA_VERSION, V10_COLUMNS, V11_REBUILDS, V11_USERS_UID_INDEX, V12_COLUMNS,
-    V12_DISPLAY_NAME_INDEX, V2_COLUMNS, V3_COLUMNS, V4_COLUMNS, V5_COLUMNS, V6_COLUMNS, V7_COLUMNS,
-    V8_COLUMNS, V9_COLUMNS,
+    Rebuild, MIGRATE_V13_CATEGORIES, MIGRATE_V13_DEVICES, MIGRATE_V13_PUSH, MIGRATE_V2_INDEXES,
+    MIGRATE_V2_TABLES, MIGRATE_V3_INDEXES, MIGRATE_V3_TABLES, MIGRATE_V4_INDEXES,
+    MIGRATE_V4_TABLES, MIGRATE_V7_INDEXES, MIGRATE_V8_INDEXES, MIGRATE_V8_TABLES, SCHEMA_VERSION,
+    V10_COLUMNS, V11_REBUILDS, V11_USERS_UID_INDEX, V12_COLUMNS, V12_DISPLAY_NAME_INDEX,
+    V13_BANK_COLUMNS, V13_BANK_INDEX, V13_DROP_INDEXES, V13_SESSION_COLUMNS, V13_SESSION_INDEX,
+    V2_COLUMNS, V3_COLUMNS, V4_COLUMNS, V5_COLUMNS, V6_COLUMNS, V7_COLUMNS, V8_COLUMNS, V9_COLUMNS,
 };
 use super::super::timefmt::{local_file_stamp, Clock};
 use super::{banks, get_meta, run_tx, users};
@@ -134,7 +142,7 @@ pub(super) struct Upgrade {
     pub report: MigrationReport,
 }
 
-/// Brings the database opened at `db_path` up to schema v12.
+/// Brings the database opened at `db_path` up to schema v13.
 pub(super) fn upgrade(
     conn: &Connection,
     db_path: &Path,
@@ -153,12 +161,13 @@ pub(super) fn upgrade(
         Some("9") => 9,
         Some("10") => 10,
         Some("11") => 11,
-        // "12", or a newer schema written by a later version: nothing to migrate
-        Some(_) => 12,
+        Some("12") => 12,
+        // "13", or a newer schema written by a later version: nothing to migrate
+        Some(_) => 13,
     };
     // Read-only check, before anything is written
     let pre = from == 4 && is_prerelease_v4(conn)?;
-    if from < 12 || pre {
+    if from < 13 || pre {
         // ONE backup of the state before this open, named after the schema the file had
         let had_data = has_any_data(conn)?;
         if had_data {
@@ -200,8 +209,9 @@ pub(super) fn upgrade(
                     MigrationReport::default()
                 };
                 migrate_v12(c)?;
+                migrate_v13(c)?;
                 if had_data {
-                    write_migrate_row(c, from, report.orphans_removed())?;
+                    write_migrate_row(c, from, report.orphans_removed(), clock.unix())?;
                 }
                 Ok((created, report))
             })
@@ -1079,16 +1089,38 @@ fn migrate_v12(c: &Connection) -> Result<(), DbError> {
         }
     }
     c.execute_batch(V12_DISPLAY_NAME_INDEX)?;
+    set_schema(c, "12")
+}
+
+/// The v13 step (inside the caller's transaction): categories, devices, push tables, the dropped index; stamps the schema.
+/// The order below fixes the `sqlite_master` order (the golden object list depends on it).
+fn migrate_v13(c: &Connection) -> Result<(), DbError> {
+    c.execute_batch(MIGRATE_V13_CATEGORIES)?;
+    for (table, column, definition) in V13_BANK_COLUMNS {
+        if !has_column(c, table, column)? {
+            c.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {definition};"))?;
+        }
+    }
+    c.execute_batch(V13_BANK_INDEX)?;
+    c.execute_batch(MIGRATE_V13_DEVICES)?;
+    for (table, column, definition) in V13_SESSION_COLUMNS {
+        if !has_column(c, table, column)? {
+            c.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {definition};"))?;
+        }
+    }
+    c.execute_batch(V13_SESSION_INDEX)?;
+    c.execute_batch(MIGRATE_V13_PUSH)?;
+    c.execute_batch(V13_DROP_INDEXES)?;
     set_schema(c, SCHEMA_VERSION)
 }
 
 /// The one `system.migrate` activity row of an upgrade of a file that held data.
-fn write_migrate_row(c: &Connection, from: u32, removed: i64) -> Result<(), DbError> {
-    let unix = jiff::Timestamp::now().as_second();
+fn write_migrate_row(c: &Connection, from: u32, removed: i64, unix: i64) -> Result<(), DbError> {
+    let to: u32 = SCHEMA_VERSION.parse().unwrap_or(13);
     let detail = if removed > 0 {
-        json!({ "from": from, "to": 12, "orphansRemoved": removed })
+        json!({ "from": from, "to": to, "orphansRemoved": removed })
     } else {
-        json!({ "from": from, "to": 12 })
+        json!({ "from": from, "to": to })
     };
     c.execute(
         "INSERT INTO activity_log(ts, last_ts, actor, action, detail, result) VALUES(?1, ?1, 'system', 'system.migrate', ?2, 'ok')",
@@ -1135,6 +1167,20 @@ fn post_checks(c: &Connection, report: &mut MigrationReport) -> Result<(), DbErr
             })?;
         } else {
             report.kept_legacy.push((table, n));
+        }
+    }
+    // A v1.9 binary re-creates `idx_questions_sheet` with the v1 text; schema 13 does not want it
+    if matches!(
+        get_meta(c, "schema")?.and_then(|v| v.parse::<u32>().ok()),
+        Some(n) if n >= 13
+    ) {
+        let has_sheet_index: bool = c.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='index' AND name='idx_questions_sheet')",
+            [],
+            |r| r.get(0),
+        )?;
+        if has_sheet_index {
+            run_tx(c, |c| Ok(c.execute_batch(V13_DROP_INDEXES)?))?;
         }
     }
     if table_exists(c, "users")? && has_column(c, "users", "uid")? {

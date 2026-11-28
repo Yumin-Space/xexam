@@ -3,6 +3,7 @@
 // stems are resolved from the loaded bank, so no question text travels over the API. The old Home (exam setup) is the
 // "Exam & practice" page (pages/study.ts).
 import { planeDoodle } from '../components/doodle.ts';
+import { guideCard } from '../components/guide.ts';
 import { rankBoard, rankBoardSkeleton, rankPoints } from '../components/rank-board.ts';
 import '../styles/dashboard.css';
 import { AI_BADGE_TEXT } from '../components/ai-badge.ts';
@@ -205,6 +206,7 @@ export function renderDashboard(): HTMLElement {
   ensureDashboard();
   return h('div', { class: 'page page-dash' },
     hello(),
+    guideCard({ fromSettings: false }),
     resumeCard(),
     tiles(),
     h('section', { class: 'panel dash-rank', 'aria-labelledby': 'dash-rank-h' },

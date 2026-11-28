@@ -250,6 +250,7 @@ pub fn app_with(cfg: Config, ttl: Option<Duration>) -> TestApp {
         ai_link: Default::default(),
         activity: Default::default(),
         gates: Default::default(),
+        push: Default::default(),
     }));
     TestApp {
         router: signed_in_router(&state),

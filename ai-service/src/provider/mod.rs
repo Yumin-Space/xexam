@@ -118,7 +118,7 @@ pub fn tls_config() -> Result<rustls::ClientConfig, String> {
     Ok(cfg)
 }
 
-fn base_builder() -> Result<reqwest::ClientBuilder, String> {
+pub(crate) fn base_builder() -> Result<reqwest::ClientBuilder, String> {
     Ok(reqwest::Client::builder()
         .tls_backend_preconfigured(tls_config()?)
         .no_proxy()

@@ -12,10 +12,15 @@ export const DEFAULT_SETTINGS: Readonly<Settings> = Object.freeze({
   autoAdvance: false,
   questionLang: 'en',
   answerFx: true,
+  push: true,
+  tz: 'auto',
 });
 
 const isTheme = (v: unknown): v is Theme => v === 'system' || v === 'light' || v === 'dark';
 const isQuestionLang = (v: unknown): v is QuestionLang => v === 'ja' || v === 'zh' || v === 'en';
+
+/** 'auto', or an IANA-looking zone name: 1..64 chars of [A-Za-z0-9_+\-/] (the server validates it for real) */
+const isTz = (v: unknown): v is string => typeof v === 'string' && v.length <= 64 && /^[A-Za-z0-9_+\-/]+$/.test(v);
 
 /** Accepts anything; returns a complete, valid Settings object (invalid fields fall back to the defaults). */
 export function normalizeSettings(raw: unknown): Settings {
@@ -26,6 +31,8 @@ export function normalizeSettings(raw: unknown): Settings {
     autoAdvance: typeof o.autoAdvance === 'boolean' ? o.autoAdvance : DEFAULT_SETTINGS.autoAdvance,
     questionLang: isQuestionLang(o.questionLang) ? o.questionLang : DEFAULT_SETTINGS.questionLang,
     answerFx: typeof o.answerFx === 'boolean' ? o.answerFx : DEFAULT_SETTINGS.answerFx,
+    push: typeof o.push === 'boolean' ? o.push : DEFAULT_SETTINGS.push,
+    tz: isTz(o.tz) ? o.tz : DEFAULT_SETTINGS.tz,
   };
 }
 

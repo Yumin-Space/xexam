@@ -25,8 +25,8 @@ const session = memStorage();
 // A Japanese browser
 Object.defineProperty(globalThis, 'navigator', { value: { language: 'ja-JP', languages: ['ja-JP', 'en'] }, configurable: true });
 
-const ZH = { theme: 'dark', uiLang: 'zh', autoAdvance: true, questionLang: 'zh', answerFx: false } as const;
-const EN = { theme: 'light', uiLang: 'en', autoAdvance: false, questionLang: 'ja', answerFx: true } as const;
+const ZH = { theme: 'dark', uiLang: 'zh', autoAdvance: true, questionLang: 'zh', answerFx: false, push: false, tz: 'UTC' } as const;
+const EN = { theme: 'light', uiLang: 'en', autoAdvance: false, questionLang: 'ja', answerFx: true, push: true, tz: 'auto' } as const;
 
 beforeEach(() => {
   local.mem.clear();
@@ -35,7 +35,7 @@ beforeEach(() => {
 });
 
 test('nobody signed in on this browser yet: the browser language', () => {
-  assert.deepEqual(firstPaintSettings(), { theme: 'system', uiLang: 'ja', autoAdvance: false, questionLang: 'en', answerFx: true });
+  assert.deepEqual(firstPaintSettings(), { theme: 'system', uiLang: 'ja', autoAdvance: false, questionLang: 'en', answerFx: true, push: true, tz: 'auto' });
 });
 
 test('the cache of the user who signed in last paints the page', () => {
@@ -94,4 +94,17 @@ test('answer effects are on by default and a missing or odd value falls back to 
   assert.equal(normalizeSettings({}).answerFx, true);
   assert.equal(normalizeSettings({ answerFx: 'no' }).answerFx, true);
   assert.equal(normalizeSettings({ answerFx: false }).answerFx, false);
+});
+
+test('notifications default to on and the time zone to auto; odd values fall back', () => {
+  assert.equal(DEFAULT_SETTINGS.push, true);
+  assert.equal(DEFAULT_SETTINGS.tz, 'auto');
+  assert.equal(normalizeSettings({}).push, true);
+  assert.equal(normalizeSettings({ push: 'no' }).push, true);
+  assert.equal(normalizeSettings({ push: false }).push, false);
+  assert.equal(normalizeSettings({}).tz, 'auto');
+  assert.equal(normalizeSettings({ tz: 'UTC' }).tz, 'UTC');
+  assert.equal(normalizeSettings({ tz: 'America/Argentina/Buenos_Aires' }).tz, 'America/Argentina/Buenos_Aires');
+  assert.equal(normalizeSettings({ tz: 'Etc/GMT+5' }).tz, 'Etc/GMT+5');
+  for (const bad of ['', 'Mars Base', 'a'.repeat(65), 5, null, '../x?']) assert.equal(normalizeSettings({ tz: bad }).tz, 'auto', String(bad));
 });

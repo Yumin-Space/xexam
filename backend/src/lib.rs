@@ -13,6 +13,8 @@
 //! - `auth`      accounts (v0.6): password hashing, session tokens and cookie, login throttle, input rules
 //! - `activity`  activity log (v1.3): who did what, written by one queue + writer task, read by the administrators
 //! - `geo`       place of a sign-in address (v1.4): the Cloudflare headers or an external lookup run by ai-service
+//! - `push`      web push (v3.1): VAPID key, RFC 8291 encryption, notification texts, quiet hours and the scheduler;
+//!   the ai-service only delivers the encrypted messages
 //! - `logs`      system log (v0.7): a `tracing` layer keeping the most recent log lines in memory for `GET /api/logs`
 
 pub mod activity;
@@ -26,5 +28,6 @@ pub mod geo;
 pub mod logs;
 pub mod models;
 pub mod parser;
+pub mod push;
 pub mod security;
 pub mod services;

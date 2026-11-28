@@ -168,7 +168,7 @@ fn add_columns(c: &rusqlite::Connection, list: &[(&str, &str, &str)], skip: &[&s
 
 fn build_historic(path: &Path, n: u32, prerelease_v4: bool) {
     use xexam_backend::database::schema as sc;
-    assert!((1..=10).contains(&n), "schema {n}");
+    assert!((1..=12).contains(&n), "schema {n}");
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).expect("create dir");
     }
@@ -217,6 +217,31 @@ fn build_historic(path: &Path, n: u32, prerelease_v4: bool) {
     if n >= 10 {
         add_columns(&c, &sc::V10_COLUMNS, &[]);
     }
+    if n >= 11 {
+        // The v11 step on an empty file, from the same constants and in the same order as `migrate_v11` (foreign keys off, as
+        // the upgrade runs it): legacy tables dropped, the uid index, then the nine rebuilds with their indexes after the rename
+        c.execute_batch("PRAGMA foreign_keys=OFF").expect("fk off");
+        c.execute_batch("DROP TABLE IF EXISTS stats; DROP TABLE IF EXISTS settings;")
+            .expect("drop legacy tables");
+        c.execute_batch(sc::V11_USERS_UID_INDEX).expect("uid index");
+        for r in &sc::V11_REBUILDS {
+            c.execute_batch(r.create).expect("rebuild create");
+            c.execute_batch(&format!(
+                "INSERT INTO new_{t}({cols}) SELECT {cols} FROM {t}; DROP TABLE {t}; ALTER TABLE new_{t} RENAME TO {t};",
+                t = r.table,
+                cols = r.columns
+            ))
+            .expect("rebuild copy");
+            if !r.indexes.is_empty() {
+                c.execute_batch(r.indexes).expect("rebuild indexes");
+            }
+        }
+    }
+    if n >= 12 {
+        add_columns(&c, &sc::V12_COLUMNS, &[]);
+        c.execute_batch(sc::V12_DISPLAY_NAME_INDEX)
+            .expect("v12 index");
+    }
     // schema 1 files may have no stamp at all; a stamp "1" is read the same way
     c.execute(
         "INSERT INTO meta(key, value) VALUES('schema', ?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -225,7 +250,7 @@ fn build_historic(path: &Path, n: u32, prerelease_v4: bool) {
     .expect("stamp");
 }
 
-/// A genuine, empty schema-`n` file (1..=10) built from the public schema constants in chain order, with `meta.schema = n`.
+/// A genuine, empty schema-`n` file (1..=12) built from the public schema constants in chain order, with `meta.schema = n`.
 /// No default administrator and no `meta` marks: tests add self-made rows with raw rusqlite (the bundled SQLite has foreign keys ON on a raw
 /// connection: switch them off first to plant orphans).
 pub fn historic(path: &Path, n: u32) {
@@ -236,3 +261,49 @@ pub fn historic(path: &Path, n: u32) {
 pub fn historic_prerelease_v4(path: &Path) {
     build_historic(path, 4, true);
 }
+
+/// The type and name of every object a schema-12 database (v3.0) has, in `sqlite_master` rowid order.
+pub const SCHEMA_12_OBJECTS_V30: [(&str, &str); 42] = [
+    ("table", "meta"),
+    ("index", "sqlite_autoindex_meta_1"),
+    ("table", "sqlite_sequence"),
+    ("table", "users"),
+    ("index", "sqlite_autoindex_users_1"),
+    ("table", "activity_log"),
+    ("index", "idx_activity_ts"),
+    ("index", "idx_activity_user"),
+    ("index", "idx_activity_action"),
+    ("index", "idx_activity_prune"),
+    ("index", "idx_activity_src"),
+    ("table", "system_settings"),
+    ("index", "sqlite_autoindex_system_settings_1"),
+    ("index", "idx_users_uid"),
+    ("table", "banks"),
+    ("index", "idx_banks_owner"),
+    ("index", "idx_banks_ai_job"),
+    ("table", "questions"),
+    ("index", "sqlite_autoindex_questions_1"),
+    ("index", "idx_questions_sheet"),
+    ("index", "idx_questions_bank"),
+    ("index", "idx_questions_layout"),
+    ("table", "imports"),
+    ("index", "idx_imports_bank"),
+    ("table", "attempts"),
+    ("index", "idx_attempts_user"),
+    ("index", "idx_attempts_session"),
+    ("table", "attempt_items"),
+    ("index", "sqlite_autoindex_attempt_items_1"),
+    ("index", "idx_attempt_items_question"),
+    ("table", "sessions"),
+    ("index", "sqlite_autoindex_sessions_1"),
+    ("index", "idx_sessions_user"),
+    ("table", "user_stats"),
+    ("index", "sqlite_autoindex_user_stats_1"),
+    ("index", "idx_user_stats_question"),
+    ("table", "user_settings"),
+    ("index", "sqlite_autoindex_user_settings_1"),
+    ("table", "user_banks"),
+    ("index", "sqlite_autoindex_user_banks_1"),
+    ("index", "idx_user_banks_bank"),
+    ("index", "idx_users_display_name"),
+];

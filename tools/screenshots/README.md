@@ -1,7 +1,7 @@
 # Screenshot tool
 
-Retakes every screenshot of the READMEs and docs (`docs/<lang>/screenshots/`, 28 desktop and 10 iPhone images per
-language, 38 in all) from a throw-away Xexam instance that holds only made-up demo data. Every value the images show is
+Retakes every screenshot of the READMEs and docs (`docs/<lang>/screenshots/`, 30 desktop and 12 iPhone images per
+language, 42 in all, plus two iPhone images of the practice answer effects for the README gallery) from a throw-away Xexam instance that holds only made-up demo data. Every value the images show is
 made up, also on the AI pages: the stub's address `http://ai-stub:9000/v1`, the fake key (shown as `…9c21`), the
 `demo-*` models, the demo users and banks. The tool never connects to any other instance, so real addresses, keys or
 model choices cannot appear. Run it from the repository root:
@@ -96,6 +96,14 @@ A full run of the three languages takes a few minutes, plus the image builds whe
      with a name per language: Home with the AI+ Set row and the done card, the AI banks tab of AI settings with the job,
      Bank management on a phone. The AI bank is deleted right after these images, so no other scene asks its made-up
      questions.
+   - **v3.1** (`desktop-28-categories`, `desktop-29-devices`, `iphone-13-guide`, `iphone-14-notifications`): the Banks page as the
+     administrator with the category manager open (the seed holds two made-up categories: `Science` with General knowledge, `Everyday life`
+     with Kitchen basics, created by `seed.categorize` through the API); User management with the device dialog of sam while the
+     sign-in info eye is open (sam has three devices: the seed's, a desktop and an iPhone, signed in from made-up documentation
+     addresses 203.0.113.x / 198.51.100.x; `seed.Session` sends a stable device cookie so a re-run reuses the rows); Home on an
+     iPhone with the phone guide card at step 1; Settings on an iPhone from Notifications down to Install as an app. The setup of
+     every other scene sets `localStorage['xexam.guide.v1'] = 'dismissed'` (`JS_SETUP`), because 127.0.0.1 is a secure context and
+     an iPhone user agent would show the guide on every phone Home image; only `iphone-13-guide` clears it, and sets it again after.
    Their asks are saved in AI Chat; the run deletes the administrator's AI chats before the AI Chat scenes and at the
    end. Each language adds a few calls to the AI usage numbers, so they differ slightly between the languages. PNG text,
    time and EXIF chunks are removed (`browser.strip_png`).
@@ -123,9 +131,9 @@ first is retried with another one), and `npm ci` (only when `frontend/node_modul
 | File | Purpose |
 |---|---|
 | `retake.py` | Entry point: options, backend and ai-service, frontend, seeding, the languages, clean-up |
-| `demo_banks.py` | The made-up demo question banks |
+| `demo_banks.py` | The made-up demo question banks (and which made-up category holds each, `CATEGORY_OF`) |
 | `seed.py` | Users, banks, records, the AI setup (with the AI+ feature of sam and alex, alex paused) and the System log activity, through the API |
-| `scenes.py` | The 38 scenes (the AI+ panel, result, summary, AI Chat, the AI settings tabs and safety limits included), the layout / feedback checks, and how each image is sized |
+| `scenes.py` | The 42 scenes and the two answer-effect scenes (the AI+ panel, result, summary, AI Chat, the AI settings tabs and safety limits included), the layout / feedback checks, and how each image is sized |
 | `browser.py` | Finding and starting Chrome, a small DevTools (CDP) client, PNG metadata removal |
 | `../../tests/integration/ai_stub.py` | The made-up AI provider (shared with the stack check of CI) |
 
@@ -136,7 +144,14 @@ with an AI+ badge) by eye before it is committed: only the made-up values above 
 The app icons in `frontend/public/` are made by a separate script, `tools/icons/make_icons.py`, which uses
 `browser.py` from this folder.
 
-The README gallery images (`docs/<lang>/screenshots/readme/`) show the dark theme. Retake the seven source images dark
+The README gallery images (`docs/<lang>/screenshots/readme/`) show the dark theme. Retake the nine source images dark
 into a separate folder (`retake.py --theme dark --out /tmp/dark --only ...`, the list is at the top of `readme_shots.py`),
 then run `python tools/screenshots/readme_shots.py --from /tmp/dark`: it cuts the top of each page at the screen size,
 scales it down and draws a thin grey frame (needs Pillow).
+
+Two of them (v3.0) show the practice answer effects on a phone, taken mid-effect: `iphone-11-fx-right.png` (a right answer
+checked, the confetti spraying up, 0.75 s into the effect) and `iphone-12-fx-wrong.png` (a wrong answer checked, both claw
+swipes on screen, 1.15 s into the effect, after the card shake). The scene waits until the effect layer (`.fx-layer`) is added, then the fixed
+delay, and tries once more when no layer appears. The setup turns the answer effects off for every other image; these two
+switch them on and off again afterwards. They are taken with `--theme dark` or when `--only` names them; a full light run
+skips them, as the docs do not show them.

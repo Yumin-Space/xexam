@@ -120,6 +120,11 @@ async fn serve(cfg: Config) -> i32 {
         app.clone(),
         app.0.shutdown.clone(),
     ));
+    // The push courier of the main backend (runs with AI+ on or off)
+    tasks.push(xexam_ai_service::push::worker::spawn(
+        app.clone(),
+        app.0.shutdown.clone(),
+    ));
     let router = xexam_ai_service::api::build_router(app.clone());
     let notify = std::sync::Arc::new(tokio::sync::Notify::new());
     let n2 = notify.clone();

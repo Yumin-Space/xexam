@@ -49,7 +49,12 @@
 //!   their next sign-in). Names are unique case-insensitively among the set ones; `users.username` stays the login. A v2.5
 //!   binary opens a v12 file unchanged (its inserts leave the column NULL).
 
-pub const SCHEMA_VERSION: &str = "12";
+//! - Schema v13 (v3.1) is additive: bank categories (`bank_categories`, `banks.category_id`, `banks.sort`), one row per browser per
+//!   user (`devices`, `sessions.device_id`), web push (`push_subscriptions`, `push_outbox`), the server-side marker of an unfinished
+//!   practice / exam (`saved_sessions`), and the unused `idx_questions_sheet` is dropped. A v3.0 binary opens a v13 file unchanged;
+//!   deleting a user who has rows in the new tables then fails until the v3.0 rollback SQL ran (docs/en/database.md section 6.22).
+
+pub const SCHEMA_VERSION: &str = "13";
 
 pub const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS meta (
@@ -500,3 +505,127 @@ pub const V12_COLUMNS: [(&str, &str, &str); 1] = [
 
 /// Unique, case-insensitive display names (set ones only). Created after the column, idempotent.
 pub const V12_DISPLAY_NAME_INDEX: &str = "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_display_name ON users(display_name COLLATE NOCASE) WHERE display_name IS NOT NULL";
+
+/// v13 (v3.1): bank categories, one level, edited by administrators only.
+pub const MIGRATE_V13_CATEGORIES: &str = "
+CREATE TABLE IF NOT EXISTS bank_categories (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  name       TEXT NOT NULL UNIQUE COLLATE NOCASE CHECK (name <> '' AND length(name) <= 60),
+  sort       INTEGER NOT NULL DEFAULT 0 CHECK (sort >= 0),
+  created_at INTEGER NOT NULL,   -- unix seconds
+  updated_at INTEGER NOT NULL    -- unix seconds
+);";
+
+/// v13 columns of `banks` (same rules as `V2_COLUMNS`), in this order.
+pub const V13_BANK_COLUMNS: [(&str, &str, &str); 2] = [
+    // NULL = uncategorised. Moving a bank never changes `banks.updated_at` (content time, part of the library stamp)
+    (
+        "banks",
+        "category_id",
+        "category_id INTEGER REFERENCES bank_categories(id) ON DELETE NO ACTION",
+    ),
+    // Position inside its category (or among the uncategorised banks), 1..n once placed; 0 = not placed yet (new banks).
+    // Groups are ordered by ((sort = 0), sort, id), so unplaced banks follow the placed ones in id order
+    (
+        "banks",
+        "sort",
+        "sort INTEGER NOT NULL DEFAULT 0 CHECK (sort >= 0)",
+    ),
+];
+
+pub const V13_BANK_INDEX: &str =
+    "CREATE INDEX IF NOT EXISTS idx_banks_category ON banks(category_id, sort);";
+
+/// v13: one row per browser per user (the random `xexam_did` cookie, stored as its SHA-256), with that browser's sign-in
+/// and last-activity facts. IP and place columns follow the sign-in info switch exactly like `users.last_*`.
+pub const MIGRATE_V13_DEVICES: &str = "
+CREATE TABLE IF NOT EXISTS devices (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE NO ACTION,
+  cookie_hash    TEXT NOT NULL CHECK (length(cookie_hash) = 64 AND cookie_hash NOT GLOB '*[^0-9a-f]*'),
+  created_at     INTEGER NOT NULL,
+  active_at      INTEGER NOT NULL,
+  active_ip      TEXT,
+  active_country TEXT,
+  active_region  TEXT,
+  active_city    TEXT,
+  signin_at      INTEGER,
+  signin_ip      TEXT,
+  signin_country TEXT,
+  signin_region  TEXT,
+  signin_city    TEXT,
+  ua             TEXT CHECK (ua IS NULL OR length(ua) <= 256),
+  app            INTEGER NOT NULL DEFAULT 0 CHECK (app IN (0, 1)),
+  tz             TEXT CHECK (tz IS NULL OR length(tz) <= 64),
+  signed_out_at  INTEGER,
+  UNIQUE (user_id, cookie_hash)
+);";
+
+/// v13 column of `sessions`: the device the session belongs to (NULL = a session made before v3.1 or by an older binary;
+/// linked at its next request).
+pub const V13_SESSION_COLUMNS: [(&str, &str, &str); 1] = [(
+    "sessions",
+    "device_id",
+    "device_id INTEGER REFERENCES devices(id) ON DELETE NO ACTION",
+)];
+
+pub const V13_SESSION_INDEX: &str =
+    "CREATE INDEX IF NOT EXISTS idx_sessions_device ON sessions(device_id);";
+
+/// v13: web push. One subscription per device; the outbox is queue and 7-day delivery log in one table; the saved-session
+/// marker drives the practice / exam reminders.
+pub const MIGRATE_V13_PUSH: &str = "
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  device_id    INTEGER NOT NULL UNIQUE REFERENCES devices(id) ON DELETE NO ACTION,
+  endpoint     TEXT NOT NULL UNIQUE CHECK (substr(endpoint, 1, 8) = 'https://' AND length(endpoint) <= 2048),
+  p256dh       TEXT NOT NULL CHECK (length(p256dh) = 87),
+  auth         TEXT NOT NULL CHECK (length(auth) = 22),
+  key_id       TEXT NOT NULL CHECK (length(key_id) = 16 AND key_id NOT GLOB '*[^0-9a-f]*'),
+  created_at   INTEGER NOT NULL,
+  confirmed_at INTEGER NOT NULL,
+  expires_at   INTEGER,
+  last_ok_at   INTEGER,
+  last_fail_at INTEGER,
+  last_status  INTEGER,
+  failures     INTEGER NOT NULL DEFAULT 0 CHECK (failures >= 0)
+);
+CREATE TABLE IF NOT EXISTS saved_sessions (
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE NO ACTION,
+  session_key TEXT NOT NULL CHECK (length(session_key) = 32 AND session_key NOT GLOB '*[^0-9a-f]*'),
+  device_id   INTEGER REFERENCES devices(id) ON DELETE NO ACTION,
+  kind        TEXT NOT NULL CHECK (kind IN ('exam', 'practice')),
+  answered    INTEGER NOT NULL CHECK (answered >= 0),
+  total       INTEGER NOT NULL CHECK (total BETWEEN 1 AND 100000),
+  started_at  INTEGER NOT NULL,
+  time_left   INTEGER,
+  saved_at    INTEGER NOT NULL,
+  remind_at   INTEGER,
+  reminders   INTEGER NOT NULL DEFAULT 0 CHECK (reminders BETWEEN 0 AND 3),
+  PRIMARY KEY (user_id, session_key),
+  CHECK (answered <= total),
+  CHECK (time_left IS NULL OR (kind = 'exam' AND time_left BETWEEN 0 AND 36000))
+);
+CREATE INDEX IF NOT EXISTS idx_saved_sessions_device ON saved_sessions(device_id);
+CREATE TABLE IF NOT EXISTS push_outbox (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  subscription_id INTEGER NOT NULL REFERENCES push_subscriptions(id) ON DELETE NO ACTION,
+  kind            TEXT NOT NULL CHECK (kind IN ('remind', 'bank', 'version', 'test')),
+  topic           TEXT CHECK (topic IS NULL OR (length(topic) BETWEEN 1 AND 32 AND topic NOT GLOB '*[^A-Za-z0-9_-]*')),
+  payload         TEXT NOT NULL CHECK (json_valid(payload) AND length(CAST(payload AS BLOB)) <= 1024),
+  urgency         TEXT NOT NULL DEFAULT 'normal' CHECK (urgency IN ('very-low', 'low', 'normal', 'high')),
+  created_at      INTEGER NOT NULL,
+  expires_at      INTEGER NOT NULL,
+  state           TEXT NOT NULL DEFAULT 'queued' CHECK (state IN ('queued', 'leased', 'sent', 'failed', 'expired')),
+  next_at         INTEGER NOT NULL,
+  tries           INTEGER NOT NULL DEFAULT 0 CHECK (tries >= 0),
+  status          INTEGER,
+  done_at         INTEGER,
+  CHECK ((state IN ('queued', 'leased')) = (done_at IS NULL)),
+  CHECK (expires_at > created_at)
+);
+CREATE INDEX IF NOT EXISTS idx_push_outbox_sub ON push_outbox(subscription_id);
+CREATE INDEX IF NOT EXISTS idx_push_outbox_due ON push_outbox(next_at) WHERE state IN ('queued', 'leased');";
+
+/// v13: indexes dropped (no query filters on `sheet` without `bank_id`; `idx_questions_layout` serves every sheet filter).
+pub const V13_DROP_INDEXES: &str = "DROP INDEX IF EXISTS idx_questions_sheet;";

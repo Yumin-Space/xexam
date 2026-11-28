@@ -6,6 +6,25 @@ Xexam 每个版本的变化，最新的版本排在最前面。程序里的 **�
 
 <!-- Every update adds one entry at the very top of all three changelogs (docs/en, docs/ja and docs/zh-CN): ### vX.Y — date, with the version equal to CODE_VERSION in VERSION and the same headings in all three (CI checks this). The About page shows the entries and the GitHub Release notes come from the English one, so keep to simple Markdown: paragraphs, "- " bullets, nested "  - " bullets, **bold** and `code`. Links are relative to this folder. -->
 
+### v3.1 — 2026-11-29
+
+**题库分类，练习提醒和题库动态的通知，把 Xexam 安装成应用 并在手机上有分步引导，登录设备列表，以及时区设置。主库 schema 13（从 12 升级），AI 库 schema 11（不变）；新增可选变量 `XEXAM_PUSH_SUBJECT` 和 `XEXAM_PUSH_VAPID_KEY`。升级：拉取新镜像；回退到 v3.0 之后如果要删除用户，需要 [migration.md](migration.md) 里的那段 SQL，或者恢复 schema 12 的备份。**
+
+- **题库分类**：管理员可以在题库页把题库放进一层分类（**分类管理**：新建、改名、删除分类，调整分类和分类里题库的顺序；选中题库后用 **移到分类…**）。题库页、**考试&练习** 的选择区（分类的勾选框会勾上它所有题库的全部 sheet）、**学习记录** 的题库筛选，以及用户管理里的题库权限对话框都会按分类分组显示。普通用户只看到自己有权使用的题库所在的分类。新题库总是排在它所在分组的最后，没有分类的题库留在 **未分类**，一个分类都没建时所有页面和以前完全一样。`GET /api/banks` 多了 `categories`，每个题库多了 `categoryId` 和 `sort`；`GET /api/auth/state` 多了戳 `categories`。
+- **通知**：设置里新增 **通知** 一节：账号开关（默认开启，所有设备同步），以及每台设备各自的 **在本设备开启** 和 **发送测试**。共四类：练习或考试没做完的提醒（最后一次保存后 3 小时，之后每 3 小时一次，最多 3 次；时间已到的考试不提醒）、你能用的题库有新题库或更新、题库被授权给你，以及 Xexam 更新到了新版本。通知在你所在时区的 00:00–08:00 不打扰（被推迟的消息从 08:00 放行起享有完整的有效期），用你的界面语言书写，并替换同类的旧通知。服务器负责排队、加密（RFC 8291）和签名（VAPID，RFC 8292）每一条消息；xexam-ai-service 容器只把它送到浏览器厂商的推送服务，看不到密钥和正文，所以通知需要这个容器在运行。VAPID 密钥只创建一次，放在后端数据卷的 `push-vapid.key` 里。新增可选变量：`XEXAM_PUSH_SUBJECT`（给推送服务的联系方式，`mailto:` 或 `https:`）和 `XEXAM_PUSH_VAPID_KEY`（多台主机共用同一把密钥时使用）。
+- **安装为应用 和手机引导**：Web 应用清单和 service worker（只做推送，不缓存任何东西）让你可以安装 Xexam：设置里有 **安装为应用**。手机和平板的主页会出现可以关闭的三步引导（安装、允许通知、测试）；iPhone 和 iPad 需要 iOS 16.4 或更高版本和主屏幕应用，这个应用 有自己独立的登录（在设备列表里是另一台设备）。安装和通知需要安全的（https）地址：用普通的 `http://192.168.x.x` 地址时按钮是灰的，并说明原因。Xexam 会记住你已经安装过它（安卓上不再提供安装这一步）；设置不了时的说明（不是 https、iOS 低于 16.4、不支持通知）只在你从设置里打开引导时出现；服务器没有设置好推送时，引导会用一句话代替第 2 步。
+- **登录设备**：设置里列出你登录过的每个浏览器，本设备排第一，显示最近活动、登录情况，以及在“显示登录信息”的眼睛打开时的地址和所在地。可以退出某一台设备，也可以 **退出其他所有设备**；退出的同时也停掉这台设备的通知。修改自己的密码会让其他所有设备退出登录。用户管理里新增设备图标，可以看到某个用户的设备，管理员可以让它们退出登录（管理员不能控制通知）。登录已过期的设备仍留在列表里，继续接收通知，直到 30 天没有使用。浏览器属于最后登录的那个账号：在共用的浏览器上用新账号登录，会删除上一个账号在这里的通知订阅。设置里在这台设备向服务器报到之前显示 **正在检查…**。
+- **时区**：个人资料里的 **时区**（自动，或带 UTC 偏移的 IANA 时区）决定夜间免打扰的时间。和通知开关一样，**恢复默认** 不会改动它。
+- **一眼看出谁能管理题库**：用户管理里，数据库图标上的小绿勾标出所有可以管理题库的人：开了 **管理题库** 的普通用户，以及所有管理员。
+- **题库列表更快**：题库列表读取每个 sheet 的合计，不再读取每一行题目；戳的查询按用户类型分开；一个没有任何查询用到的索引（`idx_questions_sheet`）被删除。AI 设置里用量的统计窗口（**最近 12 小时**、**今天**）也用上了日期索引。
+- **登录日志**：被拒绝的登录行在最后一次尝试 90 天后删除（成功的登录照旧保留）。
+- **内部改动**：
+  - 主库在升级后的第一次启动时升到 schema 13，先写备份 `backups/xexam-schema12-<日期-时间>.db`：5 张新表（`bank_categories`、`devices`、`push_subscriptions`、`push_outbox`、`saved_sessions`）和 3 个新列（`banks.category_id`、`banks.sort`、`sessions.device_id`），外键全部明确写成 `ON DELETE NO ACTION`。设置新增键 `push` 和 `tz`（现在共七个键，**恢复默认** 两个都保留）。v3.0 的程序可以原样打开这个文件。
+  - 新路由：`GET /api/devices`，`POST /api/devices/hello`、`/api/devices/signout`、`/api/devices/signout-others`，`GET /api/users/devices`，`POST /api/users/devices/signout`，`GET /api/push/config`，`POST /api/push/subscribe`、`/api/push/test`，`POST /api/study/saved`、`/api/study/saved/discard`，`POST /api/banks/categories`、`/api/banks/category`，以及内部的 `POST /internal/ai/push/next` 和 `/internal/ai/push/result`（心跳不变，所以 v3.0 的后端和 v3.1 的 ai-service 无论哪种组合都能工作）。新的错误响应在消息之外带一个 `code`。设备 cookie `xexam_did` 是随机值，HttpOnly、SameSite=Strict、400 天，库里只存它的哈希，它不是凭据。
+  - ai-service 现在还会连接 `fcm.googleapis.com`、`updates.push.services.mozilla.com`、`web.push.apple.com`、`*.push.apple.com` 和 `*.notify.windows.com`（固定的白名单，没有变量；解析到内网的地址会被拒绝）。后端依然不能访问互联网。
+  - 文档：`database.md` 重写，按五个区域画图并给出两个数据库的总览；新增的测试（`backend/tests/docs_diagrams.rs`、`ai-service/tests/docs_diagrams.rs`）会把每张图和全新的数据库逐项比对，图不会再和代码脱节。
+  - 测试：后端 919、前端 1087、AI 服务 1393。
+
 ### v3.0 — 2026-11-28
 
 **练习里核对答案有了特效：答对撒彩纸，答错划两道爪痕，设置里有开关。数据库和变量都没有变化（主库 schema 12，AI 库 schema 11）。升级：拉取新镜像；回退到 v2.9 不需要恢复数据。**

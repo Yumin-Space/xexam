@@ -62,8 +62,8 @@ What is checked:
   9. Volumes (v0.8): the AI volume holds secret.key (mode 600, uid 10001) and xexam-ai.db; the main volume holds no AI
      secret and no AI table, and users has ai_enabled and uid; the ai_auth volume holds internal.token (mode 600)
   D. Database shape (v2.0, the last step): backend and ai-service are stopped and both volumes are read through a throw-away
-     python container (immutable=1, read-only): main meta.schema 12, foreign_key_check empty, the foreign keys of the nine
-     rebuilt tables (all ON DELETE NO ACTION) and of no other table, no stats / settings table, idx_users_uid /
+     python container (immutable=1, read-only): main meta.schema 13, foreign_key_check empty, the foreign keys of the nine
+     rebuilt tables and the v13 tables (all ON DELETE NO ACTION) and of no other table, no stats / settings table, idx_users_uid /
      idx_users_display_name / idx_user_stats_question / idx_imports_bank present; AI meta.schema 11, no secrets table, settings and limits hold none
      of the retired columns (settings columns exactly id, enabled, retention_days, updated_at, updated_by, features_off)
 """
@@ -1834,15 +1834,22 @@ try:
         "print(json.dumps({'schema': c.execute(\"SELECT value FROM meta WHERE key = 'schema'\").fetchone()[0], 'tables': tables,\n"
         "                  'indexes': names('index'), 'fks': fks, 'fk_check': [list(r) for r in c.execute('PRAGMA foreign_key_check')]}))"))
     NA = 'NO ACTION'
-    want_fks = {'banks': [['owner_id', 'users', 'id', NA]], 'questions': [['bank_id', 'banks', 'id', NA]],
+    want_fks = {'banks': [['category_id', 'bank_categories', 'id', NA], ['owner_id', 'users', 'id', NA]],
+                'questions': [['bank_id', 'banks', 'id', NA]],
                 'imports': [['bank_id', 'banks', 'id', NA]], 'attempts': [['user_id', 'users', 'id', NA]],
-                'attempt_items': [['attempt_id', 'attempts', 'id', NA]], 'sessions': [['user_id', 'users', 'id', NA]],
+                'attempt_items': [['attempt_id', 'attempts', 'id', NA]],
+                'sessions': [['device_id', 'devices', 'id', NA], ['user_id', 'users', 'id', NA]],
                 'user_stats': [['user_id', 'users', 'id', NA]], 'user_settings': [['user_id', 'users', 'id', NA]],
-                'user_banks': [['bank_id', 'banks', 'id', NA], ['user_id', 'users', 'id', NA]]}
-    ok(main_db.get('schema') == '12', 'D. The main database is schema 12 (v2.6). Actual %r' % main_db)
+                'user_banks': [['bank_id', 'banks', 'id', NA], ['user_id', 'users', 'id', NA]],
+                # v3.1 (schema 13)
+                'devices': [['user_id', 'users', 'id', NA]],
+                'push_subscriptions': [['device_id', 'devices', 'id', NA]],
+                'saved_sessions': [['device_id', 'devices', 'id', NA], ['user_id', 'users', 'id', NA]],
+                'push_outbox': [['subscription_id', 'push_subscriptions', 'id', NA]]}
+    ok(main_db.get('schema') == '13', 'D. The main database is schema 13 (v3.1). Actual %r' % main_db)
     ok(main_db.get('fk_check') == [], 'D. PRAGMA foreign_key_check on the main database is empty. Actual %r' % main_db.get('fk_check'))
     ok(main_db.get('fks') == want_fks,
-       'D. The nine rebuilt tables have exactly the expected foreign keys (all ON DELETE NO ACTION) and no other table has one. Actual %r' % main_db.get('fks'))
+       'D. The nine rebuilt tables and the v13 tables have exactly the expected foreign keys (all ON DELETE NO ACTION) and no other table has one. Actual %r' % main_db.get('fks'))
     ok('stats' not in main_db.get('tables', ['stats']) and 'settings' not in main_db.get('tables', ['settings']),
        'D. The legacy tables stats and settings are gone from the main database. Actual %r' % main_db.get('tables'))
     ok(all(i in main_db.get('indexes', []) for i in ('idx_users_uid', 'idx_users_display_name', 'idx_user_stats_question', 'idx_imports_bank')),

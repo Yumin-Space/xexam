@@ -185,6 +185,11 @@ pub struct Knobs {
     pub geo_per_minute: std::sync::atomic::AtomicU64,
     /// Milliseconds the location worker asks the backend to wait for work (15 000; tests lower it)
     pub geo_wait_ms: std::sync::atomic::AtomicU64,
+    /// Milliseconds the push courier asks the backend to wait for work (15 000; tests lower it)
+    pub push_wait_ms: std::sync::atomic::AtomicU64,
+    /// Test hook: send every push job to `http://<addr><path of its endpoint>` instead of the endpoint (no DNS, no TLS);
+    /// never read from the environment
+    pub push_target: Mutex<Option<std::net::SocketAddr>>,
     /// Test hook: the extraction child hangs (debug builds only)
     pub hang_child: std::sync::atomic::AtomicBool,
     /// Test hook: the binary the extraction child is started from (integration tests pass the service's own binary)
@@ -205,6 +210,8 @@ impl Default for Knobs {
             pace_scale: AtomicU64::new(100),
             geo_per_minute: AtomicU64::new(crate::geo::GEO_PER_MIN),
             geo_wait_ms: AtomicU64::new(15_000),
+            push_wait_ms: AtomicU64::new(15_000),
+            push_target: Mutex::new(None),
             hang_child: AtomicBool::new(false),
             exe_override: Mutex::new(None),
         }

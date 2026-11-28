@@ -704,7 +704,9 @@ async fn ai_in_the_users_api_and_ai_allowed_in_the_signed_in_user() {
             "lastActiveLocation",
             "lastActiveUa",
             "lock",
-            "aiSuspended"
+            "aiSuspended",
+            // v3.1 (tests/v31_devices.rs)
+            "devices"
         ]
     );
     assert_eq!(row("sam")["ai"], true);
@@ -1186,7 +1188,16 @@ async fn the_auth_step_touches_a_session_but_never_sets_a_cookie() {
     // an administrator's cookie is set once at sign-in, never re-sent
     let r = api(&a, "POST", "/api/settings", &ac, Some("{}")).await;
     assert_eq!(r.status, 200, "{}", r.text());
-    assert!(r.header("set-cookie").is_none());
+    // v3.1: this session was made without a device, so the first POST links it and sets the browser-id cookie, but
+    // never a session cookie
+    let cookies: Vec<_> = r
+        .headers
+        .get_all("set-cookie")
+        .iter()
+        .map(|v| v.to_str().expect("cookie").to_string())
+        .collect();
+    assert_eq!(cookies.len(), 1, "{cookies:?}");
+    assert!(cookies[0].starts_with("xexam_did="), "{cookies:?}");
 }
 
 #[tokio::test]
@@ -1925,7 +1936,14 @@ async fn the_state_route_says_whether_ai_plus_is_available() {
                 let v = state(c).await;
                 assert_eq!(
                     keys(&v),
-                    ["user", "library", "aiAvailable", "session", "logVisits"],
+                    [
+                        "user",
+                        "library",
+                        "categories",
+                        "aiAvailable",
+                        "session",
+                        "logVisits"
+                    ],
                     "{label}"
                 );
                 assert_eq!(v["aiAvailable"], available, "{label}");
@@ -1937,6 +1955,7 @@ async fn the_state_route_says_whether_ai_plus_is_available() {
                     [
                         "user",
                         "library",
+                        "categories",
                         "aiAvailable",
                         "session",
                         "logVisits",
@@ -2047,7 +2066,14 @@ async fn the_state_route_says_whether_ai_plus_is_available() {
     let v = state(bc).await;
     assert_eq!(
         keys(&v),
-        ["user", "library", "aiAvailable", "session", "logVisits"]
+        [
+            "user",
+            "library",
+            "categories",
+            "aiAvailable",
+            "session",
+            "logVisits"
+        ]
     );
 }
 
@@ -2101,8 +2127,10 @@ async fn every_users_list_says_whether_ai_plus_is_available_and_who_is_suspended
     assert_eq!(v["aiAvailable"], false);
     assert_eq!(suspended_of(&v), none);
     for u in v["users"].as_array().expect("users") {
-        assert_eq!(keys(u).last().map(String::as_str), Some("aiSuspended"));
-        assert_eq!(keys(u)[keys(u).len() - 2], "lock");
+        // v3.1: "devices" is the last key, right after "aiSuspended"
+        assert_eq!(keys(u).last().map(String::as_str), Some("devices"));
+        assert_eq!(keys(u)[keys(u).len() - 2], "aiSuspended");
+        assert_eq!(keys(u)[keys(u).len() - 3], "lock");
     }
     // sam suspended (an administrator named in a report is never shown as suspended; 999 does not exist)
     report(&a, true, &[sam, 1, boss, 999], false).await;

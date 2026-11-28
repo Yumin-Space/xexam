@@ -334,3 +334,58 @@ dark. It uses the users the walk already seeds: `rc.paging_users()` (12 made-up 
 | W-V27-UR | The administrator's read-only view (admin, 375 and 1280 px): the book icon `#us-records-<id>` of lee (found on any list page) opens `#/users/<id>/records`: note + back link, no delete / delete-all / AI summary; a record opens read-only (no retry / retake / delete / AI buttons); Back returns to the same list page, and the list's back link returns to User management on the same page |
 
 The walk itself was not run for these checks in the build step; the stack run belongs to the release gate.
+
+
+## v3.0 checks (`checks_v30_fx.py`)
+
+`checks_v30_fx.py` (group `g_v30_fx`, registered at the end of `checks.py` as `GROUPS_V30`; run alone with `--only 'W-FX-*'`), zh / en / ja,
+light and dark. The practice answer effects (confetti for a right answer, two claw marks for a wrong one) are an overlay with the
+class `fx-layer` appended to `body`. The walk's devices save `answerFx = false` (`device.save_settings`) so that the effects never
+disturb the other checks; only the W-FX checks turn them on and each puts the walk default back when it is done.
+
+| Check | What |
+|---|---|
+| W-FX-1 | Settings (sam): the "Answer effects" switch sits next to the auto-advance switch, is ON after a settings reset (server `answerFx` true, the `/api/settings` keys end with `questionLang`, `answerFx`), shows its hint, is >= 44 px high on phones, fits the width, and a tap turns it off and on again (the server value follows) |
+| W-FX-2 | Practice (sam), switch on: checking a right answer creates a fixed, `pointer-events: none` layer with a canvas that does not block the next tap and is gone within about 8 s; a wrong answer creates the claw overlay (a wiped canvas); a tap on Next during the effect still advances and ends it |
+| W-FX-3 | Practice, switch off: neither a right nor a wrong answer creates an overlay |
+| W-FX-4 | Practice with `prefers-reduced-motion` emulated: no overlay for either verdict |
+
+## v3.1 checks (`checks_v31_categories.py`, `checks_v31_push.py`)
+
+Two groups, registered at the end of `checks.py` (`GROUPS_V31_CAT`, `GROUPS_V31_PUSH`); run alone with `--only 'W-V31-*'`. Made-up data
+only. `seed.prepare` (`tools/screenshots/seed.py`, also used by the walk) creates the categories `Science` (holding `General
+knowledge`) and `Everyday life` (holding `Kitchen basics`) through `POST /api/banks/categories` and `POST /api/banks/category`;
+`seed_extra.extra` asks `seed.categorize` again (idempotent) and leaves the 51-question `Long sample bank` uncategorised. alex (granted
+`General knowledge` only) sees only `Science`; riley sees every category.
+
+Every `seed.Session` sends a stable device cookie (`xexam_did`, derived from the login) and a plain desktop User-Agent, so the many
+sign-ins of one made-up user land on one device row; `sign_in(..., device='tag')` gives a user a second device (a second browser).
+`device.py` sets `localStorage['xexam.guide.v1'] = 'dismissed'` once per browser before its first page (a script that runs on a new
+document, guarded by a `sessionStorage` marker), so the phone guide card never covers another check; only the W-V31-GD / IN checks
+clear the key and each puts it back. Headless Chromium cannot grant notifications, so the step 2 -> 3 move of the guide and the
+insecure / unsupported branches are covered by `frontend/src/domain/push-env.test.ts`, not by the walk (the walk runs on 127.0.0.1, a
+secure context). The user agent of a device follows its size (`device.py`): under 400 px wide an iPhone, from 400 px an Android phone,
+a large screen a desktop browser, so the three platforms of the guide are all reachable.
+
+| Check | What |
+|---|---|
+| W-V31-CAT-1 | Banks (admin): `.bk-cat` sections in category order with `.bk-cathead` names, the "Uncategorised" group last; every `.bk-bank` keeps `.bk-bankhead` / `.bk-bankname` / `.bk-box` / `.bk-bankacts`; folding hides the group's cards and unfolding shows them; no sideways scroll; fold buttons >= 44 px on phones |
+| W-V31-CAT-2 | Banks (admin): `#bk-catmanage` opens the manager; create the made-up category `Walk test`, rename it, move it up, delete it (the manager's buttons are found by their mini icon, the server confirms every step); controls >= 44 px on phones; the dialog fits the width. The seed is restored even when a step fails |
+| W-V31-CAT-3 | Banks (admin): select two banks, `#bk-movecat`, pick `Science`: both cards appear under Science; moved back through the API at the end |
+| W-V31-CAT-4 | Banks (sam, bank manager): no `#bk-catmanage`, no `#bk-movecat`; the categories are still shown |
+| W-V31-CAT-5 | Exam & practice (lee, alex): `.home-cat` groups; `.home-catbox` ticks and clears every sheet of its banks, shows the indeterminate state for a partial selection; folding; alex sees only `Science` and no "Uncategorised" group |
+| W-V31-CAT-6 | Users (admin): the bank dialog shows `.us-cat-row` rows after `.us-later-row`; a category tick ticks its banks; Cancel leaves the user (riley) unchanged |
+| W-V31-CAT-7 | Study records (lee): the bank filter has `<optgroup>`s named after the categories |
+| W-V31-NT-1 | Settings (sam): `#set-notify` comes after the answering section; the account switch `#set-push` is ON, >= 44 px high on phones, toggles off and on (the server follows); `.set-dev-state` shows a state text |
+| W-V31-NT-2 | Settings (sam), permission "default": desktop and Android: Enable visible and enabled, Test hidden; iPhone (browser): Enable disabled with `aria-describedby="set-dev-state"`, Test hidden; with the account switch off Enable is disabled (not hidden) and, on desktop and Android, the state text changes (on an iPhone the install state keeps the first place) |
+| W-V31-IN-1 | Settings (sam): `#set-install` on phone sizes (the iOS text names Share and Apple's own "Add to Home Screen" label in each language; the Android text is the manual one) and absent on a desktop; "Show the setup guide" opens Home with `#gd-card` |
+| W-V31-GD-1 | Home (sam), key cleared: `#gd-card` on phone sizes only; iPhone: 3 steps with 3 drawings; Android: the manual step with Skip; desktop: never |
+| W-V31-GD-2 | Home (sam): `.gd-close` is >= 44 x 44, clear of the title, closes the card for good (also after a reload); no sideways scroll at 320 px |
+| W-V31-DV-1 | Settings (sam): `#set-devices` lists the current device first with the "This device" tag and without a sign-out button; IP lines only while the sign-in info eye is open; "Sign out all other devices" appears while a second device (a second sign-in with another device cookie) exists and signs it out |
+| W-V31-DV-2 | Users (admin): `#us-devices-<id>` inside the row's `.us-icons`, >= 44 px on phones, opens the device dialog with no notification control; one device of riley's second session is signed out; the per-user facts lines are still there |
+| W-V31-TZ-1 | Profile (sam): `#pf-tz` starts with Automatic and contains `UTC`; choosing `UTC` saves `UTC`, choosing Automatic saves `auto` |
+| W-V31-SW-1 | Home (sam, desktop): `link[rel=manifest]` with `crossorigin="use-credentials"`; the service worker registers with scope `/`; `/manifest.webmanifest` parses and lists the four icons |
+
+The CI plan puts `W-V31-CAT-*` into "banks and AI import", `W-V31-GD-*` into "home dashboard", `W-V31-DV-2` into "users, logs and
+records" and `W-V31-NT-*`, `W-V31-IN-*`, `W-V31-DV-1`, `W-V31-TZ-*`, `W-V31-SW-*` into "sign-in, profile and settings"; hand estimates of 45 s per id
+and language are in `ci-timings.json` until the first CI run refreshes them (`ci_plan.py --update-from`).

@@ -11,15 +11,17 @@ import { holdTip } from '../components/tooltip.ts';
 import { icon } from '../components/shell.ts';
 import { controlState, recordSummaryExtra } from '../domain/ai-plus.ts';
 import { kindOf } from '../domain/attempt.ts';
+import { groupBanks, triState } from '../domain/categories.ts';
 import { LIMIT_MAX_MINUTES, LIMIT_MIN_MINUTES, autoTick, countdownText, readLimitControls, resumeView } from '../domain/exam-timer.ts';
 import { inNotebook, masterStreakOf, pickQuestions, poolOf } from '../domain/grading.ts';
 import { serverText } from '../i18n/errors.ts';
 import { t, tn } from '../i18n/index.ts';
 import { routeHash, type Route } from '../router.ts';
 import { navigate, onRouteChange, render, resumeAndSubmit, resumeSession, startExam } from '../state/actions.ts';
+import { noteDiscarded } from '../state/saved-marker.ts';
 import { clearSaved, loadSaved } from '../state/session-storage.ts';
 import { S, bankIdsOf, canManageBanks, isAdmin, onClearUserData, pool, questionSheetKey, sheetKey } from '../state/store.ts';
-import type { AttemptKind, BankSummary, Mode } from '../types/api.ts';
+import type { AttemptKind, BankCategory, BankSummary, Mode } from '../types/api.ts';
 import { ask } from '../utils/dialog.ts';
 import { h, type Child } from '../utils/dom.ts';
 import { fmtTime } from '../utils/format.ts';
@@ -103,6 +105,9 @@ async function discardSaved(practice: boolean): Promise<void> {
     danger: true,
   });
   if (!yes) return;
+  // v3.1: tell the server the saved session is gone (no reminder for it), then forget it here
+  const sv = loadSaved(S.bank);
+  if (sv) noteDiscarded(sv.key);
   clearSaved();
   render();
 }
@@ -141,6 +146,8 @@ const ICON_CHEVRON = [{ d: 'M6.5 9.5 12 15l5.5-5.5' }];
 const ICON_FWD = [{ d: 'M9.5 6.5 15 12l-5.5 5.5' }];
 /** Banks the user unfolded / folded during this visit (otherwise: unfolded when there are at most two banks) */
 const openBanks = new Map<number, boolean>();
+/** v3.1: category groups the user folded (0 = uncategorised); open by default, in memory only */
+const foldedCats = new Set<number>();
 const ICON_WEAK = [{ d: 'M6.5 3.5h9l3 3v14h-12Z' }, { d: 'M9.8 10.3l4.4 4.4' }, { d: 'M14.2 10.3l-4.4 4.4' }];
 
 interface BankPick {
@@ -266,7 +273,45 @@ function startPanel(nb: Notebook): HTMLElement {
     return h('div', { class: 'home-bank' }, row, sheetBox);
   };
 
-  const groups = listed.map(bankGroup);
+  /** v3.1: one box per category group; ticking it selects / clears every usable sheet of its banks */
+  const catBoxes: Array<{ keys: string[]; box: HTMLInputElement }> = [];
+  const catGroup = (cat: BankCategory | null, banks: BankSummary[]): HTMLElement => {
+    const id = cat?.id ?? 0;
+    const name = cat?.name ?? t('banks.cat.none');
+    const keys = banks.flatMap((b) => b.sheets.filter((s) => s.usable > 0).map((s) => sheetKey(b.id, s.name)));
+    const bodyId = `home-catbody-${id}`;
+    const open = !foldedCats.has(id);
+    const box = h('input', {
+      type: 'checkbox', class: 'home-catbox', 'aria-label': t('banks.cat.selectAll', { name }), disabled: keys.length === 0,
+      onchange: () => toggle(keys, box.checked),
+    });
+    catBoxes.push({ keys, box });
+    const label = (isOpen: boolean): string => t(isOpen ? 'banks.cat.fold' : 'banks.cat.unfold', { name });
+    const body = h('div', { class: 'home-catbody', id: bodyId, hidden: !open }, banks.map(bankGroup));
+    const fold = h('button', {
+      class: 'home-catfold', type: 'button', 'aria-expanded': String(open), 'aria-controls': bodyId, 'aria-label': label(open),
+      onclick: () => {
+        const now = body.hidden;
+        body.hidden = !now;
+        if (now) foldedCats.delete(id);
+        else foldedCats.add(id);
+        fold.setAttribute('aria-expanded', String(now));
+        fold.setAttribute('aria-label', label(now));
+      },
+    }, icon(ICON_CHEVRON));
+    // The box lines up with the bank boxes below it and the fold button with their expand buttons (parent before child)
+    return h('div', { class: 'home-cat' },
+      h('div', { class: 'home-cathead' },
+        h('label', { class: 'home-catlabel' }, box, h('span', { class: 'home-catname', title: name }, name),
+          h('span', { class: 'home-catcount' }, tn('banks.cat.count', banks.length))),
+        fold),
+      body);
+  };
+  const grouped = groupBanks(listed, S.categories);
+  // Groups without a bank to pick from are left out (a category may hold only empty banks)
+  const groups = grouped.hasCategories
+    ? grouped.groups.filter((g) => g.banks.length > 0).map((g) => catGroup(g.category, g.banks))
+    : listed.map(bankGroup);
   const allKeys = picks.flatMap((p) => p.keys);
   const hidden = S.banks.length - listed.length;
   // The visible heading and "select all / clear" share one row; the legend names the group for screen readers
@@ -347,6 +392,11 @@ function startPanel(nb: Notebook): HTMLElement {
 
   // Updates everything that depends on the selection in place (no re-render: keeps focus and scroll position)
   function refresh(): void {
+    for (const c of catBoxes) {
+      const st = triState(c.keys, selected);
+      c.box.checked = st === 'all';
+      c.box.indeterminate = st === 'some';
+    }
     for (const p of picks) {
       const on = p.keys.filter((k) => selected.has(k)).length;
       p.box.checked = on > 0 && on === p.keys.length;

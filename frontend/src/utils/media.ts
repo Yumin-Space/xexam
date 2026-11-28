@@ -14,6 +14,9 @@ export const BAR_MQ = '(max-width: 880px), (orientation: landscape) and (max-hei
 /** A touch screen as the main pointer */
 export const TOUCH_MQ = '(pointer: coarse)';
 
+/** v3.1: the page runs as an installed app (a Home Screen app, an installed web app) */
+export const STANDALONE_MQ = '(display-mode: standalone)';
+
 /** Whether the media query matches now; false where `matchMedia` does not exist (node tests, very old browsers) */
 export function matches(q: string): boolean {
   const mm = (globalThis as { matchMedia?: (query: string) => MediaQueryList }).matchMedia;

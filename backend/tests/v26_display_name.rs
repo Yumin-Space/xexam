@@ -578,7 +578,7 @@ fn a_schema_11_file_gets_the_column_with_null_and_keeps_every_user() {
         c.query_row(&format!("SELECT CAST(({sql}) AS TEXT)"), [], |r| r.get(0))
             .expect("value")
     };
-    assert_eq!(one("SELECT value FROM meta WHERE key = 'schema'"), "12");
+    assert_eq!(one("SELECT value FROM meta WHERE key = 'schema'"), "13");
     assert_eq!(one("SELECT COUNT(*) FROM users"), "3");
     assert_eq!(
         one("SELECT group_concat(username, ',') FROM (SELECT username FROM users ORDER BY id)"),
@@ -602,7 +602,7 @@ fn a_schema_11_file_gets_the_column_with_null_and_keeps_every_user() {
     assert!(backups[0].starts_with("xexam-schema11-"), "{backups:?}");
     assert_eq!(
         one("SELECT detail FROM activity_log WHERE action = 'system.migrate'"),
-        r#"{"from":11,"to":12}"#
+        r#"{"from":11,"to":13}"#
     );
     // opening again changes nothing and writes no second backup
     drop(Store::open(&db).expect("reopen"));

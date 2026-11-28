@@ -40,7 +40,7 @@ const USAGE: &str = "Usage:
   xexam-backend import <question-bank.xlsx> [--data DIR]       (also accepts --import <question-bank.xlsx>)
   xexam-backend migrate-progress [progress.json] [--data DIR]
   xexam-backend reset-password <username> [--data DIR]      (see: xexam-backend reset-password --help)
-Environment variables: XEXAM_DATA XEXAM_HOST XEXAM_PORT XEXAM_ALLOWED_HOSTS XEXAM_ALLOWED_ORIGINS XEXAM_ALLOW_ANY_HOST XEXAM_COOKIE_SECURE XEXAM_PARSE_TIMEOUT_SECS XEXAM_LOG XEXAM_SQLITE_JOURNAL XEXAM_LINK_DIR XEXAM_INTERNAL_TOKEN XEXAM_BEHIND_PROXY XEXAM_FRONTEND_PEERS XEXAM_INTERNAL_TOKEN_REQUIRED";
+Environment variables: XEXAM_DATA XEXAM_HOST XEXAM_PORT XEXAM_ALLOWED_HOSTS XEXAM_ALLOWED_ORIGINS XEXAM_ALLOW_ANY_HOST XEXAM_COOKIE_SECURE XEXAM_PARSE_TIMEOUT_SECS XEXAM_LOG XEXAM_SQLITE_JOURNAL XEXAM_LINK_DIR XEXAM_INTERNAL_TOKEN XEXAM_BEHIND_PROXY XEXAM_FRONTEND_PEERS XEXAM_INTERNAL_TOKEN_REQUIRED XEXAM_PUSH_SUBJECT XEXAM_PUSH_VAPID_KEY";
 
 const RESET_PASSWORD_USAGE: &str = "Usage:
   xexam-backend reset-password <username> [--data DIR]
@@ -697,12 +697,28 @@ async fn serve(cfg: Config) -> i32 {
     }
     let state = AppState::new(cfg, store.clone(), engine, shutdown_tx);
     let _ = state.0.default_admin_hashes.set(default_admin);
+    // v3.1: web push. The VAPID key, the old-key clean-up and the version trigger run before `system.start` is recorded (the
+    // trigger reads the version of the previous start); a failure leaves push off and never stops the server
+    let push_report = match xexam_backend::push::scheduler::start(&state) {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!("{e}");
+            Default::default()
+        }
+    };
+    let push_scheduler = xexam_backend::push::scheduler::spawn(state.clone());
     // v1.3: the activity log. The writer started with the state; these are the service's own rows
     let activity = state.0.activity.clone();
     activity.record(xexam_backend::activity::Entry::system(
         "system.start",
         Some(serde_json::json!({ "version": state.0.cfg.version })),
     ));
+    if let Some((from, to, devices)) = push_report.version_push {
+        activity.record(xexam_backend::activity::Entry::system(
+            "system.pushVersion",
+            Some(serde_json::json!({ "from": from, "to": to, "devices": devices })),
+        ));
+    }
     // Sessions that ended while the service was off: one `auth.expired` entry each, plus `system.sessionsPurged`
     match xexam_backend::api::auth::purge_ended_sessions(&state, now) {
         Ok(0) => {}
@@ -743,6 +759,8 @@ async fn serve(cfg: Config) -> i32 {
     activity.record(xexam_backend::activity::Entry::system("system.stop", None));
     // v1.4: a waiting location poll of ai-service returns now, so the graceful shutdown does not wait for it
     activity.geo().close();
+    // v3.1: a waiting `push/next` poll returns now too
+    state.0.push.close();
     notify.notify_one();
     if !server.is_finished() {
         match tokio::time::timeout(Duration::from_secs(8), &mut server).await {
@@ -754,6 +772,7 @@ async fn serve(cfg: Config) -> i32 {
         }
     }
     refusal_reports.abort();
+    push_scheduler.abort();
     for m in monitors {
         m.abort();
     }

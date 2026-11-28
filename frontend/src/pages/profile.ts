@@ -1,5 +1,7 @@
 // Profile page (v2.6): the account (login e-mail, role, AI+ badge), the username (display name, edited in place) and
 // "Change password" (the collapsed row that moved here from Settings, unchanged). Centred narrow page like Settings.
+// v3.1: the time zone (between the username and the password): "Automatic" (this device's zone) or an IANA zone with its UTC
+// offset; it sets the quiet hours of notifications (00:00-08:00 there) and is saved at once like the Settings page.
 // What was typed survives a redraw and is forgotten when the page is left or the person signs in again.
 import '../styles/settings.css';
 import '../styles/profile.css';
@@ -11,11 +13,13 @@ import { miniIcon } from '../components/mini-icons.ts';
 import { isBankManager, roleTags } from '../components/shell.ts';
 import { offList, readFeatures } from '../domain/ai-features.ts';
 import { ownBadgeState } from '../domain/badge-state.ts';
+import { allZones, deviceZone, zoneOffsetMinutes, zoneOptions } from '../domain/time-zones.ts';
 import { cleanDisplayName, nameSave } from '../domain/user-name.ts';
 import { t, type MsgKey } from '../i18n/index.ts';
 import { errorText } from '../i18n/errors.ts';
 import { changeOwnName, changeOwnPassword, onRouteChange, onSignedIn, render } from '../state/actions.ts';
 import { aiStatus } from '../state/ai.ts';
+import { updateSettings } from '../state/preferences.ts';
 import { S } from '../state/store.ts';
 import { h } from '../utils/dom.ts';
 import { toast } from '../utils/toast.ts';
@@ -26,6 +30,8 @@ import { toast } from '../utils/toast.ts';
 const pw = { open: false, current: '', next: '', repeat: '', shown: new Set<string>(), busy: false, error: null as string | null, done: false };
 /** Profile > Username: the typed draft (null = untouched, the field shows the current name) */
 const nm = { draft: null as string | null, busy: false, error: null as string | null };
+/** Profile > Time zone: a save runs / "Saved" is shown for a moment */
+const tz = { busy: false, saved: false, timer: undefined as number | undefined };
 /** The control to focus after the next render */
 let focusNext: string | null = null;
 
@@ -71,6 +77,37 @@ async function submitName(): Promise<void> {
   } finally {
     nm.busy = false;
   }
+  if (S.route.name === 'profile') render();
+}
+
+/** v3.1: saves the chosen zone (`auto` or an IANA name) at once; a failed save rolls back and says why */
+async function saveZone(value: string): Promise<void> {
+  if (tz.busy || value === S.settings.tz) return;
+  tz.busy = true;
+  tz.saved = false;
+  window.clearTimeout(tz.timer);
+  focusNext = 'pf-tz';
+  let ok = false;
+  try {
+    await updateSettings({ tz: value }, () => {
+      if (S.route.name === 'profile') render();
+    });
+    ok = true;
+  } catch (e) {
+    toast(t('profile.tz.failed', { reason: errorText(e) }), 6000);
+  } finally {
+    tz.busy = false;
+  }
+  if (ok) {
+    tz.saved = true;
+    tz.timer = window.setTimeout(() => {
+      tz.saved = false;
+      // The redraw keeps the focus where it was
+      focusNext = document.activeElement?.id === 'pf-tz' ? 'pf-tz' : null;
+      if (S.route.name === 'profile') render();
+    }, 2000);
+  }
+  focusNext = 'pf-tz';
   if (S.route.name === 'profile') render();
 }
 
@@ -160,6 +197,36 @@ function nameSection(): HTMLElement | null {
     nm.error ? h('div', { class: 'err pf-name-err', id: 'pf-name-err', role: 'alert' }, h('p', null, nm.error)) : null));
 }
 
+/** The zone list is built once per page load (about 420 formatters; offsets do not change within a visit) */
+let zoneListCache: ReturnType<typeof zoneOptions> | null = null;
+function zoneOptionList(): ReturnType<typeof zoneOptions> {
+  zoneListCache ??= zoneOptions(allZones(), (z) => zoneOffsetMinutes(z));
+  return zoneListCache;
+}
+
+function zoneSection(): HTMLElement | null {
+  if (!S.user) return null;
+  const own = deviceZone();
+  const current = S.settings.tz;
+  const options = [...zoneOptionList()];
+  // A stored zone this browser does not list (an old alias, another browser's list) stays selectable so the select tells the truth
+  if (current !== 'auto' && !options.some((o) => o.value === current)) options.push({ value: current, label: current });
+  const select = h('select', {
+    id: 'pf-tz', class: 'pf-tz', 'aria-labelledby': 'pf-tz-h', 'aria-describedby': 'pf-tz-d',
+    disabled: tz.busy, 'aria-busy': tz.busy ? 'true' : null,
+    onchange: () => void saveZone(select.value),
+  },
+  h('option', { value: 'auto' }, own ? t('profile.tz.auto', { zone: own }) : t('profile.tz.autoUnknown')),
+  options.map((o) => h('option', { value: o.value }, o.label)));
+  select.value = current;
+  return h('section', { class: 'panel set-sec pf-sec pf-tz-sec', 'aria-labelledby': 'pf-tz-h' },
+    h('h2', { id: 'pf-tz-h' }, t('profile.tz')),
+    h('p', { class: 'set-desc', id: 'pf-tz-d' }, t('profile.tz.desc')),
+    h('div', { class: 'pf-tz-row' },
+      select,
+      h('span', { class: 'saved-note', role: 'status', 'aria-live': 'polite' }, ...(tz.saved ? [miniIcon('check', 'saved-ic'), t('common.saved')] : []))));
+}
+
 function passwordSection(): HTMLElement | null {
   const u = S.user;
   if (!u) return null;
@@ -222,6 +289,7 @@ export function renderProfile(): HTMLElement {
     pageHead(t('profile.title')),
     accountSection(),
     nameSection(),
+    zoneSection(),
     passwordSection());
   if (want) {
     queueMicrotask(() => {

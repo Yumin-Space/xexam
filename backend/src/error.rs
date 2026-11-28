@@ -155,6 +155,13 @@ pub enum AppError {
     /// v1.3: 401 `{"error": MSG_SESSION_EXPIRED, "code": "auth.expired"}`: the session of the request ended
     #[error("session ended")]
     SessionExpired,
+    /// v3.1: `{"error": msg, "code": code}` with the given status (the new device / push / category answers)
+    #[error("{msg}")]
+    Coded {
+        status: u16,
+        msg: &'static str,
+        code: &'static str,
+    },
     #[error("db error")]
     Db(#[from] DbError),
     #[error("internal")]

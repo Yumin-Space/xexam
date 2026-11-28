@@ -12,6 +12,11 @@ Writes (fixed paths, no metadata in any of them):
   frontend/public/icon-512.png           RGBA
   frontend/public/apple-touch-icon.png   180 x 180 opaque RGB, full-bleed: drawn from a variant whose background has no
                                          rounded corners (iOS rounds the corners itself; transparent corners would turn black)
+  frontend/public/icon-maskable-192.png  192 x 192 opaque RGB (Android adaptive icon): the full-bleed variant scaled to 80 %
+  frontend/public/icon-maskable-512.png  512 x 512 opaque RGB   and centred on the background colour, so the drawing sits
+                                         inside the 40 % safe zone and survives any mask shape
+  frontend/public/badge-96.png           96 x 96 RGBA (notification badge): every element of the source except its first
+                                         background <rect>, painted white on a transparent page (Android uses only the alpha)
 
 The PNGs are drawn by headless Chrome (the DevTools client of tools/screenshots/browser.py) at device scale 1 with a
 transparent page background, then re-encoded here in pure Python (zlib) with only the IHDR, IDAT and IEND chunks, so the
@@ -39,6 +44,9 @@ REPO = Path(__file__).resolve().parents[2]
 PUBLIC = REPO / 'frontend' / 'public'
 SIZES = {'icon-32.png': 32, 'icon-192.png': 192, 'icon-512.png': 512}
 APPLE = ('apple-touch-icon.png', 180)
+MASKABLE = {'icon-maskable-192.png': 192, 'icon-maskable-512.png': 512}
+BADGE = ('badge-96.png', 96)
+MASKABLE_SCALE = 0.8
 PNG_SIGNATURE = b'\x89PNG\r\n\x1a\n'
 
 
@@ -85,6 +93,42 @@ def full_bleed(svg):
     rect = re.sub(r'\s(rx|ry)="[^"]*"', '', m.group(0))
     rect = rect.replace('<rect', '<rect rx="0"', 1)
     return svg[:m.start()] + rect + svg[m.end():]
+
+
+def split_root(svg):
+    """(root start tag, inner markup) of a normalised SVG document."""
+    m = re.match(r'\s*(<svg\b[^>]*>)(.*)</svg>\s*$', svg, flags=re.S)
+    if not m:
+        raise SystemExit('the source SVG could not be split into its root element and content')
+    return m.group(1), m.group(2)
+
+
+def maskable(svg, size):
+    """The variant for Android's adaptive icon: the full-bleed drawing scaled to MASKABLE_SCALE and centred on a square of
+    the background colour (the fill of the first <rect>). `size` is only the nominal size; the viewBox does the scaling."""
+    flat = full_bleed(svg)
+    root, inner = split_root(flat)
+    box = re.search(r'viewBox="([^"]*)"', root).group(1)
+    first = re.search(r'<rect\b[^>]*>', inner)
+    fill = re.search(r'\sfill="([^"]*)"', first.group(0)) if first else None
+    colour = fill.group(1) if fill and fill.group(1) != 'none' else '#15243A'
+    pad = (1 - MASKABLE_SCALE) / 2 * size
+    inner_size = MASKABLE_SCALE * size
+    return ('<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d" viewBox="0 0 %d %d" fill="none">'
+            '<rect width="%d" height="%d" fill="%s"/>'
+            '<svg x="%g" y="%g" width="%g" height="%g" viewBox="%s" fill="none">%s</svg></svg>\n'
+            % (size, size, size, size, size, size, colour, pad, pad, inner_size, inner_size, box, inner))
+
+
+def badge(svg):
+    """The notification badge: every element except the first background <rect>, every fill and stroke white."""
+    root, inner = split_root(svg)
+    first = re.search(r'<rect\b[^>]*>', inner)
+    if not first:
+        raise SystemExit('the source SVG has no background <rect>')
+    inner = inner[:first.start()] + inner[first.end():]
+    inner = re.sub(r'\s(fill|stroke)="(?!none")[^"]*"', r' \1="#FFFFFF"', inner)
+    return root + inner + '</svg>\n'
 
 
 # ---------------------------------------------------------------- PNG
@@ -234,6 +278,22 @@ def main():
         if any(r[x] != 255 for r in rows for x in range(3, len(r), 4)):
             raise SystemExit('%s: not every pixel is opaque' % name)
         outputs[name] = encode_png(w, h, rows, 2)
+        for name, size in MASKABLE.items():
+            w, h, rows = decode_png(render(page, maskable(svg, size), size, False))
+            if (w, h) != (size, size):
+                raise SystemExit('%s: Chrome drew %d x %d instead of %d x %d' % (name, w, h, size, size))
+            if any(r[x] != 255 for r in rows for x in range(3, len(r), 4)):
+                raise SystemExit('%s: not every pixel is opaque' % name)
+            outputs[name] = encode_png(w, h, rows, 2)
+        name, size = BADGE
+        w, h, rows = decode_png(render(page, badge(svg), size, True))
+        if (w, h) != (size, size):
+            raise SystemExit('%s: Chrome drew %d x %d instead of %d x %d' % (name, w, h, size, size))
+        if rows[0][3] != 0:
+            raise SystemExit('%s: the corner is not transparent' % name)
+        if not any(r[x] == 255 for r in rows for x in range(3, len(r), 4)):
+            raise SystemExit('%s: nothing was drawn' % name)
+        outputs[name] = encode_png(w, h, rows, 6)
     PUBLIC.mkdir(parents=True, exist_ok=True)
     for name, data in outputs.items():
         path = PUBLIC / name

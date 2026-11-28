@@ -46,6 +46,27 @@ pub(super) struct BankRow {
 
 const BANK_COLUMNS: &str = "id, name, filename, legacy_ids, created_at, updated_at";
 
+// v3.1 (E.1): the per-user filters are two statements, not `?1 IS NULL OR user_id=?1`, so the one-user form can use its index.
+// Public (re-exported by `categories`) so the query-plan test can run the very texts the code runs.
+/// Every attempt's bank snapshot (administrators).
+pub const ATTEMPT_BANKS_ALL_SQL: &str = "SELECT banks FROM attempts";
+/// One user's attempt bank snapshots (`?1` = user id).
+pub const ATTEMPT_BANKS_USER_SQL: &str = "SELECT banks FROM attempts WHERE user_id=?1";
+/// Attempt count and last id (administrators).
+pub const ATTEMPT_STAMP_ALL_SQL: &str = "SELECT COUNT(*), COALESCE(MAX(id), 0) FROM attempts";
+/// Attempt count and last id of one user (`?1`).
+pub const ATTEMPT_STAMP_USER_SQL: &str =
+    "SELECT COUNT(*), COALESCE(MAX(id), 0) FROM attempts WHERE user_id=?1";
+/// Statistics rows and attempts sum (administrators).
+pub const STATS_STAMP_ALL_SQL: &str = "SELECT COUNT(*), COALESCE(SUM(attempts), 0) FROM user_stats";
+/// Statistics rows and attempts sum of one user (`?1`).
+pub const STATS_STAMP_USER_SQL: &str =
+    "SELECT COUNT(*), COALESCE(SUM(attempts), 0) FROM user_stats WHERE user_id=?1";
+/// Attempt ids with their bank snapshots (administrators), used by the bank delete.
+pub const ATTEMPT_IDS_ALL_SQL: &str = "SELECT id, banks FROM attempts";
+/// The same for one user (`?1`).
+pub const ATTEMPT_IDS_USER_SQL: &str = "SELECT id, banks FROM attempts WHERE user_id=?1";
+
 fn bank_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<BankRow> {
     Ok(BankRow {
         id: r.get(0)?,
@@ -434,39 +455,43 @@ fn banks_json(c: &Connection, viewer: &Viewer) -> Result<Value, DbError> {
         let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
         rows.collect::<Result<_, _>>()?
     };
-    // Same query shape and row order as `/api/bank` (a full scan sorted by `seq`), so the sheet order matches it
+    // v3.1 (E.2): one aggregate row per (bank, sheet) instead of every question row. A bank's sheets are ordered by their first
+    // `seq`, the rule of `/api/bank` (`sheet_groups`)
     let mut aggs: HashMap<i64, BankAgg> = HashMap::new();
     {
-        let mut st = c.prepare("SELECT bank_id, sheet, active FROM questions ORDER BY seq")?;
+        let mut st = c.prepare(
+            "SELECT bank_id, sheet, COALESCE(SUM(active <> 0), 0), COALESCE(SUM(active = 0), 0), MIN(seq) \
+             FROM questions WHERE bank_id IS NOT NULL GROUP BY bank_id, sheet",
+        )?;
+        let mut firsts: HashMap<i64, Vec<(i64, String, i64, i64)>> = HashMap::new();
         let mut rows = st.query([])?;
         while let Some(r) = rows.next()? {
-            let Some(bank_id) = r.get::<_, Option<i64>>(0)? else {
-                continue;
-            };
+            let bank_id: i64 = r.get(0)?;
             let sheet: String = r.get(1)?;
-            let active = r.get::<_, i64>(2)? != 0;
+            let usable: i64 = r.get(2)?;
+            let inactive: i64 = r.get(3)?;
+            let first: i64 = r.get(4)?;
+            firsts
+                .entry(bank_id)
+                .or_default()
+                .push((first, sheet, usable, inactive));
+        }
+        for (bank_id, mut sheets) in firsts {
+            // `seq` is unique per bank, so the order is total; the name only keeps the sort deterministic
+            sheets.sort();
             let agg = aggs.entry(bank_id).or_default();
-            let i = match agg.sheets.iter().position(|(name, _, _)| *name == sheet) {
-                Some(i) => i,
-                None => {
-                    agg.sheets.push((sheet, 0, 0));
-                    agg.sheets.len() - 1
-                }
-            };
-            if let Some(entry) = agg.sheets.get_mut(i) {
-                if active {
-                    entry.1 += 1;
-                } else {
-                    entry.2 += 1;
-                }
-            }
-            if active {
-                agg.total += 1;
-            } else {
-                agg.inactive += 1;
+            for (_, sheet, usable, inactive) in sheets {
+                agg.total += usable;
+                agg.inactive += inactive;
+                agg.sheets.push((sheet, usable, inactive));
             }
         }
     }
+    let placements: HashMap<i64, (Option<i64>, i64)> = {
+        let mut st = c.prepare("SELECT id, category_id, sort FROM banks")?;
+        let rows = st.query_map([], |r| Ok((r.get(0)?, (r.get(1)?, r.get(2)?))))?;
+        rows.collect::<Result<_, _>>()?
+    };
     let studied: HashMap<i64, i64> = if viewer.admin {
         // Shared numbers: a question counts once if any user has statistics for it
         let mut st = c.prepare(
@@ -485,10 +510,14 @@ fn banks_json(c: &Connection, viewer: &Viewer) -> Result<Value, DbError> {
     };
     let mut records: HashMap<i64, i64> = HashMap::new();
     {
-        // Administrators: every user's records (`?1` is NULL); everyone else: their own
+        // Administrators: every user's records; everyone else: their own (two statements, E.1)
+        let mut st = c.prepare(if viewer.admin {
+            ATTEMPT_BANKS_ALL_SQL
+        } else {
+            ATTEMPT_BANKS_USER_SQL
+        })?;
         let user = (!viewer.admin).then_some(viewer.user);
-        let mut st = c.prepare("SELECT banks FROM attempts WHERE ?1 IS NULL OR user_id=?1")?;
-        let mut rows = st.query(params![user])?;
+        let mut rows = st.query(rusqlite::params_from_iter(user.iter()))?;
         while let Some(r) = rows.next()? {
             let ids: HashSet<i64> = snapshot_ids(&r.get::<_, String>(0)?).into_iter().collect();
             for id in ids {
@@ -500,6 +529,7 @@ fn banks_json(c: &Connection, viewer: &Viewer) -> Result<Value, DbError> {
         .iter()
         .map(|b| {
             let owner = owners.get(&b.id).copied().flatten();
+            let place = placements.get(&b.id).copied();
             let agg = aggs.remove(&b.id).unwrap_or_default();
             let sheets: Vec<Value> = agg
                 .sheets
@@ -523,6 +553,9 @@ fn banks_json(c: &Connection, viewer: &Viewer) -> Result<Value, DbError> {
                 "ownerId": if viewer.admin { owner } else { owner.filter(|o| *o == viewer.user) },
                 "owner": if viewer.admin { owner.and_then(|o| usernames.get(&o)) } else { None },
                 "manageable": viewer.manages(owner),
+                // v3.1: where the bank sits (NULL = uncategorised; sort 0 = not placed yet)
+                "categoryId": place.and_then(|p| p.0),
+                "sort": place.map_or(0, |p| p.1),
             });
             // v1.1: an AI bank carries one more key at the end
             if let (Some(meta), Some(obj)) = (ai_metas.get(&b.id), bank.as_object_mut()) {
@@ -531,7 +564,8 @@ fn banks_json(c: &Connection, viewer: &Viewer) -> Result<Value, DbError> {
             bank
         })
         .collect();
-    Ok(json!({ "banks": list }))
+    let categories = super::categories::visible_categories_json(c, viewer)?;
+    Ok(json!({ "banks": list, "categories": categories }))
 }
 
 /// Runs `sql` (with one `{marks}` placeholder for `?,?,…`) for every chunk of `ids`.
@@ -687,20 +721,25 @@ impl Store {
             [],
             |r| r.get(0),
         )?;
-        // `?1` NULL = every user (an administrator's numbers)
+        // Administrators: every user's numbers; everyone else: their own (two statements each, E.1)
         let user = (!viewer.admin).then_some(viewer.user);
-        let (attempts, last_attempt): (i64, i64) = g.query_row(
-            "SELECT COUNT(*), COALESCE(MAX(id), 0) FROM attempts WHERE ?1 IS NULL OR user_id=?1",
-            params![user],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )?;
-        let (stats, stat_attempts): (i64, i64) = g.query_row(
-            "SELECT COUNT(*), COALESCE(SUM(attempts), 0) FROM user_stats WHERE ?1 IS NULL OR user_id=?1",
-            params![user],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )?;
+        let (attempts_sql, stats_sql) = if viewer.admin {
+            (ATTEMPT_STAMP_ALL_SQL, STATS_STAMP_ALL_SQL)
+        } else {
+            (ATTEMPT_STAMP_USER_SQL, STATS_STAMP_USER_SQL)
+        };
+        let (attempts, last_attempt): (i64, i64) =
+            g.query_row(attempts_sql, rusqlite::params_from_iter(user.iter()), |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })?;
+        let (stats, stat_attempts): (i64, i64) =
+            g.query_row(stats_sql, rusqlite::params_from_iter(user.iter()), |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })?;
+        // v3.1: the categories and where every bank sits (the library stamp does not change for category edits)
+        let placement = super::categories::placement_stamp(&g)?;
         Ok(stamp_digest(&format!(
-            "{base}|{banks}|{owners}|{attempts}.{last_attempt}.{stats}.{stat_attempts}"
+            "{base}|{banks}|{owners}|{attempts}.{last_attempt}.{stats}.{stat_attempts}|{placement}"
         )))
     }
 
@@ -934,7 +973,7 @@ impl Store {
             if !viewer.manages(bank_owner(c, id)?) {
                 return Err(DbError::NotBankOwner);
             }
-            // `?N IS NULL OR user_id=?N`: every user (administrator) or only the viewer
+            // Every user (administrator) or only the viewer
             let only_user = (!viewer.admin).then_some(viewer.user);
             let question_ids: Vec<String> = {
                 let mut st = c.prepare("SELECT id FROM questions WHERE bank_id=?1")?;
@@ -986,9 +1025,12 @@ impl Store {
                     rows.collect::<Result<_, _>>()?
                 };
                 let only_this: Vec<i64> = {
-                    let mut st =
-                        c.prepare("SELECT id, banks FROM attempts WHERE ?1 IS NULL OR user_id=?1")?;
-                    let rows = st.query_map(params![only_user], |r| {
+                    let mut st = c.prepare(if only_user.is_some() {
+                        ATTEMPT_IDS_USER_SQL
+                    } else {
+                        ATTEMPT_IDS_ALL_SQL
+                    })?;
+                    let rows = st.query_map(rusqlite::params_from_iter(only_user.iter()), |r| {
                         Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
                     })?;
                     let mut out = Vec::new();

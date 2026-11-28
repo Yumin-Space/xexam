@@ -138,6 +138,90 @@ struct GeoSourceAnswer {
     source: String,
 }
 
+/// The longest wait of a `push/next` long poll, in milliseconds (the backend bound).
+pub const PUSH_POLL_MAX_MS: u64 = 20_000;
+/// Most jobs in one `push/next` answer and results in one `push/result` call.
+pub const PUSH_BATCH_MAX: usize = 20;
+
+/// One web push message the backend wants delivered (`/internal/ai/push/next`). The fields hold secrets (the endpoint
+/// path, the VAPID authorization, the encrypted body): `Debug` prints only the id and the host.
+#[derive(Clone, PartialEq, Eq)]
+pub struct PushJob {
+    pub id: i64,
+    pub tries: i64,
+    pub endpoint: String,
+    pub ttl: i64,
+    pub urgency: String,
+    pub topic: Option<String>,
+    pub authorization: String,
+    /// base64url without padding of the RFC 8291 record
+    pub body: String,
+}
+
+impl std::fmt::Debug for PushJob {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PushJob")
+            .field("id", &self.id)
+            .field("host", &crate::push::allow::log_host(&self.endpoint))
+            .finish()
+    }
+}
+
+/// What happened to a push job (the `outcome` of `push/result`; the backend decides what follows).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PushOutcome {
+    Sent,
+    Gone,
+    Auth,
+    Retry,
+    Deferred,
+    Rejected,
+}
+
+impl PushOutcome {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PushOutcome::Sent => "sent",
+            PushOutcome::Gone => "gone",
+            PushOutcome::Auth => "auth",
+            PushOutcome::Retry => "retry",
+            PushOutcome::Deferred => "deferred",
+            PushOutcome::Rejected => "rejected",
+        }
+    }
+}
+
+/// The result of one push job.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PushResult {
+    pub id: i64,
+    pub tries: i64,
+    pub outcome: PushOutcome,
+    /// The push service's HTTP status (0 = no answer), when there was one
+    pub status: Option<u16>,
+    /// Seconds, 1..=3600
+    pub retry_after: Option<u32>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PushJobWire {
+    id: i64,
+    tries: i64,
+    endpoint: String,
+    ttl: i64,
+    urgency: String,
+    topic: Option<String>,
+    authorization: String,
+    body: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PushNextAnswer {
+    jobs: Vec<PushJobWire>,
+}
+
 /// Why a call to the backend failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LinkError {
@@ -678,6 +762,70 @@ impl Link {
             .await?;
         let a: GeoSourceAnswer = serde_json::from_slice(&raw).map_err(|_| LinkError::Failed)?;
         GeoSource::parse(&a.source).ok_or(LinkError::Failed)
+    }
+
+    // v3.1: the web push courier (`/internal/ai/push/*`). Data-call semantics like the geo routes: a 404 (an older
+    // backend without the routes) only fails the call.
+
+    /// Long poll: asks the backend for due push messages (`POST /internal/ai/push/next`). The call may last up to
+    /// `wait_ms` (at most 20 000) plus the usual backend time limit. The answer is returned as it came (the worker
+    /// refuses a batch of more than [`PUSH_BATCH_MAX`] jobs whole); each job is validated by the worker.
+    pub async fn push_next(&self, wait_ms: u64) -> Result<Vec<PushJob>, LinkError> {
+        let wait = wait_ms.min(PUSH_POLL_MAX_MS);
+        let body = self
+            .send_with(
+                "/internal/ai/push/next",
+                serde_json::json!({ "waitMs": wait }),
+                Mode::Data,
+                Some(Duration::from_millis(wait) + self.backend_total),
+            )
+            .await?;
+        let a: PushNextAnswer = serde_json::from_slice(&body).map_err(|_| LinkError::Failed)?;
+        Ok(a.jobs
+            .into_iter()
+            .map(|j| PushJob {
+                id: j.id,
+                tries: j.tries,
+                endpoint: j.endpoint,
+                ttl: j.ttl,
+                urgency: j.urgency,
+                topic: j.topic,
+                authorization: j.authorization,
+                body: j.body,
+            })
+            .collect())
+    }
+
+    /// Posts the outcomes of a batch (`POST /internal/ai/push/result`, 1 to 20 results).
+    pub async fn push_result(&self, items: &[PushResult]) -> Result<(), LinkError> {
+        if items.is_empty() || items.len() > PUSH_BATCH_MAX {
+            return Err(LinkError::Failed);
+        }
+        let results: Vec<serde_json::Value> = items
+            .iter()
+            .map(|r| {
+                serde_json::json!({
+                    "id": r.id,
+                    "tries": r.tries,
+                    "outcome": r.outcome.as_str(),
+                    "status": r.status,
+                    "retryAfter": r.retry_after,
+                })
+            })
+            .collect();
+        let body = self
+            .send(
+                "/internal/ai/push/result",
+                serde_json::json!({ "results": results }),
+                Mode::Data,
+            )
+            .await?;
+        let a: OkAnswer = serde_json::from_slice(&body).map_err(|_| LinkError::Failed)?;
+        if a.ok {
+            Ok(())
+        } else {
+            Err(LinkError::Failed)
+        }
     }
 
     /// `true` while the backend accepted a report less than [`REPORT_STALE`] ago.

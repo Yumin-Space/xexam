@@ -5,7 +5,8 @@ crops each chosen one to the visible screen (desktop 16:10, phone 390 x 844) and
 has the same shape, and draws a thin grey frame around it. The README shows the dark theme, so the images are taken
 dark into a separate folder first; it writes docs/<lang>/screenshots/readme/*.png.
 
-    python tools/screenshots/retake.py --theme dark --out /tmp/dark --only desktop-1-home.png,desktop-3-result.png,\n        desktop-14-ai-chat.png,iphone-1-home.png,iphone-2-quiz.png,iphone-6-result.png,iphone-7-ai-chat.png
+    python tools/screenshots/retake.py --theme dark --out /tmp/dark --only desktop-1-home.png,desktop-3-result.png,desktop-14-ai-chat.png,iphone-1-home.png,iphone-2-quiz.png,iphone-6-result.png,iphone-7-ai-chat.png,\
+        iphone-11-fx-right.png,iphone-12-fx-wrong.png
     python tools/screenshots/readme_shots.py --from /tmp/dark          # all three languages
     python tools/screenshots/readme_shots.py --from /tmp/dark en       # one language
 
@@ -27,6 +28,9 @@ SHOTS = (
     ('iphone-2-quiz.png', 'phone-quiz.png', 'phone'),
     ('iphone-6-result.png', 'phone-result.png', 'phone'),
     ('iphone-7-ai-chat.png', 'phone-ai-chat.png', 'phone'),
+    # v3.0: the practice answer effects, taken mid-effect (confetti for a right answer, two claw swipes for a wrong one)
+    ('iphone-11-fx-right.png', 'phone-fx-right.png', 'phone'),
+    ('iphone-12-fx-wrong.png', 'phone-fx-wrong.png', 'phone'),
 )
 # the shape of the visible screen and the size written
 SIZE = {'desktop': (1280, 800), 'phone': (390, 844)}

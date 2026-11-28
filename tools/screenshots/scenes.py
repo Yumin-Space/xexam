@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """The screenshot scenes: headless Chrome drives the real UI through DOM clicks, one browser per language.
 
-shoot_language() writes, into one folder, the 38 images the READMEs and docs use (28 desktop images 1280 px wide and 10
-iPhone images 390 x 844, both at device scale 2). Since v1.0 the UI is phone-first (icons with tap-and-hold labels, a
+shoot_language() writes, into one folder, the 44 images the READMEs and docs use (30 desktop images 1280 px wide and 14
+iPhone images 390 x 844, both at device scale 2; the two answer-effect images iphone-11 / iphone-12 are README gallery images that
+a light run skips, so a documentation run writes 42). Since v1.0 the UI is phone-first (icons with tap-and-hold labels, a
 one-row practice bar, a collapsible AI+ panel under the card, a centered GitHub footer line); the scenes follow it:
 
   desktop-1-home        (v2.6) the Home dashboard (#/) in hand-written mode (the default): greeting, the saved exam to continue,
@@ -73,6 +74,14 @@ one-row practice bar, a collapsible AI+ panel under the card, a centered GitHub 
   desktop-27-profile    (v2.6) the Profile page as sam: the account (login e-mail, role, AI+ badge), the username and the Change
                         password row (an e-mail login, never the fresh-install "admin")
   iphone-10-profile     (v2.6) the Profile page on a phone
+  desktop-28-categories (v3.1) the Banks page as the administrator with the category manager dialog open (the made-up categories
+                        Science and Everyday life, each with its bank, the create field, rename / move / delete controls)
+  desktop-29-devices    (v3.1) User management: the device dialog of sam with the sign-in info eye open: three devices (the
+                        seed's, a desktop and an iPhone), made-up documentation addresses (203.0.113.x / 198.51.100.x), no
+                        notification control; the eye is closed again afterwards
+  iphone-13-guide       (v3.1) Home on an iPhone (Safari user agent) with the guide card at step 1 (the three iOS Safari
+                        drawings); every other scene keeps the guide dismissed (JS_SETUP sets xexam.guide.v1)
+  iphone-14-notifications (v3.1) Settings on an iPhone from the Notifications section down to the end of Install as an app
   iphone-9-study        (v2.5) the Exam & practice page with the latest card (one-row actions) and the start bar
   iphone-2-quiz         an exam: compact top row, one-row bar (previous, Next, flag), the "1 / n" button that opens the answer sheet drawer
   iphone-3-menu         the menu
@@ -82,6 +91,11 @@ one-row practice bar, a collapsible AI+ panel under the card, a centered GitHub 
   iphone-7-ai-chat      AI Chat full height with a short conversation
   iphone-8-banks        Bank management on a phone (v1.1): the compact bank list with its checkboxes and the AI file
                         import row under the Excel row
+  iphone-11-fx-right    (v3.0, README gallery) a practice question answered right and checked with the answer effects on,
+                        taken while the confetti sprays up and spreads (0.75 s into the effect)
+  iphone-12-fx-wrong    (v3.0, README gallery) a practice question answered wrong and checked, taken while both claw swipes
+                        are on screen (1.15 s into the effect, after the card shake). These two are taken with --theme dark or when --only names
+                        them (a full light run skips them); the answer effects are on only for them (JS_SETUP turns them off)
 
 Layout checks (assertions, not images) run in the same pass, in every language: at 360, 390 and 412 px the practice bar is
 ONE row with Check answer and Next as two separate buttons in fixed places (nothing moves between an unchecked and a
@@ -131,6 +145,15 @@ SCENES.insert(SCENES.index('desktop-10-users.png') + 1, 'desktop-10-users-signin
 # v2.6: the Profile page (the account section moved there from Settings)
 SCENES.insert(SCENES.index('desktop-26-study.png') + 1, 'desktop-27-profile.png')
 SCENES.append('iphone-10-profile.png')
+# v3.0: the practice answer effects on a phone (taken mid-effect). They are README gallery images: a run takes them with
+# --theme dark, or when --only names them; a full light run skips them (the docs do not show them)
+FX_SCENES = ('iphone-11-fx-right.png', 'iphone-12-fx-wrong.png')
+SCENES.extend(FX_SCENES)
+# v3.1: bank categories, signed-in devices, the phone guide and the notification settings
+V31_SCENES = ('desktop-28-categories.png', 'desktop-29-devices.png', 'iphone-13-guide.png', 'iphone-14-notifications.png')
+SCENES.insert(SCENES.index('desktop-27-profile.png') + 1, V31_SCENES[0])
+SCENES.insert(SCENES.index(V31_SCENES[0]) + 1, V31_SCENES[1])
+SCENES.extend(V31_SCENES[2:])
 
 BROWSER_LANG = {'en': 'en-US', 'zh-CN': 'zh-CN', 'ja': 'ja'}
 UI_LANG = {'en': 'en', 'zh-CN': 'zh', 'ja': 'ja'}          # the uiLang / questionLang setting
@@ -219,11 +242,16 @@ PRELUDE = r"""
 # gallery (retake.py --theme dark --out ..., then readme_shots.py --from ...)
 THEME = 'light'
 
-JS_SETUP = r"""(async (lang, theme) => {
+# The answer effects stay off (fx unset) except in the two effect scenes, which pass fx = true and switch them off again after.
+# v3.1: the phone guide card stays dismissed (localStorage xexam.guide.v1) in every scene except iphone-13-guide, which passes
+# guide = true: with an iPhone user agent on 127.0.0.1 (a secure context) the card would otherwise appear on every phone Home
+# scene and silently change the existing images.
+JS_SETUP = r"""(async (lang, theme, fx, guide) => {
   const post = (u, b) => fetch(u, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(b || {})});
-  const r = await post('/api/settings', {uiLang: lang, questionLang: lang, theme, autoAdvance: false, answerFx: false});
+  const r = await post('/api/settings', {uiLang: lang, questionLang: lang, theme, autoAdvance: false, answerFx: !!fx});
   if (!r.ok) throw new Error('POST /api/settings: ' + r.status);
   localStorage.removeItem('xexam.settings.v1');       // only the first-paint cache; a saved exam stays
+  try { if (guide) localStorage.removeItem('xexam.guide.v1'); else localStorage.setItem('xexam.guide.v1', 'dismissed'); } catch (e) {}
   return 'settings ' + lang + ' ' + theme;
 })"""
 
@@ -873,11 +901,13 @@ class Shooter:
     def js(self, code):
         return self.cdp.evaluate(code)
 
-    def png(self, name, w, h, mobile, clip=None, scroll_y=None):
+    def png(self, name, w, h, mobile, clip=None, scroll_y=None, now=False):
         """The w x h window as `name`; with `clip`, only its top `clip` px (for a page whose layout follows the window
-        height, so the window cannot simply be made as tall as the image); with `scroll_y`, scrolled down that far."""
-        self.metrics(w, h, mobile)
-        time.sleep(0.5)
+        height, so the window cannot simply be made as tall as the image); with `scroll_y`, scrolled down that far. `now`:
+        the window already has that size; capture at once, without the settle pause (an image taken mid-animation)."""
+        if not now:
+            self.metrics(w, h, mobile)
+            time.sleep(0.5)
         if scroll_y is not None:
             self.js('window.scrollTo(0, %d); window.scrollY' % scroll_y)
             time.sleep(0.3)
@@ -952,11 +982,15 @@ def shoot_language(chrome_exe, base, cookie, lang, out, upload, only=(), with_lo
         cdp.call('Page.addScriptToEvaluateOnNewDocument', source=PRELUDE)
         cdp.call('Emulation.setLocaleOverride', locale=BROWSER_LANG[lang])
         cdp.call('Emulation.setTimezoneOverride', timezoneId='UTC')
-        cdp.call('Emulation.setEmulatedMedia', features=[{'name': 'prefers-color-scheme', 'value': 'light'}])
+        # motion stays on (the answer effects do nothing when reduced motion is asked for)
+        cdp.call('Emulation.setEmulatedMedia', features=[{'name': 'prefers-color-scheme', 'value': 'light'},
+                                                         {'name': 'prefers-reduced-motion', 'value': 'no-preference'}])
         s = Shooter(cdp, base, out, set(only))
         _desktop_scenes(s, base, cookie, code, upload, with_log)
         _ai_scenes(s, base, cookie, code)
         _phone_scenes(s, base, cookie, code)
+        _fx_scenes(s, code)
+        _v31_scenes(s, base, cookie, code)
         _v11_scenes(s, base, cookie, code)
         _check_practice_bar(s, base, cookie, code)
         seed.delete_ai_chats(base, cookie)
@@ -972,9 +1006,13 @@ def shoot_language(chrome_exe, base, cookie, lang, out, upload, only=(), with_lo
 # User management with the sign-in info eye open: the demo users sign in once more from made-up documentation addresses
 # (the backend image believes X-Real-IP / X-Geo-* because it is told it sits behind Nginx), so the last sign-in and last
 # active lines show an IP, a place and a device. Every value is made up; the eye is closed again after the image.
-DEMO_SEEN = (('admin', '203.0.113.10', 'Example City', 'Example Region', 'US'),
-             ('alex', '198.51.100.7', 'Example City', 'Example Region', 'US'),
-             ('sam', '192.0.2.44', 'Sample Town', 'Sample Region', 'US'))
+# v3.1: each entry also carries the user agent and a device tag, so the sign-in lands on a stable device row of that user (the
+# xexam_did cookie is derived from the login and the tag: seed.device_cookie) and a second run reuses the row; sam has two devices
+# here, a desktop and an iPhone, and the seed's own device (a third row) from seed.Session.
+DEMO_SEEN = (('admin', '203.0.113.10', 'Example City', 'Example Region', 'US', DESKTOP_UA, 'shots'),
+             ('alex', '198.51.100.7', 'Example City', 'Example Region', 'US', IPHONE_UA, 'shots'),
+             ('sam', '203.0.113.44', 'Sample Town', 'Sample Region', 'US', DESKTOP_UA, 'shots-desktop'),
+             ('sam', '198.51.100.23', 'Sample Town', 'Sample Region', 'US', IPHONE_UA, 'shots-phone'))
 
 
 def _admin_session(base, cookie):
@@ -985,14 +1023,15 @@ def _admin_session(base, cookie):
 
 def _show_sign_in_places(base, cookie):
     _admin_session(base, cookie).call('/api/users/signin-info', {'enabled': True})
-    for name, ip, city, region, country in DEMO_SEEN:
+    for name, ip, city, region, country, ua, tag in DEMO_SEEN:
         password = seed.DEMO_PASSWORD
+        login = seed.login_of(name)
         req = urllib.request.Request(
             base + '/api/auth/login', method='POST',
-            data=json.dumps({'username': seed.login_of(name), 'password': password}).encode(),
+            data=json.dumps({'username': login, 'password': password}).encode(),
             headers={'Content-Type': 'application/json', 'Origin': base, 'X-Real-IP': ip, 'X-Geo-Country': country,
-                     'X-Geo-Region': region, 'X-Geo-City': city,
-                     'User-Agent': IPHONE_UA if name == 'alex' else DESKTOP_UA})
+                     'X-Geo-Region': region, 'X-Geo-City': city, 'User-Agent': ua,
+                     'Cookie': '%s=%s' % (seed.DID_COOKIE, seed.device_cookie(login, tag))})
         urllib.request.urlopen(req, timeout=60).read()
 
 
@@ -1515,3 +1554,141 @@ def _phone_scenes(s, base, cookie, code):
         s.js("document.activeElement?.blur?.(); window.scrollTo(0, 0); 'top'")
         s.phone('iphone-7-ai-chat.png')
         print('  ai chats deleted:', seed.delete_ai_chats(base, cookie))
+
+
+# v3.1: the category manager of the Banks page opens; the dialog must list the two made-up categories
+JS_CAT_OPEN = r"""(async () => { const bad = [];
+  const b = document.querySelector('#bk-catmanage'); if (!b) return ['no #bk-catmanage button'];
+  b.click(); await window.__wait(900);
+  const d = document.querySelector('dialog[open]'); if (!d) return ['the category manager did not open'];
+  const t = d.textContent;
+  for (const n of ['Science', 'Everyday life']) if (!t.includes(n)) bad.push('the manager does not list ' + n);
+  return bad; })()"""
+
+# v3.1: the device dialog of one user (the sign-in info eye is open): at least two devices, a made-up documentation address,
+# no notification control
+JS_DEV_OPEN = r"""(async (id) => { const bad = [];
+  const b = document.querySelector('#us-devices-' + id); if (!b) return ['no #us-devices-' + id + ' icon'];
+  b.click(); await window.__wait(1200);
+  const d = document.querySelector('dialog[open]'); if (!d) return ['the device dialog did not open'];
+  const rows = d.querySelectorAll('.dv-row').length; if (rows < 2) bad.push('only ' + rows + ' device row(s)');
+  if (!/203\.0\.113\.|198\.51\.100\./.test(d.textContent)) bad.push('no made-up documentation address shown (is the sign-in info eye open?)');
+  if (d.querySelector('[role=switch], input[type=checkbox]')) bad.push('a notification control in the administrator view');
+  return bad; })"""
+
+# v3.1: the guide card at step 1 on an iPhone: three iOS Safari drawings and a close button of at least 44 px
+JS_GUIDE_CHECK = r"""(() => { const bad = []; const c = document.querySelector('#gd-card');
+  if (!c) return ['no #gd-card on Home (is xexam.guide.v1 cleared and the user agent an iPhone?)'];
+  const art = c.querySelectorAll('svg[role="img"]').length; if (art !== 3) bad.push(art + ' drawings, expected 3');
+  const x = c.querySelector('.gd-close'); if (!x) bad.push('no .gd-close button');
+  else { const r = x.getBoundingClientRect(); if (Math.min(r.width, r.height) < 43.5) bad.push('.gd-close is ' + Math.round(r.width) + 'x' + Math.round(r.height)); }
+  const de = document.documentElement; if (de.scrollWidth > de.clientWidth + 1) bad.push('the page scrolls horizontally');
+  return bad; })()"""
+
+# v3.1: the top and the bottom (page coordinates) of the Notifications and Install sections
+JS_NOTIFY_BOUNDS = r"""(() => { const n = document.querySelector('#set-notify'), i = document.querySelector('#set-install');
+  if (!n) return null;
+  const top = n.getBoundingClientRect().top + scrollY, last = i || n;
+  return [Math.max(0, Math.floor(top - 12)), Math.ceil(last.getBoundingClientRect().bottom + scrollY + 16)]; })()"""
+
+
+def _v31_scenes(s, base, cookie, code):
+    """The four v3.1 images: the category manager, the device dialog of sam, the phone guide card and the notification settings
+    on an iPhone."""
+    if s.wanted('desktop-28-categories.png'):
+        s.desktop()
+        s.nav('#/banks', settle=2.4)
+        _expect(s.js(JS_CAT_OPEN), 'the category manager')
+        need = s.js("Math.ceil(document.querySelector('dialog[open]').getBoundingClientRect().height)")
+        s.page('desktop-28-categories.png', fixed=max(820, need + 120))
+        s.js("document.querySelector('dialog[open]')?.close(); 'closed'")
+    if s.wanted('desktop-29-devices.png'):
+        admin = _admin_session(base, cookie)
+        sam = admin.user_id('sam')
+        _show_sign_in_places(base, cookie)       # the eye is open: sam signed in from a desktop and an iPhone (made-up places)
+        try:
+            s.desktop()
+            s.nav('#/users?tab=users', settle=2.6)
+            _expect(s.js('(%s)(%d)' % (JS_DEV_OPEN, sam)), 'the device dialog of sam')
+            need = s.js("Math.ceil(document.querySelector('dialog[open]').getBoundingClientRect().height)")
+            s.page('desktop-29-devices.png', fixed=max(820, need + 120))
+            s.js("document.querySelector('dialog[open]')?.close(); 'closed'")
+        finally:
+            admin.call('/api/users/signin-info', {'enabled': False})
+    if s.wanted('iphone-13-guide.png'):
+        s.iphone()
+        s.nav()
+        s.js(JS_SETUP + "(%s, %s, false, true)" % (json.dumps(code), json.dumps(THEME)))     # the guide on for this image
+        try:
+            s.nav('#/', settle=2.8)
+            _expect(s.js(JS_GUIDE_CHECK), 'the guide card on a phone')
+            low = s.js("Math.ceil(document.querySelector('#gd-card').getBoundingClientRect().bottom + scrollY + 24)")
+            s.png('iphone-13-guide.png', PHONE_W, min(1800, max(PHONE_H, int(low or 0))), True)
+        finally:
+            s.js(JS_SETUP + "(%s, %s)" % (json.dumps(code), json.dumps(THEME)))              # dismissed again
+    if s.wanted('iphone-14-notifications.png'):
+        s.iphone()
+        s.nav('#/settings', settle=2.4)
+        bounds = s.js(JS_NOTIFY_BOUNDS)
+        _expect([] if bounds else ['no #set-notify section on Settings'], 'the notification settings on a phone')
+        top, bottom = bounds
+        s.png('iphone-14-notifications.png', PHONE_W, min(1700, max(PHONE_H // 2, bottom - top)), True, scroll_y=top)
+
+
+# v3.0: one practice question answered and checked with the answer effects on; resolves once the effect layer (.fx-layer)
+# has been on screen for `delay` ms (a MutationObserver notes the moment it is added), so the image catches the same moment
+# of the effect in every run. Returns 'no layer' when no effect started (the caller tries once more).
+JS_FX = r"""(async (bad, delay) => {
+  const wait = window.__wait, q1 = s => document.querySelector(s);
+  window.__skew = 0;
+  await window.__start('practice');
+  await wait(1500);                                   // the claw bitmaps are drawn in idle time after the practice opens
+  window.scrollTo(0, 0);
+  await window.__answer(bad); await wait(150);
+  let at = 0;
+  const seen = new MutationObserver(() => { if (!at && q1('.fx-layer')) at = performance.now(); });
+  seen.observe(document.body, {childList: true});
+  const check = q1('[data-focus="q-check"]');
+  if (check && !check.disabled) check.click();
+  for (let i = 0; i < 100 && !at; i++) await wait(10);
+  seen.disconnect();
+  if (!at) return 'no layer';
+  document.activeElement?.blur?.();
+  window.scrollTo(0, 0);
+  while (performance.now() - at < delay) await wait(4);
+  return (q1('.pverdict')?.innerText.split('\n')[0] || 'no verdict') + ' (' + Math.round(performance.now() - at) + ' ms into the effect)';
+})"""
+
+# (scene, wrong answer, ms after the effect layer appeared): the confetti spraying up and spreading (~0.75 s), both claw
+# swipes on screen (the second lands at 0.52 s, its red flash is over by 0.74 s, the card shake ends at 1.1 s: the card is
+# back in place)
+FX_SHOTS = (('iphone-11-fx-right.png', False, 750), ('iphone-12-fx-wrong.png', True, 1150))
+
+
+def _fx_scenes(s, code):
+    """The practice answer effects on a phone, mid-effect: the answer effects are switched on for these two images only and
+    off again afterwards. Taken with --theme dark (the README gallery) or when --only names them."""
+    wanted = [x for x in FX_SHOTS if (THEME == 'dark' and not s.only) or x[0] in s.only]
+    if not wanted:
+        return
+    s.iphone()
+    s.nav()
+    s.js(JS_SETUP + "(%s, %s, true)" % (json.dumps(code), json.dumps(THEME)))
+    try:
+        for name, bad, delay in wanted:
+            for attempt in (1, 2):
+                s.js(JS_CLEAR_SAVED)
+                s.nav()
+                said = s.js('(%s)(%s, %d)' % (JS_FX, 'true' if bad else 'false', delay))
+                if said != 'no layer':
+                    break
+                print('  %s: no effect layer appeared%s' % (name, '; trying once more' if attempt == 1 else ''))
+            if said == 'no layer':
+                raise AssertionError('%s: the answer effect did not start' % name)
+            s.png(name, PHONE_W, PHONE_H, True, now=True)
+            print('  answer effect:', said)
+    finally:
+        s.nav()
+        s.js(JS_CLEAR_SAVED)
+        s.js(JS_SETUP + "(%s, %s)" % (json.dumps(code), json.dumps(THEME)))
+        s.nav()

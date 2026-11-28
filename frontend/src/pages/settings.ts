@@ -7,19 +7,27 @@
 // AI+ users (one free-mode switch per administrator row).
 // Every change goes through updateSettings(): applied at once (optimistic), saved on the server (Xexam's data directory),
 // and rolled back with a toast when saving fails. The page is redrawn by render(); the focused control keeps the focus.
+// v3.1: three sections after "Answering": Notifications (the account switch, this device's state, Enable and Test), Install as an
+// app (phones and tablets only) and Signed-in devices (the list of components/device-list.ts and "Sign out all other devices").
+// The browser side (permission, subscription, install prompt) is state/push.ts; what each state allows is domain/push-env.ts.
 import { handMode, setHandMode } from '../components/hand-mode.ts';
 import '../styles/settings.css';
+import { fetchDevices, signOutDevice, signOutOtherDevices } from '../api/devices.ts';
+import { deviceList } from '../components/device-list.ts';
 import { pageHead } from '../components/common.ts';
 import { miniIcon } from '../components/mini-icons.ts';
 import { infoTip } from '../components/tooltip.ts';
-import { localeTag, t, type MsgKey } from '../i18n/index.ts';
+import { signOutTargets } from '../domain/devices.ts';
+import { devicePushState, installView, notifyActions } from '../domain/push-env.ts';
+import { localeTag, t, tn, uiLang, type MsgKey } from '../i18n/index.ts';
 import { UI_LANGS } from '../i18n/define.ts';
 import { errorText } from '../i18n/errors.ts';
-import { render } from '../state/actions.ts';
+import { navigate, onRouteChange, onSignedIn, render } from '../state/actions.ts';
 import { resetSettings, updateSettings } from '../state/preferences.ts';
+import { enablePush, onPushChange, promptInstall, pushReady, pushView, reconfirmPush, reopenGuide, sendTestPush } from '../state/push.ts';
 import { DEFAULT_SETTINGS } from '../state/settings-cache.ts';
 import { S } from '../state/store.ts';
-import type { QuestionLang, Settings, Theme, UiLang } from '../types/api.ts';
+import type { Device, DevicesResponse, QuestionLang, Settings, Theme, UiLang } from '../types/api.ts';
 import { ask } from '../utils/dialog.ts';
 import { h, type Child } from '../utils/dom.ts';
 import { toast } from '../utils/toast.ts';
@@ -32,7 +40,7 @@ const THEME_SEG: ReadonlyArray<{ theme: Theme; icon: 'sun' | 'moon' | 'auto'; na
   { theme: 'system', icon: 'auto', name: 'settings.theme.systemShort' },
 ];
 /** The sections that can show "Saved" next to their heading */
-type SavedSection = 'appearance' | 'language' | 'answering';
+type SavedSection = 'appearance' | 'language' | 'answering' | 'notify';
 
 const THEME_NAME: Record<Theme, MsgKey> = {
   system: 'settings.theme.system',
@@ -66,8 +74,57 @@ const SAVED_MS = 2000;
 let resetting = false;
 /** The status text of the current render (updated in place, without a redraw) */
 let statusEl: HTMLElement | null = null;
+/** One live region that outlives every render, so a change of the device state is announced (a node inserted together with its text often is not) */
+const devLive: HTMLElement = h('span', { class: 'sr-only', role: 'status' });
 /** A control to focus after the next render instead of the one that had the focus */
 let forceFocus: string | null = null;
+
+// v3.1: notifications and devices (page-local; the devices are read when the page opens and kept until it is left)
+/** Enable is running (the permission prompt and the subscription) */
+let enabling = false;
+/** A test notification is being sent */
+let testing = false;
+const dev = { data: null as DevicesResponse | null, loading: false, error: null as string | null, busyId: null as number | null, othersBusy: false, gen: 0 };
+
+function forgetDevices(): void {
+  dev.gen += 1;
+  Object.assign(dev, { data: null, loading: false, error: null, busyId: null, othersBusy: false });
+}
+onRouteChange((from, to) => {
+  if (from.name === 'settings' && to.name !== 'settings') forgetDevices();
+});
+onSignedIn(forgetDevices);
+// The browser side changed (permission, subscription, install prompt, the server key): redraw the notification state
+onPushChange(() => {
+  if (S.route.name === 'settings') render();
+});
+
+/** Drops the cached device list and reads it again (a no-op away from Settings) */
+function refreshDevices(): void {
+  if (S.route.name !== 'settings') return;
+  dev.gen += 1;
+  dev.data = null;
+  dev.loading = false;
+  loadDevices();
+  render();
+}
+
+/** Reads the device list (the page shows "Loading" meanwhile; a failure shows the reason and a retry button) */
+function loadDevices(): void {
+  if (dev.loading) return;
+  const gen = dev.gen;
+  dev.loading = true;
+  dev.error = null;
+  fetchDevices().then((r) => {
+    if (gen === dev.gen) dev.data = r;
+  }).catch((e: unknown) => {
+    if (gen === dev.gen) dev.error = errorText(e);
+  }).finally(() => {
+    if (gen !== dev.gen) return;
+    dev.loading = false;
+    if (S.route.name === 'settings') render();
+  });
+}
 
 const statusText = (): string => (pending > 0 ? t('common.saving') : savedShown ? t('common.saved') : '');
 
@@ -80,7 +137,7 @@ function showStatus(): void {
 
 /** The section a changed setting belongs to */
 function sectionOf(patch: Partial<Settings>): SavedSection {
-  return 'theme' in patch ? 'appearance' : 'uiLang' in patch || 'questionLang' in patch ? 'language' : 'answering';
+  return 'theme' in patch ? 'appearance' : 'uiLang' in patch || 'questionLang' in patch ? 'language' : 'push' in patch ? 'notify' : 'answering';
 }
 
 /** The data-focus key of the focused control, so it gets the focus back after the page is redrawn */
@@ -117,6 +174,12 @@ async function save(patch: Partial<Settings>): Promise<void> {
   } finally {
     pending -= 1;
   }
+  if (ok && patch.push !== undefined) {
+    // The server's per-device "notifications" flag depends on the account switch: re-read the list; a switch turned on
+    // re-confirms the subscription so this device does not stay at "not enabled yet"
+    refreshDevices();
+    if (patch.push) void reconfirmPush().then(refreshDevices, () => undefined);
+  }
   if (ok && pending === 0) {
     savedShown = true;
     savedSection = sectionOf(patch);
@@ -126,6 +189,89 @@ async function save(patch: Partial<Settings>): Promise<void> {
     }, SAVED_MS);
   }
   showStatus();
+}
+
+/** Enable on this device. WebKit grants the permission prompt only inside the tap, so `enablePush()` is the FIRST call here */
+function enableHere(): void {
+  if (enabling) return;
+  const done = enablePush();
+  enabling = true;
+  render();
+  done.then(refreshDevices, () => undefined);
+  done.catch((e: unknown) => {
+    toast(t('settings.notify.enableFailed', { reason: errorText(e) }), 6000);
+  }).finally(() => {
+    enabling = false;
+    forceFocus = 'set-push-test';
+    if (S.route.name === 'settings') render();
+  });
+}
+
+async function testHere(): Promise<void> {
+  if (testing) return;
+  testing = true;
+  render();
+  try {
+    const r = await sendTestPush();
+    const sep = uiLang() === 'en' ? ' ' : '';
+    const note = r.courier ? '' : sep + t(S.user?.role === 'admin' ? 'settings.notify.noCourier.admin' : 'settings.notify.noCourier.user');
+    toast(t('settings.notify.testSent') + note, 6000);
+  } catch (e) {
+    toast(t('settings.notify.testFailed', { reason: errorText(e) }), 6000);
+  } finally {
+    testing = false;
+    forceFocus = 'set-push-test';
+    if (S.route.name === 'settings') render();
+  }
+}
+
+/** Sign out (or stop) one of the person's own devices; the list is read again from the answer */
+async function signOutOne(d: Device): Promise<void> {
+  if (dev.busyId != null) return;
+  const stop = d.state === 'expired';
+  dev.busyId = d.id;
+  render();
+  try {
+    dev.data = await signOutDevice(d.id);
+    toast(t(stop ? 'devices.stop.done' : 'devices.signOut.done'));
+  } catch (e) {
+    toast(t('devices.signOut.failed', { reason: errorText(e) }), 6000);
+    // The device may be gone already: read the list again
+    dev.data = null;
+    loadDevices();
+  } finally {
+    dev.busyId = null;
+  }
+  forceFocus = 'set-devlist';
+  if (S.route.name === 'settings') render();
+}
+
+async function signOutOthers(): Promise<void> {
+  if (dev.othersBusy || !dev.data) return;
+  const yes = await ask({
+    title: t('settings.devices.othersOut.confirmTitle'),
+    body: t('settings.devices.othersOut.confirmBody'),
+    ok: t('devices.signOut.ok'),
+    cancel: t('common.cancel'),
+    danger: true,
+  });
+  if (!yes || dev.othersBusy || !dev.data) return;
+  const before = signOutTargets(dev.data.devices).length;
+  dev.othersBusy = true;
+  render();
+  try {
+    const r = await signOutOtherDevices();
+    dev.data = r;
+    toast(tn('settings.devices.othersOut.done', r.count ?? before));
+  } catch (e) {
+    toast(t('devices.signOut.failed', { reason: errorText(e) }), 6000);
+    dev.data = null;
+    loadDevices();
+  } finally {
+    dev.othersBusy = false;
+  }
+  forceFocus = 'set-devlist';
+  if (S.route.name === 'settings') render();
 }
 
 async function reset(): Promise<void> {
@@ -214,6 +360,128 @@ function swatch(kind: 'light' | 'dark'): HTMLElement {
 function preview(theme: Theme): HTMLElement {
   return h('span', { class: 'set-sw-frame' + (theme === 'system' ? ' pair' : ''), 'aria-hidden': 'true' },
     theme === 'system' ? [swatch('light'), swatch('dark')] : swatch(theme));
+}
+
+// ---------------------------------------------------------------- v3.1 sections
+
+/** Notifications: the account switch (all devices), this device's state in words, Enable / Test, the quiet hours */
+function notifySection(): HTMLElement {
+  const v = pushView();
+  const on = S.settings.push;
+  // Until the first hello and subscription check are done the device cannot be judged (a set-up device would look "not enabled")
+  const checking = !pushReady();
+  const state = devicePushState(v.env, v.permission, v.subscribed, on, v.serverKey);
+  const acts = checking ? { enable: 'disabled' as const, test: false } : notifyActions(state);
+  const admin = S.user?.role === 'admin';
+  const busy = enabling || v.busy;
+  const stateText = checking ? t('settings.notify.state.checking') : t(`settings.notify.state.${state}`);
+  const enable = acts.enable === 'hidden' ? null : h('button', {
+    class: 'btn', type: 'button', 'data-focus': 'set-push-enable', id: 'set-push-enable',
+    disabled: acts.enable === 'disabled' || busy || checking,
+    // The state text says why the button is off (owner: the two buttons show the reason and are disabled)
+    'aria-describedby': acts.enable === 'disabled' ? 'set-dev-state' : null,
+    'aria-busy': busy || checking ? 'true' : null,
+    onclick: enableHere,
+  }, t(busy ? 'settings.notify.enabling' : 'settings.notify.enable'));
+  const test = acts.test ? h('button', {
+    class: 'btn ghost', type: 'button', 'data-focus': 'set-push-test', id: 'set-push-test', disabled: testing, 'aria-busy': testing ? 'true' : null,
+    onclick: () => void testHere(),
+  }, t('settings.notify.test')) : null;
+  return section('set-notify', t('settings.notify'), null, 'notify',
+    h('button', {
+      class: 'set-switch', id: 'set-push', type: 'button', role: 'switch', 'aria-checked': String(on),
+      'aria-labelledby': 'set-push-l', 'aria-describedby': 'set-push-d', 'data-focus': 'set-push',
+      onclick: () => void save({ push: !S.settings.push }),
+    },
+    h('span', { class: 'set-switch-text' },
+      h('span', { class: 'set-switch-l', id: 'set-push-l' }, t('settings.notify.account.label')),
+      h('span', { class: 'set-switch-d', id: 'set-push-d' }, t('settings.notify.account.desc'))),
+    h('span', { class: 'set-switch-ctl' },
+      h('span', { class: 'set-track', 'aria-hidden': 'true' }, h('span', { class: 'set-knob' })),
+      h('span', { class: 'set-switch-state', 'aria-hidden': 'true' }, t(on ? 'settings.on' : 'settings.off')))),
+    h('p', { class: 'set-dev-state', id: 'set-dev-state' }, t('settings.notify.device'), uiLang() === 'en' ? ' ' : '', stateText),
+    (devLive.textContent = `${t('settings.notify.device')}${uiLang() === 'en' ? ' ' : ''}${stateText}`, devLive),
+    enable || test ? h('div', { class: 'set-notify-acts' }, enable, test) : null,
+    // The quiet hours follow the Profile time zone: a link there instead of a page name to look for
+    h('p', { class: 'set-note set-quiet' }, t('settings.notify.quiet'), ' ',
+      h('a', { class: 'set-quiet-link', href: '#/profile', id: 'set-tz-link' }, t('settings.notify.tzLink'))),
+    v.courier === false ? h('p', { class: 'set-note warn' }, t(admin ? 'settings.notify.noCourier.admin' : 'settings.notify.noCourier.user')) : null);
+}
+
+/** Install as an app (phones and tablets only): what the browser offers, plus the way back to the setup guide */
+function installSection(): HTMLElement | null {
+  const v = pushView();
+  if (!v.env.mobile) return null;
+  const view = installView(v.env, v.installPrompt, v.installed);
+  const guide = h('button', {
+    class: 'btn ghost', type: 'button', 'data-focus': 'set-install-guide', id: 'set-install-guide',
+    onclick: () => {
+      reopenGuide();
+      navigate({ name: 'home' });
+    },
+  }, t('settings.install.guide'));
+  let body: Child;
+  switch (view) {
+    case 'insecure':
+      body = [
+        h('button', { class: 'btn', type: 'button', id: 'set-install-btn', disabled: true, 'aria-describedby': 'set-install-note' }, t('settings.install.button')),
+        h('p', { class: 'set-note', id: 'set-install-note' }, t('settings.install.insecure')),
+      ];
+      break;
+    case 'done':
+      body = h('p', { class: 'set-note' }, t('settings.install.done'));
+      break;
+    case 'prompt':
+      body = h('button', {
+        class: 'btn', type: 'button', id: 'set-install-btn', 'data-focus': 'set-install-btn',
+        onclick: () => void promptInstall().then(() => render()),
+      }, t('settings.install.button'));
+      break;
+    case 'android':
+      body = h('p', { class: 'set-note' }, t('settings.install.android'));
+      break;
+    case 'ios':
+      body = h('p', { class: 'set-note' }, t('settings.install.ios'));
+      break;
+    default:
+      body = h('p', { class: 'set-note' }, t('settings.install.iosOther'));
+  }
+  return section('set-install', t('settings.install'), null, undefined,
+    h('div', { class: 'set-install-body' }, body),
+    h('div', { class: 'set-notify-acts' }, guide));
+}
+
+/** Signed-in devices: the person's own list and "Sign out all other devices" */
+function devicesSection(): HTMLElement {
+  if (!dev.data && !dev.loading && !dev.error) loadDevices();
+  const data = dev.data;
+  let body: Child;
+  if (data) {
+    const others = signOutTargets(data.devices).length > 0;
+    body = [
+      deviceList({ devices: data.devices, signinInfo: data.signinInfo, mode: 'self', busyId: dev.busyId, onSignOut: (d) => void signOutOne(d) }),
+      others
+        ? h('div', { class: 'set-notify-acts' }, h('button', {
+          class: 'btn ghost danger', type: 'button', id: 'set-devices-out', 'data-focus': 'set-devices-out', disabled: dev.othersBusy,
+          onclick: () => void signOutOthers(),
+        }, t('settings.devices.othersOut')))
+        : null,
+    ];
+  } else if (dev.error) {
+    body = h('div', { class: 'err set-dev-err', role: 'alert' },
+      h('p', null, t('settings.devices.loadFailed', { reason: dev.error })),
+      h('button', {
+        class: 'btn', type: 'button', 'data-focus': 'set-devices-retry',
+        onclick: () => {
+          dev.error = null;
+          render();
+        },
+      }, t('common.retry')));
+  } else {
+    body = h('p', { class: 'set-note', role: 'status' }, t('common.loading'));
+  }
+  return section('set-devices', t('settings.devices'), t('settings.devices.desc'), undefined,
+    h('div', { class: 'set-devlist', id: 'set-devlist', tabindex: '-1', 'data-focus': 'set-devlist', 'aria-busy': dev.loading ? 'true' : null }, body));
 }
 
 // ---------------------------------------------------------------- page
@@ -317,6 +585,10 @@ export function renderSettings(): HTMLElement {
       h('span', { class: 'set-track', 'aria-hidden': 'true' }, h('span', { class: 'set-knob' })),
       h('span', { class: 'set-switch-state', 'aria-hidden': 'true' }, t(s.answerFx ? 'settings.on' : 'settings.off')))));
 
+  const notify = notifySection();
+  const install = installSection();
+  const devices = devicesSection();
+
   const defaults = atDefaults(s);
   const resetSec = section('set-reset-h', t('settings.reset'), null, undefined,
     h('div', { class: 'set-reset' },
@@ -336,6 +608,9 @@ export function renderSettings(): HTMLElement {
     language,
     textSec,
     answering,
+    notify,
+    install,
+    devices,
     resetSec);
   restoreFocus(root, want);
   showStatus();

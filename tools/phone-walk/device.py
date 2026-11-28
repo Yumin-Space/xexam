@@ -67,6 +67,15 @@ WIDE_TEXT_SCRIPT = ("try{var s=new CSSStyleSheet();s.replaceSync(%s);document.ad
                     "catch(e){}")
 
 
+# v3.1: the phone guide (components/guide.ts) must not cover other checks. Every device starts with the guide dismissed: a script
+# that runs before the first script of the first document of the tab sets the browser-local key once (the sessionStorage marker
+# makes it a one-shot, so a check that clears the key and reloads is not overridden). Only the W-V31-GD / IN checks clear the
+# key, and each puts it back. The key is global, not per user.
+GUIDE_KEY = 'xexam.guide.v1'
+GUIDE_DISMISS_SCRIPT = ("try{if(!sessionStorage.getItem('xexam.walk.guide')){sessionStorage.setItem('xexam.walk.guide','1');"
+                        "localStorage.setItem('%s','dismissed');}}catch(e){}" % GUIDE_KEY)
+
+
 def wide_text_enabled():
     return os.environ.get('XEXAM_WALK_WIDE_TEXT', '') not in ('', '0', 'false')
 
@@ -121,6 +130,7 @@ class Device:
             for d in ('Page', 'Runtime', 'DOM', 'Network'):
                 self.cdp.call(d + '.enable')
             self.cdp.call('Page.addScriptToEvaluateOnNewDocument', source=PRELUDE)
+            self.cdp.call('Page.addScriptToEvaluateOnNewDocument', source=GUIDE_DISMISS_SCRIPT)
             if wide_text_enabled():
                 self.cdp.call('Page.addScriptToEvaluateOnNewDocument', source=WIDE_TEXT_SCRIPT % json.dumps(WIDE_TEXT_CSS))
             self.cdp.call('Emulation.setTimezoneOverride', timezoneId='UTC')
@@ -197,8 +207,10 @@ class Device:
         self.nav(SETUP)
 
     def save_settings(self, **kw):
+        # v3.0: answerFx off for the walk; only the W-FX checks turn the effects on. Nothing for `push` or `tz` (v3.1): the
+        # default (push on, tz auto) is fine, headless Chrome never gets the notification permission and never subscribes.
         body = {'uiLang': self.lang, 'questionLang': self.lang, 'theme': self.theme, 'autoAdvance': False,
-                'answerFx': False}   # v3.0: off for the walk; only the W-FX checks turn the effects on
+                'answerFx': False}
         body.update(kw)
         return self.js("(async () => { const r = await fetch('/api/settings', {method: 'POST', headers: "
                        "{'Content-Type': 'application/json'}, body: %s}); localStorage.removeItem('xexam.settings.v1'); "

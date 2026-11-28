@@ -55,8 +55,11 @@ use std::time::Duration;
 mod activity;
 mod ai_gen;
 mod banks;
+mod categories;
 mod dashboard;
+mod devices;
 mod migrate;
+mod push;
 mod records;
 mod settings;
 mod study;
@@ -73,7 +76,14 @@ pub use ai_gen::{
     GenSourceReq, GenStratum, Tri, AI_BANKS_AUTO_SHARE, AI_SHEET,
 };
 pub use banks::scoped_id;
+// v3.1: the store halves of bank categories, devices and web push (functions are `pub(super)` or methods of `Store`)
+#[allow(unused_imports)]
+pub use categories::*;
+#[allow(unused_imports)]
+pub use devices::*;
 pub use migrate::{MigrationReport, BACKUP_DIR};
+#[allow(unused_imports)]
+pub use push::*;
 pub use study::{QuestionAsk, StudyLang, MAX_SAMPLE, TEXT_BUDGET};
 pub use system_settings::{
     ACTIVITY_RETENTION_DAYS, ACTIVITY_USER_VISITS, DEFAULT_RETENTION_DAYS, GEO_SOURCE,

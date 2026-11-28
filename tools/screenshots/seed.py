@@ -15,15 +15,25 @@ activity(base)         after the restart, so the System log page shows everyday 
                        kim (disabled), and a made-up username without an account that is guessed until it locks. Then it
                        waits until ai-service has reported to the restarted backend (AI+ available again, at most 40 s).
                        Returns the administrator's session cookie for the browser.
+categorize(admin)      (v3.1) creates the two made-up bank categories `Science` (holding General knowledge) and `Everyday life`
+                       (holding Kitchen basics) and moves the two demo banks into them; idempotent. prepare() calls it right after
+                       the two imports, so alex (granted General knowledge only) sees only `Science`; any other bank stays
+                       uncategorised (the walk's 51-question bank).
 seed_exams(base, cookie)  three earlier exams of the administrator, so the records pages look used.
 
 ai_chat(base, cookie, text, lang)  one AI chat through the API, answered in `lang` (en, zh or ja: the Settings language
                        the AI Chat page would send); the answer is read to its end; returns the chat id.
 delete_ai_chats(base, cookie) deletes every AI chat of the administrator again.
 
+Since v3.1 every Session sends a stable device cookie (xexam_did) derived from the login and a plain desktop User-Agent, so the
+many sign-ins of one made-up user land on ONE device row ("Signed-in devices" stays readable); sign_in(..., device='tag') picks
+another device of the same user (a second browser).
+
 Every password, key, address and model here is a made-up demo value for an instance that is deleted at the end of the
 run; the screenshots show only these.
 """
+import base64
+import hashlib
 import json
 import os
 import time
@@ -48,6 +58,11 @@ LOGINS = {'sam': 'sam@example.com', 'alex': 'alex@example.com', 'kim': 'kim@exam
           'riley': 'riley@example.com', 'jordan': 'jordan@example.com'}
 NAMES = {'admin': 'Admin', 'sam': 'Sam', 'alex': 'Alex', 'kim': 'Kim', 'lee': 'Lee', 'riley': 'Riley', 'jordan': 'Jordan'}
 NAME_MAX = 20                               # the server rule: 1..20 characters, no @, no control characters
+DID_COOKIE = 'xexam_did'                    # the device cookie of v3.1 (43 base64url characters)
+# A plain, made-up desktop browser: the device list names it by user agent (never the Python default)
+SEED_UA = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36')
+# v3.1: the two made-up bank categories and the demo banks they hold
+CATEGORY_OF = demo_banks.CATEGORY_OF
 MEMORIES = ['I am preparing for a kitchen safety course.', 'Prefers short answers with one example.']
 
 
@@ -66,6 +81,12 @@ def name_of(handle):
     return handle.split('@', 1)[0][:NAME_MAX]
 
 
+def device_cookie(login, tag='seed'):
+    """A stable, made-up xexam_did value for (login, tag): 32 bytes of a SHA-256 as 43 base64url characters (no padding)."""
+    raw = hashlib.sha256(('xexam-demo-device|%s|%s' % (login, tag)).encode('utf-8')).digest()
+    return base64.urlsafe_b64encode(raw).decode('ascii').rstrip('=')
+
+
 class Session:
     """One signed-in browser, as far as the API is concerned (cookies and the Origin header of the page)."""
 
@@ -74,7 +95,7 @@ class Session:
         self.cookie = {}
 
     def call(self, path, body=None, raw=None, headers=None):
-        h = {'Origin': self.base}
+        h = {'Origin': self.base, 'User-Agent': SEED_UA}
         if self.cookie:
             h['Cookie'] = '; '.join('%s=%s' % kv for kv in self.cookie.items())
         if raw is not None:
@@ -91,9 +112,14 @@ class Session:
                 self.cookie[name.strip()] = rest.split(';', 1)[0]
             return json.load(r)
 
-    def sign_in(self, username, password):
+    def sign_in(self, username, password, device=None):
         """Signs in as a handle or a login and passes the first-sign-in gate: a new password (with the display name when
-        the user has none) or just the display name (an existing user that still lacks one)."""
+        the user has none) or just the display name (an existing user that still lacks one). The device cookie is the stable
+        one of this login, or the one of `device` (a tag: another browser of the same user)."""
+        if device is not None:
+            self.cookie[DID_COOKIE] = device_cookie(login_of(username), device)
+        else:
+            self.cookie.setdefault(DID_COOKIE, device_cookie(login_of(username)))
         state = self.call('/api/auth/login', {'username': login_of(username), 'password': password})
         user = state['user']
         if user.get('mustChangePassword'):
@@ -124,6 +150,22 @@ class Session:
         return next(u['id'] for u in self.call('/api/users')['users'] if u['username'] == login)
 
 
+def categorize(admin):
+    """Creates the categories `Science` and `Everyday life` (when missing) and puts General knowledge in the first and
+    Kitchen basics in the second; every other bank is left as it is. Idempotent. `admin` is a signed-in Session."""
+    answer = admin.call('/api/banks')
+    cats = {c['name']: c['id'] for c in answer.get('categories', [])}
+    for name in dict.fromkeys(CATEGORY_OF.values()):
+        if name not in cats:
+            answer = admin.call('/api/banks/categories', {'op': 'create', 'name': name})
+            cats = {c['name']: c['id'] for c in answer.get('categories', [])}
+    banks = admin.call('/api/banks')['banks']
+    for bank_name, cat_name in CATEGORY_OF.items():
+        for b in banks:
+            if b['name'].startswith(bank_name) and b.get('categoryId') != cats[cat_name]:
+                admin.call('/api/banks/category', {'ids': [b['id']], 'categoryId': cats[cat_name]})
+
+
 def _results(questions, wrong):
     """Per-question answers for POST /api/attempt: right ones, and a wrong pick for the indexes in `wrong`."""
     out = []
@@ -148,6 +190,7 @@ def prepare(base, banks, stub_base):
     Session(base).sign_in('sam', INITIAL).import_new(banks[demo_banks.KITCHEN])
     for name in ('alex', 'kim'):
         admin.create_user(name, banks=[general])
+    categorize(admin)      # v3.1: Science holds General knowledge, Everyday life holds Kitchen basics
 
     # Two practice records of the administrator (the exams come from seed_exams and from the exam scene itself)
     bank = admin.call('/api/bank')['questions'][:6]

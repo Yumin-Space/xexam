@@ -18,6 +18,55 @@ const XLSX_JA = '「Excel ブック (*.xlsx)」';
 
 /** Whole messages. Keys are the backend texts exactly (see the Rust constant named in each comment). */
 const EXACT: ReadonlyMap<string, Texts> = new Map<string, Texts>([
+  // ---- v3.1 (api/response.rs: MSG_CATEGORY_*, MSG_DEVICE_*, MSG_PUSH_*)
+  ['分类名称需要 1–60 个字，不能包含控制字符。', {
+    en: 'A category name needs 1–60 characters and no control characters.',
+    ja: '分類名は 1～60 文字で、制御文字は使えません。',
+  }],
+  ['已经有同名的分类了。', {
+    en: 'A category with this name already exists.',
+    ja: '同じ名前の分類がすでにあります。',
+  }],
+  ['这个分类不存在（可能已被删除），请刷新页面后再试。', {
+    en: 'This category does not exist (it may have been deleted). Reload the page and try again.',
+    ja: 'この分類は存在しません（削除された可能性があります）。ページを再読み込みしてからもう一度お試しください。',
+  }],
+  ['分类或题库的顺序已经变了，请刷新页面后再试。', {
+    en: 'The order of the categories or banks has changed. Reload the page and try again.',
+    ja: '分類または問題集の順序が変わりました。ページを再読み込みしてからもう一度お試しください。',
+  }],
+  ['这台设备不存在（可能已退出登录），请刷新页面后再试。', {
+    en: 'This device does not exist (it may have been signed out). Reload the page and try again.',
+    ja: 'この端末は存在しません（ログアウトされた可能性があります）。ページを再読み込みしてからもう一度お試しください。',
+  }],
+  ['不能在这里退出当前这台设备，请用菜单里的「退出登录」。', {
+    en: 'You cannot sign out the device you are using here. Use Sign out in the menu.',
+    ja: '使用中の端末はここではログアウトできません。メニューの「ログアウト」を使ってください。',
+  }],
+  ['这个浏览器的推送地址不受支持。', {
+    en: "This browser's push address is not supported.",
+    ja: 'このブラウザーのプッシュ通知の宛先には対応していません。',
+  }],
+  ['推送订阅的密钥不对。', {
+    en: 'The keys of the push subscription are not valid.',
+    ja: 'プッシュ通知の購読キーが正しくありません。',
+  }],
+  ['推送密钥已更换，请重新开启通知。', {
+    en: "The server's push key has changed. Enable notifications again.",
+    ja: 'サーバーのプッシュ通知キーが変わりました。通知をもう一度有効にしてください。',
+  }],
+  ['你的账号已关闭通知，请先在设置里打开。', {
+    en: 'Notifications are off for your account. Turn them on in Settings first.',
+    ja: 'このアカウントの通知はオフです。先に設定でオンにしてください。',
+  }],
+  ['这台设备还没有开启通知。', {
+    en: 'Notifications are not enabled on this device yet.',
+    ja: 'この端末ではまだ通知が有効になっていません。',
+  }],
+  ['测试通知发得太频繁了，请稍后再试。', {
+    en: 'Test notifications were sent too often. Try again in a moment.',
+    ja: 'テスト通知の送信が多すぎます。しばらくしてからもう一度お試しください。',
+  }],
   // ---- api/auth.rs: MSG_SESSION_EXPIRED
   ['登录已过期，请重新登录。', {
     en: 'Your sign-in has expired. Please sign in again.',

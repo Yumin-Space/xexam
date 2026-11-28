@@ -68,6 +68,10 @@ pub enum Target {
     Signin(i64),
     /// `users.last_active_*` of this user
     Active(i64),
+    /// v3.1: `devices.signin_*` of this device
+    DeviceSignin(i64),
+    /// v3.1: `devices.active_*` of this device
+    DeviceActive(i64),
     /// Every record of the address that still has no place (the backfill lane, v1.6)
     Backfill,
 }
@@ -145,6 +149,9 @@ pub struct Completed {
     pub since: i64,
     pub signin_users: Vec<i64>,
     pub active_users: Vec<i64>,
+    /// v3.1: the devices whose `signin_*` / `active_*` columns get the place (`Store::geo_apply_devices`)
+    pub signin_devices: Vec<i64>,
+    pub active_devices: Vec<i64>,
     /// The lookup belongs to the backfill: fill EVERY placeless record of the address (`Store::geo_fill_all`), whatever
     /// its age or owner, instead of only the recent rows and `signin_users` / `active_users`
     pub backfill: bool,
@@ -641,10 +648,14 @@ impl Geo {
                 }
                 let mut signin_users = Vec::new();
                 let mut active_users = Vec::new();
+                let mut signin_devices = Vec::new();
+                let mut active_devices = Vec::new();
                 for t in &f.job.targets {
                     match t {
                         Target::Signin(u) => signin_users.push(*u),
                         Target::Active(u) => active_users.push(*u),
+                        Target::DeviceSignin(d) => signin_devices.push(*d),
+                        Target::DeviceActive(d) => active_devices.push(*d),
                         Target::Backfill => {}
                     }
                 }
@@ -654,6 +665,8 @@ impl Geo {
                     since: f.job.queued_at.saturating_sub(5),
                     signin_users,
                     active_users,
+                    signin_devices,
+                    active_devices,
                     backfill: is_backfill || in_backfill,
                 })
             }

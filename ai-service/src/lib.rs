@@ -24,6 +24,7 @@ pub mod pace;
 pub mod peers;
 pub mod prompt;
 pub mod provider;
+pub mod push;
 pub mod quota;
 pub mod retention;
 pub mod route;

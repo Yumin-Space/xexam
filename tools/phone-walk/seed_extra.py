@@ -19,6 +19,10 @@ Users after the whole seeding (all passwords are made-up demo values):
                           dashboard shows the display name, never the login)
   morgan.long.sample.username@example.invalid   user, a long display name (20 characters), 3 practice records
                           (ellipsis in the dashboard ranking)
+v3.1: seed.prepare already created the categories `Science` (General knowledge) and `Everyday life` (Kitchen basics); extra() asks
+seed.categorize again (idempotent, so a stack seeded without prepare is covered too) and leaves the 51-question bank
+uncategorised. alex (granted General knowledge only) sees only `Science`; riley (all banks) sees every category. The v3.1 device
+checks give riley and sam a second device with seed.Session.sign_in(..., device='walk-second').
 v2.6: every user signs in with an e-mail (seed.LOGINS maps the short handles used in code, sam -> sam@example.com) and has a
 display name (seed.NAMES); seed.Session.sign_in passes the first-sign-in gate (password + name, or name only).
 The user "lee" (60 records) answers wrong 1..4 of 12 questions per record, so the most-missed board of lee has all five places.
@@ -186,6 +190,7 @@ def extra(base, cookie, folder):
     admin = seed.Session(base)
     admin.cookie[seed.COOKIE] = cookie
     admin.import_new(build_bank(folder))
+    seed.categorize(admin)       # v3.1: idempotent; the long sample bank stays uncategorised
     admin.create_user('riley', banks='all')
     riley = seed.Session(base).sign_in('riley', seed.INITIAL)
     lee = seed.Session(base).sign_in('lee', seed.INITIAL)

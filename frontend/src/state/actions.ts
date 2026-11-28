@@ -9,7 +9,7 @@
 import { changePassword, fetchAuthState, loginSession, logout, setDisplayName } from '../api/auth.ts';
 import { ApiError, isSignInError, setAuthHandler, type AuthProblem } from '../api/client.ts';
 import { submitAttempt } from '../api/progress.ts';
-import { fetchBank, fetchBanks, fetchInfo } from '../api/bank.ts';
+import { fetchBank, fetchBanksFull, fetchInfo } from '../api/bank.ts';
 import { fetchProgress, fetchRecord, fetchRecords } from '../api/progress.ts';
 import { hardSoonMinutes } from '../domain/activity.ts';
 import { countedResults, kindOf } from '../domain/attempt.ts';
@@ -30,6 +30,8 @@ import { dropAiSummary } from '../components/ai-summary.ts';
 import { ask, closeAllDialogs } from '../utils/dialog.ts';
 import { toast } from '../utils/toast.ts';
 import { refreshAiStatus } from './ai.ts';
+import { initDevice, onPushChange, resetPushState } from './push.ts';
+import { flushSaved, noteDiscarded, noteFinished, noteSaved, pauseSaved, resumeSaved } from './saved-marker.ts';
 import { loadSettings, migrateBrowserQuestionLang, showCachedSettings, updateSettings } from './preferences.ts';
 import { adoptLegacySession, clearSaved, loadSaved, newSessionKey, saveSession as persist, type SavedSession } from './session-storage.ts';
 import { DEFAULT_SETTINGS, cachedSettingsOf, carryLanguage, rememberUser } from './settings-cache.ts';
@@ -91,6 +93,12 @@ export function persistSession(): void {
   persist({
     qs: se.qs, answers: se.answers, flags: se.flags, idx: se.idx, elapsedSeconds: elapsed(), mode: se.mode, sheets: se.sheets,
     kind: se.kind, checked: se.checked, key: se.key, startedAt: se.startedAt, timed: timedOf(se), lang: se.lang,
+  });
+  // v3.1: tell the server there is an unfinished session (it sends the reminders); `timeLeft` only for a timed exam
+  noteSaved({
+    key: se.key, kind: se.kind, total: se.qs.length, startedAt: se.startedAt,
+    answered: se.qs.filter((q) => !isEmptyAnswer(se.answers[q.id])).length,
+    timeLeft: se.kind === 'exam' && se.limit != null ? remaining(se.limit, elapsed()) : null,
   });
 }
 
@@ -236,12 +244,12 @@ function noteAiService(st: unknown): boolean {
 
 /** Loads everything the pages need. Any single failure goes to the fatal page. */
 export async function loadAll(): Promise<void> {
-  const [info, bank, banks, progress, records] = await Promise.all([
-    fetchInfo(), fetchBank(), fetchBanks(), fetchProgress(), fetchRecords(), loadSettings(),
+  const [info, bank, list, progress, records] = await Promise.all([
+    fetchInfo(), fetchBank(), fetchBanksFull(), fetchProgress(), fetchRecords(), loadSettings(),
   ]);
   S.info = info;
   S.progress = progress;
-  setBankData(bank, banks);
+  setBankData(bank, list.banks, list.categories);
   S.records = records.records;
   S.recordsRetention = records.retention;
 }
@@ -305,6 +313,8 @@ function onAuthProblem(problem: AuthProblem): void {
   noteSession(null);
   if (problem === 'signin' || problem === 'expired') {
     if (S.authView === 'signin') return;
+    // The session is gone: nothing may be reported to the server until the next sign-in
+    pauseSaved();
     // Keep the answers of an exam in progress: after signing in again it can be continued
     if (S.route.name === 'quiz' && S.session) persistSession();
     // v1.3: a 401 with code auth.expired says so even before the user was known (a reload with an ended session)
@@ -326,6 +336,8 @@ function onAuthProblem(problem: AuthProblem): void {
 
 /** The library stamp the banks in memory were read at (GET /api/auth/state); null = not known yet */
 let libraryStamp: string | null = null;
+/** v3.1: the stamp of the bank categories and the places of the visible banks in them (GET /api/auth/state `categories`) */
+let categoriesStamp: string | null = null;
 
 /** Loads everything for the signed-in user and shows the page of the current route. */
 async function enterApp(): Promise<void> {
@@ -340,9 +352,11 @@ async function enterApp(): Promise<void> {
     // The stamp first: a bank imported while the rest loads makes the next check read the banks once more, never less
     const st = await fetchAuthState();
     libraryStamp = st.library ?? null;
+    categoriesStamp = st.categories ?? null;
     logVisits = st.logVisits === true;
     noteSession(st.session);
     noteAiService(st);
+    resumeSaved();
     await loadAll();
     await keepFirstVisitLang();
     dataOwner = S.user?.id ?? null;
@@ -350,6 +364,8 @@ async function enterApp(): Promise<void> {
     S.phase = 'ready';
     noteVisit(null, S.route.name);
     void migrateBrowserQuestionLang().then(render);
+    // v3.1: this browser says hello (time zone, installed app, notification permission) and keeps its push subscription
+    void initDevice();
   } catch (e) {
     // A sign-in problem shows its own page (set by onAuthProblem); anything else is the fatal page
     if (S.authView) return;
@@ -406,6 +422,11 @@ function checkSession(): void {
         refreshLibrary().then(render, () => {
           /* the next check tries again */
         });
+      } else if (st.categories && st.categories !== categoriesStamp) {
+        // v3.1: only the categories (or the places of banks in them) changed: the bank list alone is enough
+        refreshBankList().then(render, () => {
+          /* the next check tries again */
+        });
       }
     }
   }, () => {
@@ -456,6 +477,10 @@ export async function boot(): Promise<void> {
   window.addEventListener('hashchange', onHashChange);
   setAuthHandler(onAuthProblem);
   installSessionGuards();
+  // v3.1: the permission, the subscription or the install prompt changed: the guide card and Settings redraw (never the quiz)
+  onPushChange(() => {
+    if (S.phase === 'ready' && !S.authView && S.route.name !== 'quiz') render();
+  });
   watchOtherTabs();
   S.phase = 'loading';
   S.route = parseHash(location.hash);
@@ -629,7 +654,10 @@ export async function signOut(): Promise<void> {
     signingOut = false;
     authBusy = false;
   }
+  // The device is signed out on the server (its reminders are gone): the local save is kept, nothing is reported
+  pauseSaved();
   if (S.route.name === 'quiz' && S.session) persistSession();
+  resetPushState();
   cancelAdvance();
   closeDialogs();
   epoch += 1;
@@ -654,10 +682,19 @@ export async function refreshLibrary(): Promise<void> {
   if (st?.user) noteAiService(st);
   // The bank-manager permission may have changed with the banks (a refused bank change is often the first sign of it)
   if (st?.user && S.user && st.user.id === S.user.id && (st.user.canManageBanks !== S.user.canManageBanks || (st.user.canDownloadBanks === true) !== (S.user.canDownloadBanks === true))) S.user = st.user;
-  const [bank, banks] = await Promise.all([fetchBank(), fetchBanks()]);
-  setBankData(bank, banks);
+  if (st?.categories) categoriesStamp = st.categories;
+  const [bank, list] = await Promise.all([fetchBank(), fetchBanksFull()]);
+  setBankData(bank, list.banks, list.categories);
   // Exam detail shows the questions as stored now; an import may have changed them
   S.recordCache.clear();
+}
+
+/** v3.1: re-reads only the bank list and the categories (an administrator moved banks or changed the categories elsewhere) */
+export async function refreshBankList(): Promise<void> {
+  const st = await fetchAuthState().catch(() => null);
+  if (st?.categories) categoriesStamp = st.categories;
+  const list = await fetchBanksFull();
+  if (S.bank) setBankData(S.bank, list.banks, list.categories);
 }
 
 export async function refreshRecords(): Promise<void> {
@@ -756,6 +793,8 @@ export function resumeAndSubmit(): void {
 
 /** "Save and exit" on the quiz page */
 export function leaveQuiz(): void {
+  // v3.1: the page may go away right after; the server hears about the saved session now
+  flushSaved();
   navigate({ name: 'study' });
 }
 
@@ -947,6 +986,8 @@ function afterOpen(): void {
 export function installSessionGuards(): void {
   const save = (): void => {
     if (S.route.name === 'quiz' && S.session) persistSession();
+    // v3.1: the last report goes out with keepalive, so it survives the page being closed
+    flushSaved();
   };
   const check = (): void => {
     const se = S.session;
@@ -1061,6 +1102,7 @@ export async function submit(opts: SubmitOptions = {}): Promise<void> {
       S.progress = progress;
       saved = true;
       clearSaved();
+      noteFinished(se.key);
       ({ counted, left: notCounted } = countedResults(results, gone));
       const second = S.progress.history[1];
       // "Last time": the previous result of the same kind and mode
@@ -1071,6 +1113,7 @@ export async function submit(opts: SubmitOptions = {}): Promise<void> {
       if (e instanceof ApiError && e.status === 409) {
         // Every question of this exam was deleted while it was open (its bank is gone): it can never be saved, so drop it
         // instead of keeping it for another try, say why, and show the banks as they are now
+        noteDiscarded(se.key);
         clearSaved();
         S.session = null;
         toast(errorText(e), 9000);
@@ -1114,6 +1157,7 @@ export async function retryUnsavedResult(): Promise<void> {
     const { notCounted: gone, recordId, ...progress } = answer;
     S.progress = progress;
     clearSaved();
+    noteFinished(R.key);
     const { counted, left } = countedResults(R.results, gone);
     R.results = counted;
     R.notCounted = left;
@@ -1134,6 +1178,7 @@ export async function retryUnsavedResult(): Promise<void> {
   } catch (e) {
     if (S.authView || S.result !== R) return;
     if (e instanceof ApiError && e.status === 409) {
+      noteDiscarded(R.key);
       clearSaved();
       delete R.unsaved;
       toast(errorText(e), 9000);

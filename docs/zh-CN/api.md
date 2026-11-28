@@ -38,12 +38,23 @@
 | POST | `/api/reset` | 登录 | 清空自己的学习记录 | 是 |
 | POST | `/api/settings` | 登录 | 修改自己的界面设置 *(v0.5)* | 是 |
 | POST | `/api/settings/reset` | 登录 | 把自己的界面设置恢复默认 *(v0.5)* | 是 |
+| GET | `/api/devices` | 登录 | 调用者登录过的设备 *(v3.1)* | 否 |
+| POST | `/api/devices/hello` | 登录 | 应用启动时的上报（时区、是否已安装、通知权限）；把旧会话关联到它的设备 *(v3.1)* | 是（设备行） |
+| POST | `/api/devices/signout` | 登录 | 让自己的另一台设备退出登录 *(v3.1)* | 是 |
+| POST | `/api/devices/signout-others` | 登录 | 让自己的其他所有设备退出登录 *(v3.1)* | 是 |
+| GET | `/api/push/config` | 登录 | 服务器的推送公钥，以及投递员是否已连接 *(v3.1)* | 否 |
+| POST | `/api/push/subscribe` | 登录 | 保存这台设备的推送订阅 *(v3.1)* | 是 |
+| POST | `/api/push/test` | 登录 | 为这台设备排一条测试通知 *(v3.1)* | 是（发件箱一行） |
+| POST | `/api/study/saved` | 登录 | 上报没做完的练习或考试 *(v3.1)* | 是 |
+| POST | `/api/study/saved/discard` | 登录 | 放弃那条上报 *(v3.1)* | 是 |
 | GET | `/api/imports` | 可管理题库 | 最近 12 条导入记录（可管理题库的用户：只有自己题库的） | 否 |
 | POST | `/api/upload` | 可管理题库 | 上传 .xlsx，得到**预览**和一次性确认码；可选请求头 `X-Bank-Target` *(v0.5)* | **否**（只暂存在内存里） |
 | POST | `/api/import/confirm` | 可管理题库 | 确认导入 | **是**（一个事务） |
 | POST | `/api/import/cancel` | 可管理题库 | 取消自己待确认的导入 | 否 |
 | GET | `/api/banks/download` | 可下载题库 | 把一个题库下载为 `.xlsx`（六列导入格式）或 `.docx` *(v1.6)* | 否 |
 | POST | `/api/banks/delete` | 可管理题库 | 删除题库（可以连同学习数据） *(v0.5)* | 是 |
+| POST | `/api/banks/categories` | 管理员 | 新建、改名、删除题库分类，并调整分类和分类里题库的顺序 *(v3.1)* | 是 |
+| POST | `/api/banks/category` | 管理员 | 把题库移到某个分类，或移出分类 *(v3.1)* | 是 |
 | GET | `/api/users` | 管理员 | 所有账户，带权限和登录锁定 *(v0.6)* | 否 |
 | GET | `/api/users/records?user=<int>` | 管理员 | 另一个用户的学习记录，只读 *(v2.7)* | 否（一条活动记录） |
 | GET | `/api/users/record?user=<int>&id=<int>` | 管理员 | 另一个用户的一条学习记录及详情，只读 *(v2.7)* | 否（一条活动记录） |
@@ -52,6 +63,8 @@
 | POST | `/api/users/password` | 管理员 | 给别的用户一个新的初始密码 *(v0.6)* | 是 |
 | POST | `/api/users/delete` | 管理员 | 删除用户和他的学习数据 *(v0.6)* | 是 |
 | POST | `/api/users/unlock` | 管理员 | 解除用户的登录锁定 *(v0.6)* | 否（只在内存里） |
+| GET | `/api/users/devices?user=<int>` | 管理员 | 某个用户的设备，只读 *(v3.1)* | 否 |
+| POST | `/api/users/devices/signout` | 管理员 | 让某个用户的一台或全部设备退出登录 *(v3.1)* | 是 |
 | GET | `/api/logs` | 管理员 | 系统日志最近的几行 *(v0.7)* | 否 |
 | POST | `/api/shutdown` | 管理员 | 关闭程序（只在本机运行时可用；Docker 里一律 403） | 否 |
 
@@ -66,6 +79,7 @@
 - `Cache-Control: no-store` 和 `X-Content-Type-Options: nosniff`，没有 `Server` 头。
 - JSON 是 UTF-8，日文和中文不转义成 `\uXXXX`。分隔符是 `", "` 和 `": "`（冒号后面有一个空格），键的顺序固定（就是本文和 [openapi.yaml](../en/openapi.yaml) 里的顺序）。**这是约定的一部分**：黄金测试（`backend/tests/api_golden.rs`）把 JSON 和旧版的响应逐字节比较。
 - 错误的形式是 `{"error": "<原因>"}`。原因是一句可以直接给用户看的中文（前端会把它翻译成界面语言）；第 4 节列出了每一条及其英文意思。只有请求层的底层回答保留旧版简短的英文：`bad content type`（415）、`too large`（413）、`bad json`（400）、`not found`（404）和 `method not allowed`（405）。登录锁定时的 429 回答多一个键 `retryAfter`。
+- *(v3.1)* 新的错误响应多一个键：`{"error": "<中文提示>", "code": "<代码>"}`（例如 `banks.categoryTaken`、`devices.current`、`push.staleKey`）。`code` 是稳定的，给程序用；提示是给人看的句子。这些代码连同提示一起列在第 4 节里。
 - 后端从不在响应里放异常名、文件路径或 SQLite 的错误信息；细节只写进日志。
 
 ## 3. 守卫（每个请求都先经过这里）
@@ -155,12 +169,13 @@ flowchart LR
 已经登录时（账户需要设置新密码时也一样）：
 
 ```json
-{"user": {"id": 1, "username": "admin", "displayName": "Ann", "needsName": false, "role": "admin", "mustChangePassword": false, "canManageBanks": true, "canDownloadBanks": true, "aiAllowed": true}, "library": "3f0c9a7d5e21b4c88a9d0e6f17b2c453", "aiAvailable": true, "aiService": {"connected": true, "stopped": false, "lastSeen": 1789900000, "version": "0.9", "enabled": true, "link": true}}
+{"user": {"id": 1, "username": "admin", "displayName": "Ann", "needsName": false, "role": "admin", "mustChangePassword": false, "canManageBanks": true, "canDownloadBanks": true, "aiAllowed": true}, "library": "3f0c9a7d5e21b4c88a9d0e6f17b2c453", "categories": "9b1e7c3a4d5f60821c7e0a4b3d9f5e12", "aiAvailable": true, "aiService": {"connected": true, "stopped": false, "lastSeen": 1789900000, "version": "0.9", "enabled": true, "link": true}}
 ```
 
 - *(v2.6)* `username` 是**登录名**（从 v2.6 起，界面创建的每个账户都是邮箱地址；`admin` 这样的旧登录名仍然有效）。`displayName` 是用户自己的**用户名**，也就是界面上给所有人看的名字（学习排行、问候、顶栏、菜单），还没设置时是 `null`；正好在这时 `needsName` 是 `true`。带 `needsName`（或 `mustChangePassword`）的会话会被留在设置页面：见第 3 节的「会话和访问级别」。
 - `role` 是 `admin` 或 `user`。`canManageBanks` *(v0.7)* 对所有管理员都是 `true`，对有 **可管理题库** 权限的普通用户也是 `true`。`canDownloadBanks` *(v1.6)* 同理：对所有管理员都是 `true`，对有 **下载题库** 权限的普通用户也是 `true`。`aiAllowed` *(v0.8)* 对所有管理员都是 `true`，对开通了 **AI+** 的普通用户也是 `true`；AI 到底开没开，看 `GET /api/ai/status`。登录和修改密码的回答里也是同样的 `user` 对象。
 - `library` 是用户能看到的题库的一个不透明印记：32 位十六进制数字，是一个摘要，不公开构成它的任何数字。只要其中某个题库被导入、替换或删除（也包括别的进程里的 `import` 命令），它就会变；*(v0.7)* 用户能看到或管理的题库变了（管理员分配了题库或改了权限，某个题库换了所有者），它也会变。打开着的页面会比较它，变了就重新读取题库。对于只能看到部分题库的用户，印记只由这些题库构成：它既不透露、也不跟随他看不到的题库的大小、题数或更新时间。
+- `categories` *(v3.1)*，紧跟在 `library` 之后，只在登录时有：一个不透明的戳（32 位十六进制），由分类和用户能看到的题库在其中的位置算出。管理员新建、改名、删除、调整分类顺序或移动题库时它会变，用户能看到的题库集合变化时也会变。已打开的页面比较它，变化时重新读取 `GET /api/banks`；`library` 不受分类编辑影响。
 
 - `aiAvailable` *(v0.8，第二轮)* 在 AI+ 可用时是 `true`：ai-service 不到 60 秒前向后端报告过（并且没有说它正在停止），**并且** AI 设置里它的 **AI+ 功能** 开关是开着的。对所有登录的用户都一样。用户管理页面用它决定要不要显示 AI+ 开关，后端用它拒绝这些开关（下面的 `POST /api/users/update` 和 `create`）。
 - `aiService` *(v0.8，第二轮)* 只出现在**管理员**的回答里（普通用户的回答里没有这个键）。它是后端从 ai-service 最近一次报告里知道的情况（后端从不调用 ai-service；ai-service 每 25 秒报告一次，变化后立刻报告，停止时再报告一次：第 6 节，`POST /internal/ai/heartbeat`）。报告只保存在内存里，所以后端重启后，在下一次报告到达之前（25 秒之内）`lastSeen` 是 `null`。
@@ -213,7 +228,7 @@ flowchart LR
 管理员。所有账户，按 id 排序：
 
 ```json
-{"users": [{"id": 2, "username": "cook@example.com", "displayName": "Cook", "role": "user", "disabled": false, "createdAt": "2026-11-10 14:00", "lastLoginAt": "2026-11-10 15:02", "mustChangePassword": false, "records": 12, "banks": [1, 3], "newBanks": true, "canManageBanks": true, "canDownloadBanks": false, "ai": true, "ownedBanks": [3], "lock": null, "aiSuspended": false}], "aiAvailable": true}
+{"users": [{"id": 2, "username": "cook@example.com", "displayName": "Cook", "role": "user", "disabled": false, "createdAt": "2026-11-10 14:00", "lastLoginAt": "2026-11-10 15:02", "mustChangePassword": false, "records": 12, "banks": [1, 3], "newBanks": true, "canManageBanks": true, "canDownloadBanks": false, "ai": true, "ownedBanks": [3], "lock": null, "aiSuspended": false, "devices": 2}], "aiAvailable": true}
 ```
 
 - `displayName` *(v2.6)*，在 `username`（登录名）之后：用户自己选的用户名，还没设置时是 `null`。这里只能读；只有用户自己能设置（`POST /api/auth/name`）。
@@ -225,6 +240,7 @@ flowchart LR
 - `canManageBanks` *(v0.7)* 是保存着的 **可管理题库** 权限。`banks`、`newBanks` 和 `canManageBanks` 在改角色时都会保留，但只在账户是普通用户时才起作用：管理员能看到并管理所有题库。
 - `ai` *(v0.8)*：保存着的用户的 **AI+ 功能** 开关。它只对普通用户有意义（AI+ 功能开启时管理员始终可以使用），而且只在 AI 设置里开着 AI+ 功能时才有意义。AI+ 不可用时它也保留。
 - `aiSuspended` *(v0.8，第二轮)*，在 `lock` 之后：`true` 表示管理员在 AI 设置里暂停了这个用户的 **AI+ 功能**（第 5 节，`suspend`；界面上写作 暂停 / 已暂停，JSON 里仍沿用 `suspended` 这个名字）。它来自 ai-service 最近一次报告，所以后端没有报告时（例如刚重启之后）对所有人都是 `false`，对管理员也始终是 `false`，因为管理员不能被暂停。它和 `ai` 是分开的：暂停不会改变保存着的开关。
+- `devices` *(v3.1)*，最后一个键（在 `aiSuspended` 之后）：该用户的设备行数（见 [database.md](database.md) 第 4.10 节）。设备本身在 `GET /api/users/devices` 里。
 - `aiAvailable` *(v0.8，第二轮)*，和 `users` 并列的顶层键：值和 `GET /api/auth/state` 里的一样。**每个返回用户列表的回答**都有它（`create`、`update`、`password`、`delete`、`unlock` 也一样）。
 - `ownedBanks` *(v0.7)*：这个用户作为新题库导入的题库（他是所有者）的 id，升序。
 - `lock`：账户在内存里的登录状态。还在第一轮、没有被锁定时是 `null`；否则：
@@ -302,7 +318,7 @@ flowchart LR
 登录。一个题库就是一份导入的工作簿。用户能看到的题库，按 `id` 排序：
 
 ```json
-{"banks": [{"id": 1, "name": "Kitchen basics", "filename": "Kitchen basics.xlsx", "legacy": true, "createdAt": "2026-11-10 14:00", "updatedAt": "2026-11-10 15:00", "total": 5, "inactive": 0, "sheets": [{"name": "Cooking", "usable": 3, "inactive": 0}, {"name": "Safety", "usable": 2, "inactive": 0}], "studied": 4, "records": 3, "ownerId": 1, "owner": "admin", "manageable": true}]}
+{"banks": [{"id": 1, "name": "Kitchen basics", "filename": "Kitchen basics.xlsx", "legacy": true, "createdAt": "2026-11-10 14:00", "updatedAt": "2026-11-10 15:00", "total": 5, "inactive": 0, "sheets": [{"name": "Cooking", "usable": 3, "inactive": 0}, {"name": "Safety", "usable": 2, "inactive": 0}], "studied": 4, "records": 3, "ownerId": 1, "owner": "admin", "manageable": true, "categoryId": 1, "sort": 1}], "categories": [{"id": 1, "name": "Everyday life", "sort": 0}]}
 ```
 
 - `name` 是新建题库时去掉 `.xlsx` 的文件名（已经有题库叫这个名字时，加上 ` (2)`、` (3)` ……）；更新题库会改 `filename` 和 `updatedAt`，从不改 `name`。
@@ -311,6 +327,9 @@ flowchart LR
 - `studied` = 这个题库有统计的题有几道（上架或下架都算）；`records` = 有几条学习记录用到了这个题库。对管理员来说它们数的是所有用户的数据（也就是连同学习数据删除时会删掉的内容）；对其他人 *(v0.7)* 只数他自己的。
 - `ownerId` / `owner` *(v0.7)*：把这个题库作为新题库导入的用户的 id 和用户名（v0.7 之前的题库属于第一个管理员）。只有管理员能得到这两项；其他用户只有在自己的题库上才得到 `ownerId`（否则是 `null`），`owner` 总是 `null`，所以题库列表从不透露别的账户。
 - `manageable` *(v0.7)*：这个用户能不能更新和删除这个题库（管理员：总是能；可管理题库的用户：自己的题库；其他人：从不）。
+- `categoryId` 和 `sort` *(v3.1)*，在 `manageable` 之后：题库所属的分类（`null` = 未分类）和它在所在分组里的位置（排好位置后是 1 到 n，`0` = 尚未排位）。一个分组里的题库按 `((sort = 0), sort, id)` 排序，所以从没排过位的题库排在已排位的后面。移动题库从不改变 `updatedAt`。AI 题库的键 `ai`（见下）依然排在最后。
+- `categories` *(v3.1)*，顶层的键，在 `banks` 之后：`[{"id": 1, "name": "Everyday life", "sort": 0}]`，按 `(sort, id)` 排序。管理员得到每个分类；其他人只得到至少包含一个自己能看到的题库的分类（一个分类都没有时为空，这时每个页面都和以前一样）。见 [database.md](database.md) 第 4.11 节。
+- 这个回答的 `ETag`（第 4 节的 `GET /api/bank`）也随分类和每个题库的位置变化，所以只改了顺序时已打开的页面也会刷新；`library` 戳不变（它只跟着题目）。
 
 ### `GET /api/dashboard`
 *(v2.5；v2.6)* 已登录；只读（不写任何东西，也没有请求体）。主页仪表盘的两个块，来自两条查询：
@@ -446,7 +465,7 @@ flowchart LR
 登录。设置按用户保存在数据库里（重启和更新容器、清除浏览器缓存、换浏览器之后都还在）：
 
 ```json
-{"theme": "system", "uiLang": "en", "autoAdvance": false, "questionLang": "en", "answerFx": true}
+{"theme": "system", "uiLang": "en", "autoAdvance": false, "questionLang": "en", "answerFx": true, "push": true, "tz": "auto"}
 ```
 
 | 键 | 取值 | 默认 |
@@ -456,10 +475,14 @@ flowchart LR
 | `autoAdvance` | `true` · `false` | `false` |
 | `questionLang` | `ja` · `zh` · `en` | `en`（*v2.6*；以前是 `ja`） |
 | `answerFx` | `true` · `false` | `true`（*v3.0*） |
+| `push` | `true` · `false` | `true`（*v3.1*）：这个账号的通知，所有设备同步 |
+| `tz` | `auto` 或 IANA 时区名（1–64 个字符，由 `A–Z a–z 0–9 _ + - /` 组成，并且服务器认识） | `auto`（*v3.1*）：夜间免打扰所用的时区；`auto` = 设备上报的时区 |
 
 *(v2.6)* `questionLang` 是**题目默认语言**：每次考试或练习都从它开始，答题页上的语言切换只改变那一次（和保存在浏览器里的这次答题一起保存，从不发到这里）。从没保存过 `questionLang` 的用户得到新的默认值 `en`；已保存的值保持不变。
 
-`GET` 返回默认值合并上保存的值（保存的值无效时忽略它）。`POST /api/settings` 接受这些键的任意子集，返回完整的设置；未知的键忽略；已知的键取值无效 → **400** `设置的值不对。`，什么都不写入。`POST /api/settings/reset`（请求体 `{}` 或空）把 `theme`、`uiLang`、`autoAdvance` 和 `answerFx` 恢复成默认值，保留 `questionLang`，返回完整的设置。
+*(v3.1)* `push` 是账号的通知开关（没有这一行表示开启；设置 → **通知**），`tz` 是夜间免打扰 00:00–08:00 所用的时区（个人资料 → **时区**）。`POST /api/settings/reset` 对两者都不改动。回答按表里的顺序列出七个键。
+
+`GET` 返回默认值合并上保存的值（保存的值无效时忽略它）。`POST /api/settings` 接受这些键的任意子集，返回完整的设置；未知的键忽略；已知的键取值无效 → **400** `设置的值不对。`，什么都不写入。`POST /api/settings/reset`（请求体 `{}` 或空）把 `theme`、`uiLang`、`autoAdvance` 和 `answerFx` 恢复成默认值，保留 `questionLang`、`push` 和 `tz`，返回完整的设置。
 
 ### `GET /api/logs` *(v0.7)*
 管理员。**系统日志** 页面显示的日志：后端启动以来记录的最近 2000 行，只保存在内存里（重启后又是空的；什么都不写进数据库）。它们就是 `docker compose logs backend` 显示的那些行（经过同样的 `XEXAM_LOG` 过滤），再加上启动和关闭时的状态行，*(v0.8)* 再加上 ai-service 发来的行（`target` 是 `xexam_ai_service`，消息以 `AI: ` 开头；它们不在 `docker compose logs backend` 里）。日志行用用户名指代用户（`user "admin" updated user "alex"`），从不用 id，也从不写没有账户的、输入的名字；日志行从不包含密码、令牌、Cookie 的值或题目文字。
@@ -484,6 +507,64 @@ flowchart LR
 
 ### `POST /api/shutdown`
 管理员。只有用 `--allow-shutdown` 启动时才可用（Windows 上双击 `start.bat`）；否则 **403** `在 Docker 里请用 docker compose stop 停止容器。`。在 Docker 里一律 403；在那里请用 `docker compose stop`。
+
+### 设备 *(v3.1)*
+
+设备就是某个用户的某个浏览器，靠随机 cookie `xexam_did` 认出（见 [database.md](database.md) 第 4.10 节）。每个列出设备的回答都用这个对象（`DeviceJson`，键按这个顺序）：
+
+```json
+{"id": 12, "current": true, "state": "active", "ua": "Mozilla/5.0 (iPhone; …)", "app": true, "createdAt": "2026-11-28 09:00:00", "signinAt": "2026-11-28 09:00:00", "signinIp": "203.0.113.7", "signinLocation": {"country": "XX", "region": null, "city": null}, "activeAt": "2026-11-28 10:15:42", "activeIp": "203.0.113.7", "activeLocation": null, "push": true}
+```
+
+- `state`：`active`（设备有一个没到期的会话）、`signedOut`（没有这样的会话，并且设备被显式退出过）、`expired`（其余情况：登录到期了；设备留在列表里，继续接收通知，直到 30 天没有使用）。`current` 只对发出请求的会话所在的设备为 `true`（从会话行读取，从不从 cookie 读取）。
+- 在“显示登录信息”的眼睛关着时，`signinIp` / `activeIp` 和两个地点都是 `null`（用户自己的列表和管理员看到的一样）。`ua` 是清理后的 User-Agent，页面把它变成名称。`push`：设备有订阅，**并且** 账号开关是开的，**并且** 订阅有效（用户启用、设备没有退出登录且 30 天内用过、服务器密钥是当前的）。
+- 列表顺序：当前设备排第一，然后按最近活动，新的在前。
+
+**`GET /api/devices`**（登录）→ `{"devices": [DeviceJson], "signinInfo": true|false}`：调用者自己的各种状态的设备。
+
+**`POST /api/devices/hello`**（登录）`{"tz": 字符串|null, "app": 布尔, "permission": "granted"|"denied"|"default"|"unsupported"}` → `{"device": DeviceJson}`。应用在每次登录后启动时，以及回到前台且离开已超过一小时时发送。`tz` 是有效的 IANA 时区名时才保存（否则存 `null`），`app` 表示是否以安装的应用 运行。`permission` 不是 `granted` 时，删除这台设备的推送订阅（活动 `settings.pushOff`）。v3.1 之前（或旧程序）创建的会话在这里关联到它的设备，浏览器没有 cookie 时回答里会带上新的 `xexam_did` cookie。如果这个浏览器上次是别的用户登录的，那个用户在这个浏览器上的推送订阅和排队中的推送会在这里被删除（登录时也一样）：浏览器属于最后登录的账号。缺键或类型错误 → **400** `请求的格式不对。`。
+
+**`POST /api/devices/signout`**（登录）`{"id": <整数>}` → `{"devices": [...], "signinInfo": 布尔}`。让调用者的另一台设备退出登录：删除它的会话、推送订阅和排队的推送，这一行保留为 `signedOut`。不是调用者自己的设备 → **404** `这台设备不存在（可能已退出登录），请刷新页面后再试。`（`devices.notFound`）；当前这台设备 → **409** `不能在这里退出当前这台设备，请用菜单里的「退出登录」。`（`devices.current`）。活动 `auth.signoutDevice`。
+
+**`POST /api/devices/signout-others`**（登录；请求体 `{}`）→ `{"devices": [...], "signinInfo": 布尔, "count": <整数>}`：让其他所有设备退出登录（`count` 是原来有会话或订阅的设备数）。活动 `auth.signoutOthers`。
+
+**`GET /api/users/devices?user=<整数>`**（管理员；`user` 是 1 到 18 位数字）→ `{"user": {"id", "username", "displayName"}, "devices": [...], "signinInfo": 布尔}`；用户不存在 → **404** `这个用户不存在…`。不记录任何东西。管理员能看到设备的推送状态，但没有任何路由可以替用户开关通知。
+
+**`POST /api/users/devices/signout`**（管理员）`{"user": <整数>, "id": <整数>|null}` → 和上面的 `GET` 同样的回答。有 `id` 时让该用户的那台设备退出（不是他的设备 → **404** `devices.notFound`；是调用者自己正在用的设备 → **409** `devices.current`）；`id` 为 `null` 时让该用户的所有设备退出（用户是调用者本人时，除当前设备外）。活动 `users.signoutDevice`（`{"all": 布尔, "count": <整数>}`，对象：该用户的登录名）。
+
+### 推送 *(v3.1)*
+
+工作方式见 [database.md](database.md) 第 4.12 节和 [architecture.md](architecture.md) 第 5 节。浏览器的密钥从不离开后端，请求里也不能带下面这些键以外的东西。
+
+**`GET /api/push/config`**（登录；不算活动）→ `{"publicKey": "<87 个字符，65 字节未压缩 P-256 点的 base64url>"|null, "keyId": "<16 位十六进制>"|null, "courier": true|false}`。推送关闭时（密钥文件读不出来）`publicKey` 是 `null`：设置里会写“服务器目前无法发送通知”，引导里的通知这一步也会换成这句话。`courier` 在最近 60 秒内 ai-service 来取过推送任务时为 `true`。
+
+**`POST /api/push/subscribe`**（登录）`{"endpoint": "https://…", "keys": {"p256dh": "…", "auth": "…"}, "expirationTime": <数字>|null, "keyId": "<16 位十六进制>"}` → `{"device": DeviceJson}`。按这个顺序检查：形状（**400** `请求的格式不对。`）；`keyId` 等于服务器当前的密钥 id（**409** `推送密钥已更换，请重新开启通知。`，`push.staleKey`）；endpoint 是允许的推送服务之一（**400** `这个浏览器的推送地址不受支持。`，`push.badEndpoint`：`https`、只能是 443 端口、没有用户信息、不是 IP 地址，主机是 `fcm.googleapis.com`、`updates.push.services.mozilla.com`、`web.push.apple.com`、`*.push.apple.com` 或 `*.notify.windows.com`）；密钥能解码（**400** `推送订阅的密钥不对。`，`push.badKeys`：`p256dh` 是有效的 65 字节点，`auth` 是 16 字节；base64url 带不带填充都行）；账号开关是开的（**409** `你的账号已关闭通知，请先在设置里打开。`，`push.off`）。一台设备只有一个订阅：新的替换旧的；原来在另一台设备（或另一个用户）上的 endpoint 移到这台设备；一个用户最多保留 10 个。同一个 endpoint 在一天内重新确认不会写入。新订阅会记录 `settings.pushOn`。会话必须有设备（先调用 `hello`），否则 **400**。
+
+**`POST /api/push/test`**（登录；请求体 `{}`）→ `{"ok": true, "courier": true|false}`：立即为这台设备排一条测试通知（夜间免打扰不适用）。**409** `你的账号已关闭通知，请先在设置里打开。`（`push.off`）；**409** `这台设备还没有开启通知。`（`push.noDevice`）；**429** `测试通知发得太频繁了，请稍后再试。`（`push.testBusy`：每台设备每 10 秒一条）。活动 `settings.pushTest`。
+
+### 暂存会话的标记 *(v3.1)*
+
+**`POST /api/study/saved`**（登录）`{"key": "<32 位小写十六进制>", "kind": "exam"|"practice", "answered": <整数>, "total": <整数>, "startedAt": <整数>, "timeLeft": <整数>|null}` → `{"ok": true}`。应用上报没做完的会话（每个会话每分钟最多一次，页面被隐藏时也会报）。`total` 为 1 到 100000，`answered` 为 0 到 `total`，`startedAt` 是浏览器的开始时间（Unix 秒），`timeLeft` 在限时考试时为 0 到 36000 秒（这次保存时还剩的秒数；计时只在考试页面打开时走），其他情况为 `null`。其他形状 → **400** `请求的格式不对。`。服务器对每个用户和 key 只留一个标记，每个浏览器也只留一个：新会话替换这个浏览器上较旧的；每次保存提醒都会重新开始。已禁用的账号不写入。不记录日志。这场会话的 `POST /api/attempt` 成功后，标记就会消失。
+
+**`POST /api/study/saved/discard`**（登录）`{"key": "<32 位小写十六进制>"}` → `{"ok": true}`：删除调用者的标记（没有标记不算错误）。不记录日志。
+
+### 题库分类 *(v3.1)*
+
+分类用一层把题库分组，只有管理员能改。`GET /api/banks` 返回它们（见下）。两个 POST 路由的回答都和调用者的 `GET /api/banks` 是同一个正文，是最新的，没有 `ETag`。
+
+**`POST /api/banks/categories`**（管理员）——每次调用做一个操作：
+
+| 请求体 | 效果 | 错误 |
+|---|---|---|
+| `{"op": "create", "name": "…"}` | 在末尾新建一个分类。名称会被清理（连续空白变成一个空格，去掉首尾），必须有 1 到 60 个字符 | **400** `分类名称需要 1–60 个字，不能包含控制字符。`（`banks.categoryName`）；**409** `已经有同名的分类了。`（`banks.categoryTaken`，忽略大小写比较） |
+| `{"op": "rename", "id": <整数>, "name": "…"}` | 改名 | 同上，以及 **404** `这个分类不存在（可能已被删除），请刷新页面后再试。`（`banks.categoryNotFound`） |
+| `{"op": "delete", "id": <整数>}` | 删除分类；它的题库变成未分类，追加到那个分组的末尾，该分组重新编号；其他分类也重新编号 | **404** `banks.categoryNotFound` |
+| `{"op": "order", "ids": [<整数>]}` | 设置顺序：`ids` 必须正好是所有分类的 id | **409** `分类或题库的顺序已经变了，请刷新页面后再试。`（`banks.categoryOrder`） |
+| `{"op": "bankOrder", "categoryId": <整数>\|null, "ids": [<整数>]}` | 设置这个分类（`null` = 未分类）里题库的顺序：`ids` 必须正好是现在在里面的题库 | **404** `banks.categoryNotFound`；**409** `banks.categoryOrder` |
+
+活动 `bank.categories`（`{"op", "name"}`）。
+
+**`POST /api/banks/category`**（管理员）`{"ids": [<整数>, …最多 1000 个], "categoryId": <整数>|null}`：把这些题库（id 不重复）按给定顺序追加到分类的末尾（`null` = 未分类）；它们原来所在的分组会重新编号。题库不存在 → **404** `这个题库不存在…`（`MSG_BANK_NOT_FOUND`），分类不存在 → **404** `banks.categoryNotFound`。移动题库从不改变它的 `updatedAt`。活动 `bank.categoryMove`（`{"count", "categoryId"}`）。
 
 ### 错误提示
 和后端的其他提示一样，它们是中文，而且是固定的（前端会翻译）。每个路由都可能给出的那些见第 3 节；上传和解析器的提示（文件为什么被拒绝、某一行为什么读不出来）连同翻译都在 `frontend/src/i18n/server-messages.ts` 里。
@@ -521,7 +602,19 @@ flowchart LR
 | 409 | `不能对自己的账户做这个操作。` | You cannot do this to your own account. | 用户：修改、密码、删除 |
 | 409 | `至少要保留一个启用的管理员。` | At least one enabled administrator must remain. | 用户：修改、删除 |
 | 409 | `请先在 AI 设置里开启 AI+ 功能。`（带 `"code": "ai.serviceOff"`） | Turn on the AI+ feature in AI settings first. | 用户：带 `ai` 的修改、`ai: true` 的创建，在 AI+ 不可用时 *(v0.8)* |
+| 400 | `分类名称需要 1–60 个字，不能包含控制字符。`（带 `"code": "banks.categoryName"`） | 分类名称需要 1–60 个字，不能包含控制字符。 | 分类：新建、改名 *(v3.1)* |
+| 400 | `这个浏览器的推送地址不受支持。`（`push.badEndpoint`） | 这个浏览器的推送地址不受支持。 | `POST /api/push/subscribe` *(v3.1)* |
+| 400 | `推送订阅的密钥不对。`（`push.badKeys`） | 推送订阅的密钥不对。 | `POST /api/push/subscribe` *(v3.1)* |
+| 404 | `这个分类不存在（可能已被删除），请刷新页面后再试。`（`banks.categoryNotFound`） | 这个分类不存在（可能已被删除），请刷新页面后再试。 | 分类 *(v3.1)* |
+| 404 | `这台设备不存在（可能已退出登录），请刷新页面后再试。`（`devices.notFound`） | 这台设备不存在（可能已退出登录），请刷新页面后再试。 | 设备：退出登录 *(v3.1)* |
+| 409 | `已经有同名的分类了。`（`banks.categoryTaken`） | 已经有同名的分类了。 | 分类：新建、改名 *(v3.1)* |
+| 409 | `分类或题库的顺序已经变了，请刷新页面后再试。`（`banks.categoryOrder`） | 分类或题库的顺序已经变了，请刷新页面后再试。 | 分类：order、bankOrder *(v3.1)* |
+| 409 | `不能在这里退出当前这台设备，请用菜单里的「退出登录」。`（`devices.current`） | 不能在这里退出当前这台设备，请用菜单里的「退出登录」。 | 设备：退出登录 *(v3.1)* |
+| 409 | `推送密钥已更换，请重新开启通知。`（`push.staleKey`） | 推送密钥已更换，请重新开启通知。 | `POST /api/push/subscribe` *(v3.1)* |
+| 409 | `你的账号已关闭通知，请先在设置里打开。`（`push.off`） | 你的账号已关闭通知，请先在设置里打开。 | `POST /api/push/subscribe`、`POST /api/push/test` *(v3.1)* |
+| 409 | `这台设备还没有开启通知。`（`push.noDevice`） | 这台设备还没有开启通知。 | `POST /api/push/test` *(v3.1)* |
 | 429 | `登录失败次数太多，请稍后再试。` | Too many failed attempts. Please try again later. | 登录、修改密码（带 `retryAfter`） |
+| 429 | `测试通知发得太频繁了，请稍后再试。`（`push.testBusy`） | 测试通知发得太频繁了，请稍后再试。 | `POST /api/push/test` *(v3.1)* |
 | 500 | `写入数据库失败，题库没有任何改动。` | Writing to the database failed. The question bank was not changed. | 确认导入 |
 | 500 | `服务器内部出错，请稍后再试。` | An internal server error occurred. Please try again later. | 任何路由 |
 
@@ -552,6 +645,18 @@ flowchart LR
 - **`xlsx`** 保持六列的位置不变，未选的语言的单元格留空（表头行始终是完整的；不含 `en` 时文件不能再导入）。**`docx`** 只含所选的语言，顺序始终是英文、中文、日文。
 - **文件名**：三种都选时是 `<stem>.<ext>`；子集是 `<stem>_<codes>.<ext>`，代码按 en、zh、ja 的顺序用 `-` 连接（例如 `Garden_en-zh.docx`）；ASCII 备用名是 `xexam-bank-<id>_<codes>.<ext>`。
 - **活动日志**：`bank.download` 的详情是 `{"format", "langs": ["en", "zh", "ja"]（所选子集，按这个顺序）, "sheets", "questions"}`。
+
+### v3.1 对公开路由的补充 *(v3.1)*
+
+- **`POST /api/auth/login`**：除了 `xexam_session`（仍然是第一个 `Set-Cookie`）和 `xexam_device`，回答还会设置第三个 cookie：`xexam_did=<43 个字符>; HttpOnly; SameSite=Strict; Path=/; Max-Age=34560000`（400 天），`Secure` 的规则相同。它是这个浏览器的随机标识：登录时用它找到或新建该用户的设备行，把这次登录记在这一行上，并把新会话关联到它。数据库里只存它的 SHA-256，它不是凭据。浏览器在退出登录后仍会保留它，所以会复用同一条设备行。`xexam_did` cookie 只在 `Secure` 的判断可靠的地方创建：登录时，以及带有 `Origin` 的 `POST`（应用每次启动发的 `POST /api/devices/hello`）。
+- **`POST /api/auth/logout`**：删除会话，同时让这台设备退出登录（它的其他会话、推送订阅和排队的推送都会清掉；设备行保留，状态是 `signedOut`）。`xexam_did` cookie 保留。
+- **`POST /api/auth/password`**：账号的其他设备退出登录（会话、推送订阅、排队的推送）；当前设备保留订阅并得到新会话。管理员重置密码（`POST /api/users/password`）、禁用用户或改角色（`POST /api/users/update`）、命令行的 `reset-password` 以及删除用户（`POST /api/users/delete`），会让该用户的所有设备退出登录或被删除。
+- **旧版本的会话**：v3.1 之前创建的会话没有设备；第一个 `POST /api/devices/hello`（应用每次启动都发），或任何带 `Origin` 的 `POST`，会把它关联上。`GET` 从不创建 cookie。
+- **`POST /api/attempt`**：保存成功后，清除那场会话的暂存标记（清除失败不会让保存失败）。
+- **`POST /api/users/update`**：更新给普通用户授予了已有的题库时，该用户的设备会收到通知（每个题库一条；一次授予多个时合成一条“又多了 N 个题库”）；管理员没有。见 [database.md](database.md) 第 4.12 节。
+- **`GET /api/banks`、`GET /api/auth/state`、`GET /api/users`、`GET` / `POST /api/settings`**：上面写的那些键。
+- **活动日志**：新的动作 `auth.signoutDevice`、`auth.signoutOthers`、`users.signoutDevice`、`settings.pushOn`、`settings.pushOff`、`settings.pushTest`、`bank.categories`、`bank.categoryMove`，以及系统行 `system.pushVersion`（`{"from", "to", "devices"}`）和 `system.pushAuth`（`{"host"}`）。被拒绝的登录行在最后一次尝试 90 天后删除（成功的登录照旧保留）。
+- **Nginx**：`/sw.js` 和 `/manifest.webmanifest` 是带自己响应头的静态文件（见 [deployment.md](deployment.md) 第 4 节）；`/api/` 仍然只允许 `GET`、`HEAD` 和 `POST`。
 
 ## 5. AI 路由（`/api/ai/*`，v0.8）
 
@@ -1104,6 +1209,8 @@ data: {"chatId":12,"chatTitle":"2026-11-12 09:30","userMessageId":41,"assistantM
 | POST | `/internal/ai/record` | ai-service *(v0.9)* | `X-Xexam-Internal-Token` |
 | POST | `/internal/ai/record-info` | ai-service *(v0.9)* | `X-Xexam-Internal-Token` |
 | POST | `/internal/ai/assess` | ai-service *(v2.5)* | `X-Xexam-Internal-Token` |
+| POST | `/internal/ai/push/next` | ai-service *(v3.1)* | `X-Xexam-Internal-Token` |
+| POST | `/internal/ai/push/result` | ai-service *(v3.1)* | `X-Xexam-Internal-Token` |
 
 `/internal/` 下的其他任何路径、错误的方法，或者令牌缺失或错误（或者还没有加载令牌）时带令牌的路由，都回答 404 `text/plain` `not found`，和未知路径完全一样，所以不会暴露这些路由；被拒绝的令牌最多大约每分钟记一次日志。带令牌的路由需要 `Content-Type: application/json` 和一个 JSON 对象；它们的回答是后端通常的 JSON。
 
@@ -1138,6 +1245,16 @@ data: {"chatId":12,"chatTitle":"2026-11-12 09:30","userMessageId":41,"assistantM
 - `POST /internal/ai/geo/source` `{"source": "api" | "cloudflare"}` 设置来源，`{}` 读取 → `{"source": …}`。5.9 节的 `enable` 和 `delete` 使用它。
 
 和所有带令牌的路由一样，没有令牌时返回 404。24 小时的记忆、队列和每分钟发出任务的上限在后端；ai-service 会再用一次保留地址过滤和它自己每分钟 30 次的上限，不保存记忆。
+
+### v3.1 的内部路由 *(v3.1)*
+
+Web 推送由 ai-service 投递。和位置查询一样，是 ai-service **来取**任务，所以后端仍然从不调用 ai-service，也没有互联网访问。后端负责把消息排队、生成文字、加密（RFC 8291，`aes128gcm`）并给授权头签名（RFC 8292，VAPID）；ai-service 只转发做好的字节，从不接触订阅密钥、VAPID 私钥和明文。两个路由都遵守其他令牌路由的规则（令牌、`Content-Type: application/json`、最多 64 KiB 的 JSON 对象、令牌不对时 404 `not found`、未知的键 → 400）。
+
+- **`POST /internal/ai/push/next`** `{"waitMs": 0..20000}` → `{"jobs": [Job]}`（0 到 20 个任务）。长轮询：有到期的任务就立刻回答，否则等到有任务到期、等待结束或服务器停止时回答。每次调用都会记下有投递员在（`GET /api/push/config` 的 `courier`，持续 60 秒）。一个 `Job` 是 `{"id": 4711, "tries": 1, "endpoint": "https://fcm.googleapis.com/fcm/send/…", "ttl": 21600, "urgency": "normal", "topic": "remind", "authorization": "vapid t=<jwt>, k=<公钥>", "body": "<无填充的 base64url>"}`：`ttl` 单位是秒，没有 `topic` 时为 `null`，`body` 是加密后的记录（最多 4096 字节）。交出去的任务有 120 秒的租约，没有回音的会被再交一次。
+- **`POST /internal/ai/push/result`** `{"results": [{"id": 4711, "tries": 1, "outcome": "sent", "status": 201, "retryAfter": null}]}`（1 到 20 个）→ `{"ok": true}`。`outcome` 是 `sent`、`gone`（推送服务说订阅已不存在：404 或 410；订阅被删除）、`auth`（401 或 403：订阅的密钥 id 不是当前的就删除，否则算一次失败）、`retry`（5xx、超时、429：按退避或给出的 `retryAfter` 再试，最多 5 次）、`deferred`（因为同一个推送服务在限流而没有发送：稍后再试，不算一次尝试）或 `rejected`（消息本身被拒绝：失败）。`status` 是推送服务的 HTTP 状态（0 = 网络错误）或 `null`，`retryAfter` 是 1 到 3600 秒或 `null`。只有仍在租约内、`tries` 相同的任务才接受结果；迟到的和重复的结果会被忽略。
+- **不变的**：`POST /internal/ai/heartbeat` 仍是四个键。v3.1 的 ai-service 不加第五个，因为 v3.0 的后端会拒绝其他任何正文，AI+ 就会停止工作；所以后端是从轮询而不是从心跳得知投递员在线的。
+- **新旧混用**：v3.0 的 ai-service 从不来取，所以什么都不会投递，排队的消息会过期；v3.1 的 ai-service 连上 v3.0 的后端时，`push/next` 得到 404，会停 60 秒再试。
+- **白名单**：ai-service 只向 `POST /api/push/subscribe` 里列出的推送服务发送（同样的规则，再检查一遍），拒绝解析到内网的地址，也从不把 endpoint、请求头或正文写进日志（见 [security.md](security.md) 第 11 节）。
 
 ## 7. 与旧版的差异
 
@@ -1325,6 +1442,14 @@ data: {"chatId":12,"chatTitle":"2026-11-12 09:30","userMessageId":41,"assistantM
 - **变化**：学习评估（`POST /api/ai/assess/ask`）一次要完整的回答，经过清理、检查，最多重试到 3 次调用，并以一个 `delta` 事件送达；`GET /api/ai/assess/latest` 隐藏通不过今天检查的已保存文字；带思考强度的调用多给一些 token 空间（第 5.5 节）。
 - **不变**：其他所有路由、字段和提示；两个数据库（主库 schema 12，AI 库 schema 11）；后端和 AI 服务之间的接口。
 - **版本**：`GET /api/info` 报告 `"version": "2.7"`，AI 服务的 `/healthz` 也一样。
+
+### v3.1 的变化（相对 v3.0）
+
+- **新增**：13 个公开路由：`GET /api/devices`、`POST /api/devices/hello`、`POST /api/devices/signout`、`POST /api/devices/signout-others`、`GET /api/users/devices`、`POST /api/users/devices/signout`、`GET /api/push/config`、`POST /api/push/subscribe`、`POST /api/push/test`、`POST /api/study/saved`、`POST /api/study/saved/discard`、`POST /api/banks/categories`、`POST /api/banks/category`；以及两个内部路由：`POST /internal/ai/push/next` 和 `/internal/ai/push/result`。
+- **改动**：`GET /api/banks`（`categories`，以及每个题库的 `categoryId` 和 `sort`）、`GET /api/auth/state`（`categories`）、`GET /api/users`（每个用户的 `devices`）、`GET` / `POST /api/settings`（键 `push` 和 `tz`；`POST /api/settings/reset` 两者都保留）、登录、退出登录和修改密码（设备 cookie `xexam_did` 和设备退出）、`POST /api/attempt`（清除暂存标记）、`POST /api/users/update`（授予题库的通知）。
+- **错误**：带 `code` 的新回答（第 2 节和错误表）。
+- **版本**：`GET /api/info` 报告 `"version": "3.1"`，AI 服务的 `/healthz` 也一样。主数据库是 schema 13（见 [database.md](database.md) 第 6.21 节）；AI 数据库仍是 schema 11。
+- **不变**：其他所有路由、字段和提示；两个服务之间的心跳；AI 路由。
 
 ## 8. 调用示例
 

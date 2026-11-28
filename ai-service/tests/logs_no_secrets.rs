@@ -124,3 +124,154 @@ async fn no_secret_or_content_in_any_log_line() {
         assert!(["INFO", "WARN", "ERROR"].contains(&level.as_str()));
     }
 }
+
+// —— v3.1: the web push courier ——————————————————————————————————————————————————————————————————————————————————————————
+
+/// One local server plays the main backend (`/internal/ai/push/*`, `/internal/ai/log`) and the push service (every other
+/// path), so a single address serves both roles.
+#[derive(Default)]
+struct PushMock {
+    jobs: Vec<serde_json::Value>,
+    results: usize,
+    lines: Vec<String>,
+}
+
+#[tokio::test]
+async fn the_push_courier_logs_no_endpoint_token_or_body() {
+    use axum::extract::{Request, State};
+    use axum::response::Response;
+    use std::sync::{Arc, Mutex};
+
+    const ENDPOINT_SECRET: &str = "SENTINEL-ENDPOINT-PATH-7421";
+    const JWT_SECRET: &str = "SENTINEL-JWT-SIGNATURE-5530";
+    const USERINFO_SECRET: &str = "SENTINEL-USERINFO-9917";
+
+    fn reply(status: u16, body: &str) -> Response {
+        let mut r = Response::new(axum::body::Body::from(body.to_string()));
+        *r.status_mut() = axum::http::StatusCode::from_u16(status).expect("status");
+        r
+    }
+
+    async fn handler(State(st): State<Arc<Mutex<PushMock>>>, req: Request) -> Response {
+        let path = req.uri().path().to_string();
+        let raw = axum::body::to_bytes(req.into_body(), 1 << 20)
+            .await
+            .unwrap_or_default();
+        let body: serde_json::Value = serde_json::from_slice(&raw).unwrap_or_default();
+        let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
+        match path.as_str() {
+            "/internal/ai/push/next" => {
+                let jobs = std::mem::take(&mut s.jobs);
+                reply(200, &json!({ "jobs": jobs }).to_string())
+            }
+            "/internal/ai/push/result" => {
+                s.results += body["results"].as_array().map_or(0, Vec::len);
+                reply(200, r#"{"ok":true}"#)
+            }
+            "/internal/ai/log" => {
+                for l in body["lines"].as_array().cloned().unwrap_or_default() {
+                    s.lines
+                        .push(l["message"].as_str().unwrap_or("").to_string());
+                }
+                reply(200, r#"{"ok":true}"#)
+            }
+            // the push service: the last path segment is the status; the answer repeats the secrets back
+            p => {
+                let code: u16 = p
+                    .rsplit('/')
+                    .next()
+                    .and_then(|c| c.parse().ok())
+                    .unwrap_or(201);
+                reply(code, &format!("echo {ENDPOINT_SECRET} {JWT_SECRET}"))
+            }
+        }
+    }
+
+    init_logs();
+    let st = Arc::new(Mutex::new(PushMock::default()));
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = l.local_addr().expect("addr");
+    let router = axum::Router::new().fallback(handler).with_state(st.clone());
+    let server = tokio::spawn(async move {
+        let _ = axum::serve(l, router).await;
+    });
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::create_dir_all(dir.path().join("link")).expect("link dir");
+    let url = format!("http://{addr}");
+    let app = xexam_ai_service::app::App::open(test_config(dir.path(), &url, &Opts::default()))
+        .expect("open");
+    app.0
+        .knobs
+        .push_wait_ms
+        .store(50, std::sync::atomic::Ordering::SeqCst);
+    *app.0.knobs.push_target.lock().expect("lock") = Some(addr);
+
+    let job = |id: i64, endpoint: String| {
+        json!({"id": id, "tries": 1, "endpoint": endpoint, "ttl": 60, "urgency": "normal", "topic": "remind",
+               "authorization": format!("vapid t=a.b.{JWT_SECRET}, k=demo"), "body": "AAECAwQFBgcICQ"})
+    };
+    st.lock().expect("lock").jobs = vec![
+        job(
+            1,
+            format!("https://fcm.googleapis.com/fcm/send/{ENDPOINT_SECRET}/201"),
+        ),
+        job(
+            2,
+            format!("https://fcm.googleapis.com/fcm/send/{ENDPOINT_SECRET}/410"),
+        ),
+        job(
+            3,
+            format!("https://web.push.apple.com/{ENDPOINT_SECRET}/500"),
+        ),
+        job(
+            4,
+            format!("https://web.push.apple.com/{ENDPOINT_SECRET}/401"),
+        ),
+        job(
+            5,
+            format!("https://{USERINFO_SECRET}@fcm.googleapis.com/{ENDPOINT_SECRET}/201"),
+        ),
+        job(6, "https://127.0.0.1/x".to_string()),
+    ];
+    // the Debug form of a job names the id and the host only
+    let shown = {
+        let j = xexam_ai_service::link::PushJob {
+            id: 9,
+            tries: 1,
+            endpoint: format!("https://fcm.googleapis.com/fcm/send/{ENDPOINT_SECRET}"),
+            ttl: 1,
+            urgency: "normal".into(),
+            topic: None,
+            authorization: format!("vapid t=a.b.{JWT_SECRET}"),
+            body: "AAEC".into(),
+        };
+        format!("{j:?}")
+    };
+    assert_eq!(shown, "PushJob { id: 9, host: \"fcm.googleapis.com\" }");
+
+    xexam_ai_service::push::worker::spawn(app.clone(), app.0.shutdown.clone());
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while st.lock().expect("lock").results < 6 {
+        assert!(std::time::Instant::now() < until, "no results");
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    xexam_ai_service::logs::flush_once(&app.0.link, xexam_ai_service::logs::queue()).await;
+    let forwarded = st.lock().expect("lock").lines.clone();
+    for line in captured().iter().chain(forwarded.iter()) {
+        for f in [
+            ENDPOINT_SECRET,
+            JWT_SECRET,
+            USERINFO_SECRET,
+            "AAECAwQFBgcICQ",
+            "fcm/send",
+            &url,
+        ] {
+            assert!(!line.contains(f), "a log line contains {f:?}: {line}");
+        }
+    }
+    app.0.begin_shutdown();
+    app.0.store.release_file();
+    server.abort();
+}

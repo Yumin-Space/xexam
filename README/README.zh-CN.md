@@ -44,6 +44,10 @@ Xexam 是一个自己部署、在浏览器里用的刷题程序。你导入自�
   <img src="../docs/zh-CN/screenshots/readme/phone-result.png" alt="手机上的成绩页" width="24%">
   <img src="../docs/zh-CN/screenshots/readme/phone-ai-chat.png" alt="手机上的 AI 对话" width="24%">
 </p>
+<p align="center">
+  <img src="../docs/zh-CN/screenshots/readme/phone-fx-right.png" alt="手机上练习答对：彩纸向上喷出" width="24%">
+  <img src="../docs/zh-CN/screenshots/readme/phone-fx-wrong.png" alt="手机上练习答错：屏幕上两道爪痕" width="24%">
+</p>
 
 ## AI 功能亮点
 
@@ -67,8 +71,8 @@ Xexam 是一个自己部署、在浏览器里用的刷题程序。你导入自�
 
 | | |
 |---|---|
-| 当前版本 | **v3.0**（见 [更新日志](../docs/zh-CN/changelog.md)，也可以在仓库的 [Releases](../../../releases) 页看；在程序里：菜单 → **Xexam v3.0**） |
-| 镜像 | 共三个，在 Docker Hub 上（公开，不用登录）：`docker.io/yuminspace/xexam-frontend`、`docker.io/yuminspace/xexam-backend` 和 `docker.io/yuminspace/xexam-ai-service`，标签 `latest` / `v3.0` / `sha-<提交>`（`sha-` 标签用来排查问题）。镜像副本：`ghcr.io/yumin-space/xexam-frontend`、`ghcr.io/yumin-space/xexam-backend` 和 `ghcr.io/yumin-space/xexam-ai-service`（私有，标签相同） |
+| 当前版本 | **v3.1**（见 [更新日志](../docs/zh-CN/changelog.md)，也可以在仓库的 [Releases](../../../releases) 页看；在程序里：菜单 → **Xexam v3.1**） |
+| 镜像 | 共三个，在 Docker Hub 上（公开，不用登录）：`docker.io/yuminspace/xexam-frontend`、`docker.io/yuminspace/xexam-backend` 和 `docker.io/yuminspace/xexam-ai-service`，标签 `latest` / `v3.1` / `sha-<提交>`（`sha-` 标签用来排查问题）。镜像副本：`ghcr.io/yumin-space/xexam-frontend`、`ghcr.io/yumin-space/xexam-backend` 和 `ghcr.io/yumin-space/xexam-ai-service`（私有，标签相同） |
 | CPU 架构 | `linux/amd64`、`linux/arm64`（同一个标签里自动选对的） |
 | 端口 | `8765`（默认只绑定本机） |
 | 许可证 | [MIT](../LICENSE) |
@@ -93,12 +97,15 @@ Xexam 是一个自己部署、在浏览器里用的刷题程序。你导入自�
 - **考试**：交卷后才计分。然后显示分数，每道错题（也可以看全部题目）都列出你的答案、正确答案、解析和记忆口诀。可以随时跳题、标记想回头再看的题，也可以暂存退出，以后接着考。
 - **练习**：每道题作答后马上核对，显示正确答案和解析；从 v3.0 起，答对会喷出彩纸，答错会划过两道爪痕（设置里的 **对错特效**，默认开启）。
 - **你自己的题库**：导入的每一份 Excel 工作簿都是一个独立的题库，里面的每个工作表是一组可以挑着做的题。工作簿用六列格式：题目和答案用英语写，愿意的话再加上中文和日语。保存之前会先显示预览，告诉你导入会带来哪些变化。
+- **题库分类**（v3.1）：管理员可以把题库放进一层分类（新建、改名、调整顺序、移动题库）。选择区、筛选和用户的题库权限都会按分类分组显示；没有分类时一切照旧。
 - **三种语言**：界面有英语、中文、日语三种，每道题、每个答案和每段解析都可以在 **English**、**中文** 和 **日本語** 之间切换。
 - **学习记录和错题本**：每场考试和每次练习都连同作答保存下来；答错的题留在错题本里，直到连续答对两次。
 - **多人共用一个 Xexam**：每个人都登录使用，有自己的学习记录和设置。管理员决定谁能看到哪些题库、谁可以导入题库（可管理题库的用户），还可以查看 **系统日志**。
+- **登录设备**（v3.1）：设置里列出你登录过的每个浏览器，可以让其中任何一个退出登录；管理员也可以让用户的设备退出登录。
 - **AI 对话**（可选，管理员设置好之前是关闭的）：管理员在 **AI 设置** 里接入 OpenAI 兼容 API、Anthropic 或 Cloudflare AI Gateway，测试后开启 **AI+ 功能**，再在 **用户管理** 里为每个可以使用的用户开通 **AI+ 功能**。在 **AI 设置** 里，他们可以 **暂停** 和 **恢复** 某个用户的 **AI+ 功能**，而不用收回它。回答边生成边显示（推理模型工作时显示 **正在思考…**），关掉页面也会继续生成；AI 用 **设置** 里选的语言回答；对话会保存下来（默认在 90 天后自动删除）；**记忆** 保存一些简短的笔记，AI 会在以后的对话里参考；管理员可以在 **设置** 的 **AI 对话模式** 里选 **自由模式**，不带学习助手的指示、直接和模型对话。管理员能看到用量统计，也能查看和删除拥有 AI+ 功能的用户的对话和记忆，AI 对话页面会把这一点告诉每个用户。AI 在自己的容器 `xexam-ai-service` 里运行，有自己的数据库；服务商的密钥加密保存。
 - **学习时的 AI 帮助**（给有 **AI+ 功能** 的用户；考试进行中没有）：练习时，**AI 提示** 和 **AI 解析** 都在题目下面的一个面板里；成绩页和学习记录的详情页上，每道题都有 **AI 解析**，在 **学习记录** 和 **主页** 上，可以对一条记录里答错的题生成 **AI 总结**。每个回答都保存在 **AI 对话** 里，面板里的任何东西都不会离开页面。每个用户对 AI 的请求都有每分钟、每小时和每天的上限，由管理员设置。
 - **AI 题库**（给有 **AI+ 功能** 和相应功能的用户）：**AI 生成题** 从你勾选的题库写出一个 20 道题的新题库，中英日三种语言，带答案和解析；**AI 生成错题习题** 根据你答错的题写出 20 道新题；**AI 导入** 读取 PDF、Word、Excel、PowerPoint、Markdown、TXT 或 CSV 文件：文件里有题目就直接做成题库（默认最多 100 道），是学习资料就据此写出 20 道题。文件只在内存中读取，不会保存。每个 AI 题库都带 **AI+** 徽章，写明它的来源。
+- **通知和安装**（v3.1）：可以把 Xexam 安装到手机上（主页上的引导会带你完成；iPhone 需要 iOS 16.4 或更高版本），并收到练习或考试没做完的提醒、你在用的题库有新题库或更新的动态，以及 Xexam 更新的通知。通知在你所在时区的 00:00–08:00 不打扰。它们需要 Xexam 的 `https` 地址和 xexam-ai-service 容器。
 - **手机优先**：每个页面在手机宽度下都不会横向滚动；只有图标的按钮按住就能看到名字，触控区域至少 44 px；每个页面末尾有一行居中的、带项目链接的小字，问题和回答获得大部分空间。宽屏上页面居中显示。
 
 每个页面怎么用、练习和成绩里的 AI 帮助、AI 对话和 AI 设置、Excel 格式和导入规则：见 [docs/zh-CN/usage.md](../docs/zh-CN/usage.md)。
@@ -134,7 +141,7 @@ docker compose up -d
 | 操作 | 命令 |
 |---|---|
 | 更新到最新版本 | 先 `docker compose pull`，再 `docker compose up -d`（请先看 [升级](#升级)） |
-| 固定在某个版本 | 把 `docker-compose.yml` 里三个镜像的 `:latest` 都改成 `:v3.0`，再 `docker compose up -d` |
+| 固定在某个版本 | 把 `docker-compose.yml` 里三个镜像的 `:latest` 都改成 `:v3.1`，再 `docker compose up -d` |
 | 查看状态 | `docker compose ps`（三个容器都应该是 `healthy`） |
 | 停止 / 再启动 | `docker compose stop` / `docker compose start` |
 | 看日志 | `docker compose logs -f backend` 和 `docker compose logs -f ai-service`（管理员也可以在菜单里打开 **系统日志**；那里也显示 AI 服务的日志） |

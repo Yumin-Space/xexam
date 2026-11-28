@@ -2,9 +2,25 @@
 
 # Database
 
-> The database is SQLite, **a single file, `xexam.db`**. The Rust backend started from the old Python version's database: the original table definitions (schema v1) were kept character for character, and every later schema up to v10 only added to them (new tables and new columns): **schema v2** (v0.5: question banks, exam detail, settings), **schema v3** (v0.6: users and sign-in), **schema v4** (v0.7: question banks per user, bank owners, practice records), **schema v5** (v0.8: the per-user AI+ feature grant and an identity stamp) and **schema v6** (v0.9: the key and start time of the practice or exam session a record was saved from), and **schema v7** (v1.1: the time limit and the end of an exam, and the AI-generated banks), **schema v8** (v1.3: sessions, the activity log and system settings), **schema v9** (v1.4: the last-activity columns) **schema v10** (v1.6: the per-user permission to download question banks) **schema v11** (v2.0: database clean-up, nine tables rebuilt with foreign keys, the legacy tables dropped) and **schema v12** (v2.6: the user's display name, `users.display_name`). An existing database is migrated automatically at the first start of a newer version, after a backup copy is written (section 6). Since v0.7 the database runs in **WAL mode** (section 2).
-> Since v0.8 ai-service has a **second, separate database**, `xexam-ai.db`, in its own volume (section 8); its schema is **11** since v2.1 (10 since v2.0, 9 since v1.9, 8 since v1.4, 7 since v1.3, 6 since v1.1, 4 since v1.0, 3 since v0.9). The two services never open each other's database. **v1.1 changes the main database** to schema v7 (section 6); the AI database does not touch it.
-> Evidence: [audit/database.md](../zh-CN/history/audit/database.md); golden tests: `backend/tests/db_golden.rs` (run against `tests/baseline/fixtures/sample.db`, built by the old Python implementation, and the committed snapshots). The migrations and their backups are tested in `backend/tests/v05_banks_records_settings.rs` (v2), `v06_users_and_sign_in.rs` (v3), `v065_bank_access_and_practice.rs` (v4), `v07_bank_access_and_layouts.rs` (the bank access of v4, the conversion of pre-release databases, the retirement of old-layout questions), `v07_wal_and_logs.rs` (WAL mode), `v08_ai_link.rs` (v5), `v09_ai_study.rs` (v6, the study routes of the backend) and `v20_db.rs` (v11, the clean-up); the AI database in `ai-service/tests/` (`v09_store.rs` for schema 3, `v20_schema.rs` for schema 10) and the unit tests of `ai-service/src/store/`.
+> The database is SQLite, **a single file, `xexam.db`**. The Rust backend started from the old Python version's database: the original table definitions (schema v1) were kept character for character, and every later schema only added to them (new tables and new columns); schema 11 also rebuilt nine tables with foreign keys. An existing database is migrated automatically at the first start of a newer version, after a backup copy is written (section 6). Since v0.7 the database runs in **WAL mode** (section 2). The schema number is stored in `meta` (`schema`); the table below says which version brought which schema.
+> Since v0.8 ai-service has a **second, separate database**, `xexam-ai.db`, in its own volume (section 8); its schema is **11** since v2.1. The two services never open each other's database.
+> Evidence: [audit/database.md](../zh-CN/history/audit/database.md); golden tests: `backend/tests/db_golden.rs` (run against `tests/baseline/fixtures/sample.db`, built by the old Python implementation, and the committed snapshots). The migrations and their backups are tested in `backend/tests/v05_banks_records_settings.rs` (v2), `v06_users_and_sign_in.rs` (v3), `v065_bank_access_and_practice.rs` (v4), `v07_bank_access_and_layouts.rs` (the bank access of v4, the conversion of pre-release databases, the retirement of old-layout questions), `v07_wal_and_logs.rs` (WAL mode), `v08_ai_link.rs` (v5), `v09_ai_study.rs` (v6, the study routes of the backend), `v20_db.rs` (v11, the clean-up, and every older schema ending at 13) and `v31_migrate.rs` (v13); the AI database in `ai-service/tests/` (`v09_store.rs` for schema 3, `v20_schema.rs` for schema 10) and the unit tests of `ai-service/src/store/`. **Every diagram in sections 3, 8.2 and 9 is checked against a fresh database by `backend/tests/docs_diagrams.rs` and `ai-service/tests/docs_diagrams.rs`** (tables, columns, types, primary and foreign keys, and the same in all three languages), so a diagram cannot drift from the code.
+
+| Schema | App version | What it added |
+|---|---|---|
+| 1 | v0.4 and older (the Python version) | the original tables: questions, attempts, stats, imports, meta |
+| 2 | v0.5 | question banks, exam detail, settings |
+| 3 | v0.6 | users and sign-in |
+| 4 | v0.7 | question banks per user, bank owners, practice records |
+| 5 | v0.8 | the per-user AI+ grant and an identity stamp |
+| 6 | v0.9 | the key and start time of the session a record was saved from |
+| 7 | v1.1 | the time limit and the end of an exam, AI-generated banks |
+| 8 | v1.3 | sessions, the activity log, system settings |
+| 9 | v1.4 | the last-activity columns |
+| 10 | v1.6 | the per-user permission to download banks |
+| 11 | v2.0 | clean-up: nine tables rebuilt with foreign keys, the legacy tables dropped |
+| 12 | v2.6 | the user's display name |
+| 13 | v3.1 | categories, devices, push, saved-session markers |
 
 ## 1. Where the file lives
 
@@ -19,12 +35,14 @@ Other files next to the database:
 
 - **`xexam.db-wal` and `xexam.db-shm`** exist while the backend runs (WAL mode, section 2). The `-wal` file holds the latest committed changes until SQLite copies them into `xexam.db`. When the backend stops normally everything is copied into `xexam.db` and `xexam.db-wal` is emptied; the two files may stay, empty and harmless. They belong to the database: never delete them while the backend runs, and copy them together with `xexam.db` (section 5).
 - **`backups/`** receives the copy written before a schema migration (section 6), for example `/data/backups/xexam-schema3-20261111-140501.db`. The program never deletes these files; remove them yourself once you no longer need them.
+- **`push-vapid.key`** (v3.1) is the private key of the web-push server (section 4.12). It is one line, mode 0600, created at the first start, and it is **not** in the database: the migration backups never contain it, a copy of the whole data directory does, and a restore of only `xexam.db` does not bring it back (the phones then subscribe again).
 
 What is kept where:
 
 | Where | What |
 |---|---|
 | `xexam.db` in the volume (with `-wal` / `-shm` while running) | The question banks with their owners and questions (retired ones included), the import history, the users (password hashes only), their sessions and which banks each user sees, each user's per-question statistics (wrong-answer notebook), study records (exams and practice) with their per-question detail and, since v0.9, the key and start time of the session each was saved from, and settings (theme, interface language, auto-advance, question language) |
+| `push-vapid.key` next to `xexam.db` (v3.1) | The private key of the web-push server (VAPID). Not part of the database or of its backups |
 | `backups/` in the volume | The copies of the database written before each schema migration (`xexam-schema1-…` up to `xexam-schema5-…`) |
 | Memory of the backend only | The System log, the sign-in locks and the import previews; all of them start empty after a restart |
 | The volume `xexam_ai_auth` (v0.8) | Only `internal.token`, the token the backend and ai-service share; written by the backend, read by ai-service. No database |
@@ -56,18 +74,20 @@ The backend has only **one connection**, kept behind a mutex. Database calls run
 
 ## 3. Tables
 
+Eighteen tables, drawn in five areas. Each diagram shows **every column exactly as `sqlite_master` stores it** (declared type; `PK` primary key, `FK` foreign key, `UK` unique) and is followed by a table with the keys and indexes, which a diagram cannot show (partial and unique indexes, `COLLATE NOCASE`). A table of another area that a diagram needs is drawn as an empty box. Solid lines are foreign keys (`|o--o{` = the foreign key may be NULL); dotted lines are soft links kept without a foreign key on purpose. Every table also carries `CHECK` constraints for its ranges and enumerations; the full statements are in `backend/src/database/schema.rs`. What a column list cannot say is in section 4; the history of each schema is in section 6; the relations of the whole database on one page are in section 9.1.
+
+### 3.1 Banks & categories
+
+A bank is one imported workbook (or one AI-generated bank); a question that leaves a workbook is retired, not deleted (section 4.2). Since v3.1 administrators group banks in one-level categories (`bank_categories`, `banks.category_id`, `banks.sort`; section 4.11).
+
 ```mermaid
 erDiagram
-    questions {
-        TEXT id PK "Question identity (section 4.1)"
-        TEXT sheet "Sheet name (indexed: sheet, active)"
-        INTEGER row_no "Row number in the Excel file (display only)"
-        INTEGER seq "Order in the question bank"
-        TEXT data "JSON of the whole question (section 4.7)"
-        INTEGER active "1 active · 0 retired"
-        TEXT added_at "When it first entered the question bank"
-        TEXT updated_at "Time of the latest import or retirement"
-        INTEGER bank_id "banks.id (v2)"
+    bank_categories {
+        INTEGER id PK "Auto-increment, never reused (v13)"
+        TEXT name UK "1-60 characters, unique ignoring case"
+        INTEGER sort "Position among the categories, 0..n-1"
+        INTEGER created_at "Unix seconds"
+        INTEGER updated_at "Unix seconds, set by a rename"
     }
     banks {
         INTEGER id PK "Auto-increment, never reused (v2)"
@@ -76,7 +96,22 @@ erDiagram
         INTEGER legacy_ids "1 = the legacy bank (unscoped question ids)"
         TEXT created_at "When the bank was created"
         TEXT updated_at "Time of the latest import into this bank"
-        INTEGER owner_id "users.id of the user who imported it as a new bank (v4)"
+        INTEGER owner_id FK "users.id of the user who imported it as a new bank (v4)"
+        TEXT ai_job UK "Job key of an AI-generated bank, NULL otherwise (v7)"
+        TEXT ai_meta "JSON facts of an AI-generated bank (v7)"
+        INTEGER category_id FK "bank_categories.id, NULL = uncategorised (v13)"
+        INTEGER sort "Position in its group, 1..n; 0 = not placed yet (v13)"
+    }
+    questions {
+        TEXT id PK "Question identity (section 4.1)"
+        TEXT sheet "Sheet name"
+        INTEGER row_no "Row number in the Excel file (display only)"
+        INTEGER seq "Order in the question bank"
+        TEXT data "JSON of the whole question (section 4.7)"
+        INTEGER active "1 active · 0 retired"
+        TEXT added_at "When it first entered the question bank"
+        TEXT updated_at "Time of the latest import or retirement"
+        INTEGER bank_id FK "banks.id (v2)"
     }
     imports {
         INTEGER id PK "Auto-increment"
@@ -88,36 +123,27 @@ erDiagram
         INTEGER restored "Restored"
         INTEGER skipped "Unreadable"
         INTEGER total "Active questions after the import"
-        INTEGER bank_id "banks.id (v2)"
+        INTEGER bank_id FK "banks.id (v2)"
     }
-    users {
-        INTEGER id PK "Auto-increment, never reused (v3)"
-        TEXT username "Unique, ignoring case"
-        TEXT password_hash "Argon2id, PHC string"
-        TEXT role "admin · user"
-        INTEGER disabled "1 = cannot sign in"
-        TEXT created_at "Local time"
-        TEXT last_login_at "Local time, nullable"
-        TEXT password_changed_at "Local time"
-        INTEGER must_change_password "1 = must choose a new password first"
-        INTEGER new_banks "1 = gets every bank created later (v4)"
-        INTEGER can_manage_banks "1 = bank manager (v4)"
-        INTEGER ai_enabled "1 = AI+ on (v5)"
-        TEXT uid "identity stamp, 32 hex, never changes (v5)"
-        INTEGER can_download_banks "1 = may download the banks they can see (v10)"
-        TEXT display_name "the username others see, NULL = not set yet; unique ignoring case (v12)"
-    }
-    sessions {
-        TEXT token_hash PK "SHA-256 of the cookie value (v3)"
-        INTEGER user_id "users.id (indexed)"
-        TEXT created_at "Local time"
-        INTEGER last_seen_at "Unix seconds"
-        INTEGER expires_at "Unix seconds"
-    }
-    user_banks {
-        INTEGER user_id PK "users.id (v4)"
-        INTEGER bank_id PK "banks.id (indexed)"
-    }
+    bank_categories |o--o{ banks : "category_id"
+    users |o--o{ banks : "owner_id"
+    banks |o--o{ questions : "bank_id"
+    banks |o--o{ imports : "bank_id"
+```
+
+| Table | Primary key and unique constraints | Foreign keys (all ON DELETE NO ACTION) | Indexes |
+|---|---|---|---|
+| `bank_categories` | PK `id`; UNIQUE `(name NOCASE)` | — | — |
+| `banks` | PK `id` | `category_id` → `bank_categories(id)`; `owner_id` → `users(id)` | `idx_banks_category (category_id, sort)`<br>unique `idx_banks_ai_job (ai_job) WHERE ai_job IS NOT NULL`<br>`idx_banks_owner (owner_id)` |
+| `questions` | PK `id` | `bank_id` → `banks(id)` | `idx_questions_layout (bank_id, sheet, active, seq)`<br>`idx_questions_bank (bank_id, active)` |
+| `imports` | PK `id` | `bank_id` → `banks(id)` | `idx_imports_bank (bank_id)` |
+
+### 3.2 Study
+
+Study records (`attempts`, with the answer to each question in `attempt_items`), the per-user statistics behind the wrong-answer notebook (`user_stats`) and, since v3.1, the server-side marker of an unfinished practice or exam (`saved_sessions`; section 4.13).
+
+```mermaid
+erDiagram
     attempts {
         INTEGER id PK "Auto-increment"
         TEXT at "Submission time"
@@ -128,20 +154,22 @@ erDiagram
         INTEGER percent "Percentage (round half to even)"
         INTEGER seconds "Time taken (seconds)"
         TEXT banks "JSON snapshot of the banks (v2)"
-        INTEGER user_id "users.id (v3, indexed)"
+        INTEGER user_id FK "users.id (v3, indexed)"
         TEXT kind "exam · practice (v4)"
         TEXT session_key "32 hex of the practice / exam session, NULL for older records (v6)"
         INTEGER started_at "Session start, unix seconds, NULL like session_key (v6)"
+        INTEGER time_limit "Exam time limit in seconds, NULL = none (v7)"
+        TEXT ended "How a timed exam ended (v7)"
     }
     attempt_items {
-        INTEGER attempt_id PK "attempts.id (v2)"
+        INTEGER attempt_id PK,FK "attempts.id (v2)"
         INTEGER seq PK "Position in the exam"
         TEXT question_id "Indexed"
         TEXT answer "JSON array as submitted, NULL = unanswered"
         INTEGER correct "1 · 0"
     }
     user_stats {
-        INTEGER user_id PK "users.id (v3)"
+        INTEGER user_id PK,FK "users.id (v3)"
         TEXT question_id PK "questions.id (no constraint)"
         INTEGER attempts "Times answered"
         INTEGER correct "Times answered correctly"
@@ -150,25 +178,182 @@ erDiagram
         INTEGER last "Result of the previous answer, nullable"
         TEXT at "Time of the latest answer, nullable"
     }
+    saved_sessions {
+        INTEGER user_id PK,FK "users.id"
+        TEXT session_key PK "32 hex of the practice or exam session (attempts.session_key later)"
+        INTEGER device_id FK "devices.id of the browser that saved it"
+        TEXT kind "exam · practice"
+        INTEGER answered "Questions answered so far"
+        INTEGER total "Questions in the session"
+        INTEGER started_at "Session start, browser clock, unix seconds"
+        INTEGER time_left "Timed exam only: seconds left at the last save; 0 = time is up"
+        INTEGER saved_at "Server clock of the last accepted report"
+        INTEGER remind_at "Next reminder due, NULL = no more"
+        INTEGER reminders "Reminders sent so far, 0..3"
+    }
+    users |o--o{ attempts : "user_id"
+    attempts ||--o{ attempt_items : "attempt_id"
+    users ||--o{ user_stats : "user_id"
+    users ||--o{ saved_sessions : "user_id"
+    devices |o--o{ saved_sessions : "device_id"
+    questions |o..o{ attempt_items : "question_id (soft, no foreign key)"
+    questions |o..o{ user_stats : "question_id (soft, no foreign key)"
+    attempts |o..o{ saved_sessions : "session_key (soft, no foreign key)"
+    banks |o..o{ attempts : "banks (soft, JSON)"
+```
+
+| Table | Primary key and unique constraints | Foreign keys (all ON DELETE NO ACTION) | Indexes |
+|---|---|---|---|
+| `attempts` | PK `id` | `user_id` → `users(id)` | `idx_attempts_session (user_id, session_key) WHERE session_key IS NOT NULL`<br>`idx_attempts_user (user_id)` |
+| `attempt_items` | PK `(attempt_id, seq)` | `attempt_id` → `attempts(id)` | `idx_attempt_items_question (question_id)` |
+| `user_stats` | PK `(user_id, question_id)` | `user_id` → `users(id)` | `idx_user_stats_question (question_id)` |
+| `saved_sessions` | PK `(user_id, session_key)` | `device_id` → `devices(id)`; `user_id` → `users(id)` | `idx_saved_sessions_device (device_id)` |
+
+### 3.3 Users & access
+
+Accounts, sign-in sessions, since v3.1 the browsers a user signed in on (`devices`; section 4.10), which banks a plain user sees (section 4.17) and the per-user settings (section 4.14).
+
+```mermaid
+erDiagram
+    users {
+        INTEGER id PK "Auto-increment, never reused (v3)"
+        TEXT username UK "Unique, ignoring case"
+        TEXT password_hash "Argon2id, PHC string"
+        TEXT role "admin · user"
+        INTEGER disabled "1 = cannot sign in"
+        TEXT created_at "Local time"
+        TEXT last_login_at "Local time, nullable"
+        TEXT password_changed_at "Local time"
+        INTEGER must_change_password "1 = must choose a new password first"
+        INTEGER new_banks "1 = gets every bank created later (v4)"
+        INTEGER can_manage_banks "1 = bank manager (v4)"
+        INTEGER ai_enabled "1 = AI+ on (v5)"
+        TEXT uid UK "identity stamp, 32 hex, never changes (v5)"
+        TEXT last_active_at "Last request, local time"
+        TEXT last_login_ip "Last sign-in address, place and user agent (sign-in info, v1.3)"
+        TEXT last_login_country
+        TEXT last_login_region
+        TEXT last_login_city
+        TEXT last_active_ip "Last request address, place and user agent (v1.4)"
+        TEXT last_active_country
+        TEXT last_active_region
+        TEXT last_active_city
+        TEXT last_active_ua
+        INTEGER can_download_banks "1 = may download the banks they can see (v10)"
+        TEXT display_name UK "the username others see, NULL = not set yet; unique ignoring case (v12)"
+    }
+    sessions {
+        TEXT token_hash PK "SHA-256 of the cookie value (v3)"
+        INTEGER user_id FK "users.id (indexed)"
+        TEXT created_at "Local time"
+        INTEGER last_seen_at "Unix seconds"
+        INTEGER expires_at "Unix seconds"
+        INTEGER started_at "Sign-in time, unix seconds (v8)"
+        INTEGER remember "1 = remember this browser"
+        TEXT ip "Address at sign-in (sign-in info eye open)"
+        TEXT ua "Cleaned User-Agent"
+        INTEGER device_id FK "devices.id, NULL = made before v3.1; linked at its next request (v13)"
+    }
+    devices {
+        INTEGER id PK "Auto-increment, never reused (v13)"
+        INTEGER user_id FK "users.id (a device belongs to one user)"
+        TEXT cookie_hash "SHA-256 hex of the xexam_did cookie; unique per user"
+        INTEGER created_at "First seen, unix seconds"
+        INTEGER active_at "Last request, unix seconds; drives the 30-day rules"
+        TEXT active_ip "Address of the last request (sign-in info eye open)"
+        TEXT active_country "Place of that address"
+        TEXT active_region "Place of that address"
+        TEXT active_city "Place of that address"
+        INTEGER signin_at "Last accepted sign-in on this device"
+        TEXT signin_ip "Address of that sign-in"
+        TEXT signin_country "Place of that address"
+        TEXT signin_region "Place of that address"
+        TEXT signin_city "Place of that address"
+        TEXT ua "Cleaned User-Agent, at most 256 characters"
+        INTEGER app "1 = opened as the installed app"
+        TEXT tz "IANA zone the device reported, NULL if none"
+        INTEGER signed_out_at "Set by an explicit sign-out, cleared by the next sign-in"
+    }
+    user_banks {
+        INTEGER user_id PK,FK "users.id (v4)"
+        INTEGER bank_id PK,FK "banks.id (indexed)"
+    }
     user_settings {
-        INTEGER user_id PK "users.id (v3)"
-        TEXT key PK "theme · uiLang · autoAdvance · questionLang · answerFx"
+        INTEGER user_id PK,FK "users.id (v3)"
+        TEXT key PK "theme · uiLang · autoAdvance · questionLang · answerFx · push · tz"
         TEXT value "JSON text of the value"
     }
+    users ||--o{ sessions : "user_id"
+    users ||--o{ devices : "user_id"
+    devices |o--o{ sessions : "device_id"
+    users ||--o{ user_banks : "user_id"
+    banks ||--o{ user_banks : "bank_id"
+    users ||--o{ user_settings : "user_id"
+```
+
+| Table | Primary key and unique constraints | Foreign keys (all ON DELETE NO ACTION) | Indexes |
+|---|---|---|---|
+| `users` | PK `id`; UNIQUE `(username NOCASE)` | — | unique `idx_users_display_name (display_name COLLATE NOCASE) WHERE display_name IS NOT NULL`<br>unique `idx_users_uid (uid) WHERE uid <> ''` |
+| `sessions` | PK `token_hash` | `device_id` → `devices(id)`; `user_id` → `users(id)` | `idx_sessions_device (device_id)`<br>`idx_sessions_user (user_id)` |
+| `devices` | PK `id`; UNIQUE `(user_id, cookie_hash)` | `user_id` → `users(id)` | — |
+| `user_banks` | PK `(user_id, bank_id)` | `bank_id` → `banks(id)`; `user_id` → `users(id)` | `idx_user_banks_bank (bank_id)` |
+| `user_settings` | PK `(user_id, key)` | `user_id` → `users(id)` | — |
+
+### 3.4 Notifications (v3.1)
+
+Web push (v3.1): one subscription per device, and the outbox, which is the queue and a 7-day delivery log in one table. The settings `push` and `tz` live in `user_settings` (section 4.14) and the marks of the triggers in `meta` (section 4.15). How it works: section 4.12.
+
+```mermaid
+erDiagram
+    push_subscriptions {
+        INTEGER id PK "Auto-increment"
+        INTEGER device_id FK,UK "devices.id; at most one subscription per device"
+        TEXT endpoint UK "https address at the push service; unique, moves to the device that confirms it last"
+        TEXT p256dh "Browser public key, 65 bytes as base64url (87 characters)"
+        TEXT auth "Auth secret, 16 bytes as base64url (22 characters)"
+        TEXT key_id "First 16 hex digits of SHA-256 of the server key it was made for"
+        INTEGER created_at "Unix seconds"
+        INTEGER confirmed_at "Last subscribe or re-confirm from the app"
+        INTEGER expires_at "expirationTime of the browser, NULL = none"
+        INTEGER last_ok_at "Last delivery the push service accepted"
+        INTEGER last_fail_at "Last failed delivery"
+        INTEGER last_status "Last HTTP status of the push service, 0 = network error"
+        INTEGER failures "Failures in a row; reset by a success"
+    }
+    push_outbox {
+        INTEGER id PK "Auto-increment"
+        INTEGER subscription_id FK "push_subscriptions.id"
+        TEXT kind "remind · bank · version · test"
+        TEXT topic "Coalescing key and Topic header, at most 32 characters"
+        TEXT payload "Language-neutral JSON, at most 1024 bytes; never ciphertext"
+        TEXT urgency "very-low · low · normal · high"
+        INTEGER created_at "Unix seconds"
+        INTEGER expires_at "Time to live ends here; counted from the send time"
+        TEXT state "queued · leased · sent · failed · expired"
+        INTEGER next_at "Queued: earliest send (quiet hours, back-off); leased: lease end"
+        INTEGER tries "Delivery attempts so far"
+        INTEGER status "Last HTTP status, NULL until a result"
+        INTEGER done_at "Set when sent, failed or expired; kept 7 days"
+    }
+    devices ||--o| push_subscriptions : "device_id"
+    push_subscriptions ||--o{ push_outbox : "subscription_id"
+```
+
+| Table | Primary key and unique constraints | Foreign keys (all ON DELETE NO ACTION) | Indexes |
+|---|---|---|---|
+| `push_subscriptions` | PK `id`; UNIQUE `(endpoint)`; UNIQUE `(device_id)` | `device_id` → `devices(id)` | — |
+| `push_outbox` | PK `id` | `subscription_id` → `push_subscriptions(id)` | `idx_push_outbox_due (next_at) WHERE state IN ('queued', 'leased')`<br>`idx_push_outbox_sub (subscription_id)` |
+
+### 3.5 System
+
+Database-level keys, the site-wide switches and the activity history. `system_settings.updated_by` and `activity_log.user_id` are audit snapshots, not foreign keys.
+
+```mermaid
+erDiagram
     meta {
-        TEXT key PK "schema · legacy_migrated · users_known · banks_known"
+        TEXT key PK "schema · legacy_migrated · users_known · banks_known · app_version · push_imports_seen · push_banks_seen"
         TEXT value
     }
-    banks ||--o{ questions : "questions.bank_id"
-    banks ||--o{ imports : "imports.bank_id"
-    users |o--o{ banks : "banks.owner_id"
-    users ||--o{ user_banks : "user_banks.user_id"
-    banks ||--o{ user_banks : "user_banks.bank_id"
-    users ||--o{ sessions : "sessions.user_id"
-    users ||--o{ attempts : "attempts.user_id"
-    attempts ||--o{ attempt_items : "attempt_id"
-    users ||--o{ user_stats : "user_stats.user_id"
-    users ||--o{ user_settings : "user_settings.user_id"
     system_settings {
         TEXT key PK "Site switch name"
         TEXT value
@@ -178,15 +363,38 @@ erDiagram
     activity_log {
         INTEGER id PK
         INTEGER ts "unix seconds"
+        INTEGER last_ts "Latest merged repeat, unix seconds"
+        INTEGER count "Repeats merged into this row"
         TEXT actor "user · anon · system"
         INTEGER user_id "snapshot, no foreign key"
+        TEXT username "Snapshot of the login"
+        TEXT role "Snapshot of the role"
         TEXT action
+        TEXT object "What the action touched"
+        TEXT detail "JSON details"
         TEXT result "ok · fail"
+        TEXT reason "Short reason code for a refusal"
+        TEXT ip
+        TEXT country
+        TEXT region
+        TEXT city
+        TEXT ua
         TEXT source "backend · ai"
+        TEXT src_id UK "De-duplication key of rows forwarded by ai-service"
     }
+    users |o..o{ system_settings : "updated_by (soft, no foreign key)"
+    users |o..o{ activity_log : "user_id (soft, no foreign key)"
 ```
 
-Thirteen tables. Since schema 11 (v2.0) nine of them are declared with **foreign keys**, all written out as `ON DELETE NO ACTION` (a delete that would leave a child row behind fails; the code deletes child rows first, in the same transaction, as it always did): `sessions.user_id`, `user_stats.user_id`, `user_settings.user_id`, `user_banks.user_id`, `attempts.user_id` (nullable) and `banks.owner_id` (nullable) to `users(id)`; `attempt_items.attempt_id` to `attempts(id)`; `questions.bank_id` (nullable), `imports.bank_id` (nullable) and `user_banks.bank_id` to `banks(id)`. Deliberately **not** linked, and commented so in the table definitions: `attempt_items.question_id` and `user_stats.question_id` (a record outlives a deleted question, and banks from before v0.5 use unscoped ids), `activity_log.user_id` (the log is an audit snapshot) and `system_settings.updated_by` (a write-only audit field: a link would block deleting an administrator who once changed a site switch). The legacy tables `stats` (the per-question statistics of v0.5 and older) and `settings` (the settings of v0.5) are gone since schema 11; their rows were copied to the first administrator (`user_stats`, `user_settings`) at the v3 migration. The nine rebuilt tables are stored as `CREATE TABLE "banks" (…)` with the name in quotes, which is how SQLite records a renamed table.
+| Table | Primary key and unique constraints | Foreign keys (all ON DELETE NO ACTION) | Indexes |
+|---|---|---|---|
+| `meta` | PK `key` | — | — |
+| `system_settings` | PK `key` | — | — |
+| `activity_log` | PK `id` | — | unique `idx_activity_src (src_id) WHERE src_id IS NOT NULL`<br>`idx_activity_prune (ts) WHERE action <> 'auth.signin'`<br>`idx_activity_action (action, id)`<br>`idx_activity_user (user_id, id)`<br>`idx_activity_ts (ts)` |
+
+### 3.6 Foreign keys and what each schema added
+
+Eighteen tables since schema 13 (thirteen before). Since schema 11 (v2.0) nine of them are declared with **foreign keys**, all written out as `ON DELETE NO ACTION` (a delete that would leave a child row behind fails; the code deletes child rows first, in the same transaction, as it always did): `sessions.user_id`, `user_stats.user_id`, `user_settings.user_id`, `user_banks.user_id`, `attempts.user_id` (nullable) and `banks.owner_id` (nullable) to `users(id)`; `attempt_items.attempt_id` to `attempts(id)`; `questions.bank_id` (nullable), `imports.bank_id` (nullable) and `user_banks.bank_id` to `banks(id)`. Deliberately **not** linked, and commented so in the table definitions: `attempt_items.question_id` and `user_stats.question_id` (a record outlives a deleted question, and banks from before v0.5 use unscoped ids), `activity_log.user_id` (the log is an audit snapshot) and `system_settings.updated_by` (a write-only audit field: a link would block deleting an administrator who once changed a site switch). The legacy tables `stats` (the per-question statistics of v0.5 and older) and `settings` (the settings of v0.5) are gone since schema 11; their rows were copied to the first administrator (`user_stats`, `user_settings`) at the v3 migration. The nine rebuilt tables are stored as `CREATE TABLE "banks" (…)` with the name in quotes, which is how SQLite records a renamed table. Schema 13 (v3.1) adds seven foreign keys, all `ON DELETE NO ACTION` as well, so a delete runs the child rows first (section 4.16): `banks.category_id` to `bank_categories(id)`, `devices.user_id` to `users(id)`, `sessions.device_id` to `devices(id)`, `push_subscriptions.device_id` to `devices(id)`, `saved_sessions.user_id` to `users(id)`, `saved_sessions.device_id` to `devices(id)` (nullable) and `push_outbox.subscription_id` to `push_subscriptions(id)`. That makes 17 foreign keys on 13 tables. `banks` and `sessions` were extended with `ALTER TABLE … ADD COLUMN`, so their stored text is the earlier text plus the added columns.
 
 What each schema added:
 
@@ -197,8 +405,10 @@ What each schema added:
 - **v4** (v0.7): the table `user_banks`; the columns `users.new_banks INTEGER NOT NULL DEFAULT 0`, `users.can_manage_banks INTEGER NOT NULL DEFAULT 0`, `banks.owner_id INTEGER` and `attempts.kind TEXT NOT NULL DEFAULT 'exam' CHECK (kind IN ('exam', 'practice'))`; the indexes `idx_user_banks_bank (bank_id)` and `idx_banks_owner (owner_id)`; the `meta` keys `users_known` and `banks_known` (section 6.6). The six-column workbook layout of v0.7 needed no column: its per-language texts live in `questions.data` (section 4.7). Pre-release builds of v0.7 had `users.all_banks` instead of `users.new_banks`; such a database is converted when it is opened (section 6.5).
 - **v6** (v0.9): the columns `attempts.session_key TEXT` (the random key of the practice or exam session the record was saved from: 32 lower-case hex digits; the AI service names the session's chat by it, section 8.2) and `attempts.started_at INTEGER` (when that session started, unix seconds on the browser's clock). Both are NULL for every record saved before v0.9, and for a save in which the browser sent no valid value: each of the two is judged on its own, an invalid one is stored as NULL, and the save is never refused for it. There is no index and no constraint. The columns are never used to look a record up (a record is always found by `attempts.id`), and a key is not guaranteed to be unique: nothing relies on that. Nothing else changed in the main database: the AI chats, their texts and their titles live in the AI database.
 - **v11** (v2.0): no new column. Nine tables rebuilt with the foreign keys above; new indexes `idx_user_stats_question (question_id)`, `idx_imports_bank (bank_id)` and the unique `idx_users_uid ON users(uid) WHERE uid <> ''`; `stats` and `settings` dropped (section 6.17).
+- **v12** (v2.6): the column `users.display_name TEXT` and the unique index `idx_users_display_name` (section 6.19).
+- **v13** (v3.1): the tables `bank_categories`, `devices`, `push_subscriptions`, `saved_sessions` and `push_outbox`; the columns `banks.category_id`, `banks.sort` and `sessions.device_id`; the indexes `idx_banks_category`, `idx_sessions_device`, `idx_saved_sessions_device`, `idx_push_outbox_sub` and `idx_push_outbox_due`; and `idx_questions_sheet` is dropped (section 6.21).
 
-The v1 table-creation statements are kept in `backend/src/database/schema.rs` (`SCHEMA`) as history, with the later additions next to them (`MIGRATE_V2_TABLES`, `V2_COLUMNS`, … `MIGRATE_V4_INDEXES`, `V5_COLUMNS`, `V6_COLUMNS`, and since v2.0 `V11_REBUILDS`, the nine table definitions with their indexes). `SCHEMA` runs on a start only when the file is new or older than schema 11 (so it no longer re-creates `stats` on every open); then the upgrade chain runs. Everything uses `IF NOT EXISTS` or is checked first, so opening an up-to-date database **writes nothing** (tested: the database file together with its `-wal` file stays byte for byte the same). Because SQLite records `ALTER TABLE … ADD COLUMN` by appending the column to the stored `CREATE TABLE` text, the stored text of `users` is the v3 text plus the added columns, while the nine rebuilt tables come from the constants of `V11_REBUILDS` with a normalised column order; a new database and an upgraded one have exactly the same schema (tested in `db_golden.rs` and, from every older schema, in `v20_db.rs`).
+The v1 table-creation statements are kept in `backend/src/database/schema.rs` (`SCHEMA`) as history, with the later additions next to them (`MIGRATE_V2_TABLES`, `V2_COLUMNS`, … `MIGRATE_V4_INDEXES`, `V5_COLUMNS`, `V6_COLUMNS`, and since v2.0 `V11_REBUILDS`, the nine table definitions with their indexes). `SCHEMA` runs on a start only when the file is new or older than schema 11 (so it no longer re-creates `stats` on every open); then the upgrade chain runs. Everything uses `IF NOT EXISTS` or is checked first, so opening an up-to-date database **writes nothing** (tested: the database file together with its `-wal` file stays byte for byte the same). Because SQLite records `ALTER TABLE … ADD COLUMN` by appending the column to the stored `CREATE TABLE` text, the stored text of `users` is the v3 text plus the added columns, while the nine rebuilt tables come from the constants of `V11_REBUILDS` with a normalised column order; a new database and an upgraded one have exactly the same schema (tested in `db_golden.rs` and, from every older schema, in `v20_db.rs`). The v13 statements are `MIGRATE_V13_CATEGORIES`, `V13_BANK_COLUMNS`, `V13_BANK_INDEX`, `MIGRATE_V13_DEVICES`, `V13_SESSION_COLUMNS`, `V13_SESSION_INDEX`, `MIGRATE_V13_PUSH` and `V13_DROP_INDEXES`.
 
 ## 4. Details that decide the fate of your study records
 
@@ -225,7 +435,7 @@ During an import, a question of the **target bank** that cannot be found in the 
 Deleting a bank (`POST /api/banks/delete`) is the only way questions leave the database. In one transaction it deletes the bank's questions (active and retired), its `imports` rows, its `user_banks` rows (who may see it) and its `banks` row. With `withRecords` the study data of those questions goes too: their `user_stats` and `attempt_items` rows, and every `attempts` row whose `banks` snapshot names that bank and no bank that still exists (with its remaining detail). An administrator deletes the study data of **every** user this way; a bank manager deleting their own bank deletes only **their own** study data of it, and other users' records stay (their questions then show as deleted). Without `withRecords`, `user_stats`, `attempts` and `attempt_items` stay as they are.
 
 ### 4.3 Wrong-answer notebook
-Each user has their own notebook in `user_stats`. A question is in it when `wrong > 0` and `streak < 2`; it is moved out after 2 consecutive correct answers. Exams and practice sessions update it in the same way. A user limited to some banks (section 4.8) sees the statistics of those banks' questions only.
+Each user has their own notebook in `user_stats`. A question is in it when `wrong > 0` and `streak < 2`; it is moved out after 2 consecutive correct answers. Exams and practice sessions update it in the same way. A user limited to some banks (section 4.17) sees the statistics of those banks' questions only.
 
 ### 4.4 Study records
 Each user's study records are rows of `attempts` with their `user_id`; `kind` says whether a record is an `exam` or a `practice` session (every record from before v0.7 is an exam, the column default). Each user keeps their latest **500** records (`RECORD_RETENTION`; it was 60 before v0.5); after each submission that user's older ones are deleted together with their `attempt_items`. `GET /api/progress` returns only the latest 60 in `history`.
@@ -236,7 +446,7 @@ Each user's study records are rows of `attempts` with their `user_id`; `kind` sa
 - Deleting one record (`POST /api/records/delete`) removes it and its detail but leaves the statistics alone; deleting all of them can also empty the user's statistics (`withStats`), which equals `POST /api/reset`.
 
 ### 4.5 Settings
-`user_settings` holds one row per user and changed setting; `value` is the JSON text of the value (`"dark"`, `true`). Missing rows mean the default (`theme` `system`, `uiLang` `en`, `autoAdvance` false, `questionLang` `ja`, `answerFx` true); a stored value that is not valid is ignored. The browser keeps a copy only to paint the first frame; the database is the source of truth, so settings survive container updates, a cleared browser cache and other browsers.
+`user_settings` holds one row per user and changed setting; `value` is the JSON text of the value (`"dark"`, `true`). The keys, their defaults and what **Reset to defaults** does are in 4.14. A missing row means the default; a stored value that is not valid is ignored. The browser keeps a copy only to paint the first frame; the database is the source of truth, so settings survive container updates, a cleared browser cache and other browsers.
 
 ### 4.6 Timestamps
 Local-time strings in the format `%Y-%m-%d %H:%M`, **with no time zone marker**, accurate to the minute (the `sessions` table also keeps two Unix times). Inside the container the time zone is the host's by default (`docker/docker-compose.yml` mounts the host's `/etc/localtime`, read only); a `TZ` set in `docker/.env` overrides it, for example `TZ=UTC`, and without either the image falls back to UTC. On Docker Desktop (Windows, macOS) the mounted file is the one of Docker's own virtual machine, usually UTC, so set `TZ` there. The image ships a time zone database, so `TZ` can name any zone. Changing the zone later does not rewrite stored times: they keep the zone they were written in.
@@ -252,15 +462,77 @@ A **six-column** question (v0.7) has three more keys, and no `english` / `en`, b
 
 For clients that know only one explanation, `explanation`, `mnemonic` and `note` of a six-column question hold the Chinese text when column E has one, else the Japanese (F), else the English (D). Questions of the 3- and 4-column layouts, which stay in the database as retired questions, keep exactly the JSON of earlier versions (no new keys); the parser still reads those layouts (that is how an import tells them apart and refuses them), and the parser golden tests check its output byte for byte.
 
-### 4.8 Who sees which bank (v0.7)
-- **Administrators** see and manage every bank.
-- **Plain users** see exactly the banks listed for them in `user_banks` (the existing banks an administrator ticked). `users.new_banks = 1` (**Include banks imported later**) only adds rows: whenever a bank is created (an import as a new bank, by anyone, or the command-line `import` creating the legacy bank), every user with the flag gets a row for it in the same transaction. It never adds an existing bank, and unticking a bank removes only that row. A new user starts with no row and the flag off. Every user that existed at the v4 migration got a row for every existing bank and the flag, so nobody lost a bank at the upgrade.
-- **Bank managers** (`users.can_manage_banks = 1`) also see the banks they own (`banks.owner_id`) while they have the permission, and may update and delete only those. A bank imported as a new bank belongs to the user who imported it; banks from before v0.7, and banks created without a signed-in user (the command-line `import`), belong to the first administrator.
-- Deleting a user deletes their sessions, study records (with their detail), statistics, settings and `user_banks` rows; the banks they own move to the administrator who deletes them. Their AI chats and memories are in the AI database: the AI service removes them at its next reconcile (section 8.3).
+### 4.8 Bank visibility (moved to 4.17)
+The rules (administrators, plain users, bank managers, deleting a user) are in 4.17.
 
 ### 4.9 The dashboard queries (v2.5, v2.6, read only)
 
 `GET /api/dashboard` writes nothing and changes no table. The leaderboard is one aggregate over `user_stats` joined to `users` (enabled users with at least one answer, ordered by correct answers descending, then answers ascending, then user id); it uses the per-question statistics because they survive the pruning of old records to 500. Since v2.6 it also reads `users.display_name`: a set name is sent as it is, a NULL one falls back to the login (masked for other viewers when it is an e-mail address). The **most missed** list (v2.6, it replaced the v2.5 "most practised" aggregate over `attempts` and `attempt_items`) reads only the viewer's own rows of `user_stats` (`user_id = viewer AND wrong > 0`) joined to `questions` (active, with an owning bank), ordered by `wrong` descending, `correct` ascending, `attempts` descending, then bank and position, at most 5; `user_stats` never holds unanswered exam items. The bank scope of the viewer is applied in the code (with every bank visible, the query itself has `LIMIT 5`). The answer carries question ids and counts, never text, user ids or e-mail domains.
+
+### 4.10 Sign-in sessions and devices (v3.1)
+- **Sessions.** `sessions` has one row per signed-in browser session (a user keeps at most 20; the oldest is deleted). `sessions.device_id` links a session to its device; it is NULL for a session made before v3.1 or by an older binary and is linked at the next request of that browser (the first `POST /api/devices/hello` after the upgrade links them all).
+- **Devices.** `devices` has one row per browser per user. The browser is recognised by the random cookie `xexam_did` (43 characters, base64url of 32 random bytes; `HttpOnly`, `SameSite=Strict`, 400 days); only its SHA-256 is stored (`cookie_hash`, unique together with `user_id`). The cookie is not a credential: a session still needs its own `xexam_session`. The row keeps the facts of that browser: first seen, the last sign-in (`signin_*`) and the last request (`active_*`), the cleaned User-Agent (`ua`, at most 256 characters), whether it ran as the installed app (`app`) and the time zone it reported (`tz`). A browser belongs to the user who signed in last: when the same cookie signs in under another user, the push subscriptions of the other users' devices on it (and their queued rows) are deleted.
+- **IP and place** follow the sign-in info switch (the eye in User management) exactly like `users.last_login_*` and `users.last_active_*`: they are written only while the eye is open, the place comes from the location source of that moment, **Clear sign-in info** empties them (the User-Agent stays, like `last_active_ua`), and the backfill that follows a switch to the external lookup also covers the devices.
+- **States** are not stored: *active* = the device has a session whose deadline is in the future; *signed out* = no such session and `signed_out_at` is set; *expired* = otherwise (the session ran out, or its row is waiting for the hourly purge).
+- **Signing out.** An explicit sign-out (the user's own, an administrator's, **Sign out all other devices**) deletes the sessions of the device and its push subscription with the queued pushes, keeps the device row for the list and sets `signed_out_at`; the next sign-in clears it. Expiry and the 20-session cap do **not** sign a device out: it keeps its subscription and its notifications. Changing your own password signs out every other device; an administrator's password reset, disabling a user, a role change and the command-line `reset-password` sign out every device of the user.
+- **Retention.** A device without a session is deleted after 30 days without a request, and a user keeps at most 20 device rows (the oldest unused one without a session goes first); both run hourly. Deleting a user deletes their devices (section 4.16).
+
+### 4.11 Bank categories (v3.1)
+- **`bank_categories`** has one row per category: a name of 1 to 60 characters, unique ignoring case, and `sort`, the position among the categories (0 to n−1). There is one level only, and only administrators edit it (the Banks page).
+- **`banks.category_id`** is the category of a bank; NULL means uncategorised. **`banks.sort`** is its position in its group: 1 to n once placed, **0 = not placed yet**. A group is ordered by `((sort = 0), sort, id)`: banks that were never placed (every bank created later by any path: an import in the app, the command-line `import`, AI generation, or a v3.0 binary) come after the placed ones in `id` order, so a new bank always lands at the end of its group and no creation path had to change.
+- **Moving banks** (moving to a category, reordering) never changes `banks.updated_at`: that column is the content time and takes part in the library stamp. Deleting a category appends its banks to the end of the uncategorised group, renumbers that group 1 to n and renumbers the remaining categories.
+- **Stamps.** The ETag of `GET /api/banks` includes every category and every bank's place, so open pages refresh when only the order changed; the library stamp (`GET /api/bank`, the `library` value) does not change for category edits. `GET /api/auth/state` carries a third stamp, `categories`.
+- **Who sees what.** An administrator gets every category; everyone else only the categories that hold a bank they can see (section 4.17).
+
+### 4.12 Push notifications (v3.1)
+- **Tables.** `push_subscriptions` has at most one row per device (`device_id` is unique); the push-service address `endpoint` is unique over all users and moves to the device that confirmed it last; `p256dh` and `auth` are the browser's keys as canonical base64url; `key_id` is the first 16 hex digits of the SHA-256 of the server's public key it was made for. `push_outbox` is the queue and, for 7 days, the delivery log: one row per message with its `kind` (`remind`, `bank`, `version`, `test`), the coalescing `topic`, a language-neutral JSON `payload` (at most 1024 bytes, never ciphertext), `urgency`, the times and the `state`.
+- **Who does what.** The backend owns everything except the delivery: it queues the rows (the triggers: a reminder for an unfinished practice or exam, news about banks, a new version, and the test button), and at lease time it renders the text in the user's interface language, encrypts it (RFC 8291, `aes128gcm`) and signs the request header (RFC 8292, VAPID, ES256). ai-service is a stateless courier: it long-polls `POST /internal/ai/push/next`, posts each job to the push service and reports the outcome with `POST /internal/ai/push/result`; it never sees the browser keys, the VAPID private key or the plain text. Without ai-service nothing is delivered and the rows expire by their time to live. The heartbeat between the services is unchanged (section 5 of [architecture.md](architecture.md)).
+- **A row's life.** `queued` → `leased` (120 seconds; at most 20 rows per call) → `sent`, or `failed`, or `expired`. A failed delivery is retried after 30 s, 2 min, 10 min and 1 h (plus up to 20 % jitter; a push service's `Retry-After` replaces the back-off), five tries at most. Time to live: 6 hours for a reminder, 3 days for news and versions, 10 minutes for a test, counted from the time the message may first be sent. Before every lease the backend checks again that the subscription is still eligible (user enabled, account switch on, device not signed out and used within 30 days, current server key) and that the message still makes sense (the bank still exists and the user still sees it; the practice is still saved on that device and not finished); otherwise the row is `expired` instead of sent. A row held back by the quiet hours gets its `expires_at` extended at the lease to at least the release time plus the full time to live.
+- **Quiet hours** are 00:00 to 08:00 in the user's time zone (the `tz` setting; with `auto` the zone the device reported; else the server's zone). A message due in that window is held until 08:00; a test ignores it.
+- **Retention.** Hourly: queued rows past their time to live expire, finished rows older than 7 days are deleted, and subscriptions are deleted when the push service answered 404 or 410, when their `expires_at` has passed, after 10 failures in a row without a success for 7 days, when the device was unused for 30 days, and at start when their `key_id` is not the current key.
+- **The VAPID key** is in the file `push-vapid.key` in the data directory (one line, base64url of a PKCS#8 key, mode 0600), created at the first start; the variable `XEXAM_PUSH_VAPID_KEY` overrides it (to share one key between hosts). It is **not in the database**, so the migration backups (`VACUUM INTO`) never contain it, while a copy of the whole data directory does: guard that copy like the database. Rotating it means deleting the file (or changing the variable) and restarting: the subscriptions of the old key are deleted at that start and every phone subscribes again at its next app open.
+- **Going back to v3.0** needs one SQL statement set before users can be deleted again (section 6.22).
+
+### 4.13 Saved-session markers (v3.1)
+- **`saved_sessions`** says that a browser holds an unfinished practice or exam: the session key (the key later stored as `attempts.session_key`), the kind, how many questions were answered of how many, the browser that saved it (`device_id`), for a timed exam the seconds left (`time_left`; the clock runs only while the exam is open, so there is no deadline), and the reminder schedule (`saved_at`, `remind_at`, `reminders`). It holds no question text and no answers. The app reports it with `POST /api/study/saved`; the server writes at most once a minute per session and a user has one marker per browser.
+- **Reminders** start 3 hours after the last save and repeat every 3 hours, at most 3 times; one that quiet hours held is followed 3 hours after its release, so they never merge; a timed exam whose time is up gets none; every save restarts the schedule.
+- **The marker goes away** after a successful `POST /api/attempt` for that session, on discard (`POST /api/study/saved/discard`), when an attempt with the same key exists, and 14 days after the last save.
+
+### 4.14 The `user_settings` keys
+| Key | Value | Default | **Reset to defaults** | Since |
+|---|---|---|---|---|
+| `theme` | `system`, `light`, `dark` | `system` | resets | v0.6 |
+| `uiLang` | `en`, `zh`, `ja` | `en` | resets | v0.6 |
+| `autoAdvance` | boolean | `false` | resets | v0.6 |
+| `questionLang` | `ja`, `zh`, `en` | `en` (`ja` before v2.6) | keeps | before v2.6 |
+| `answerFx` | boolean | `true` | resets | v3.0 |
+| `push` | boolean: notifications for this account | `true` | keeps | v3.1 |
+| `tz` | `auto` or an IANA zone name (at most 64 characters) | `auto` | keeps | v3.1 |
+
+A missing `push` row means **on**: every server-side filter asks "not `false`", never "`true`". `tz` is set in Profile, `push` in Settings. The answer of `GET /api/settings` lists the seven keys in this order.
+
+### 4.15 The `meta` and `system_settings` keys
+- **`meta`** holds database-level marks and is written only when a value changes, so an idle file stays byte-identical: `schema` (the schema number), `legacy_migrated`, `users_known` and `banks_known` (section 6.6), and since v3.1 `app_version` (the highest version already announced by a push), `push_imports_seen` and `push_banks_seen` (the highest `imports.id` and `banks.id` already announced).
+- **`system_settings`** holds the site-wide switches: `activity.retention_days` (default 90, 7 to 3650), `activity.user_visits` (`0` or `1`, default `0`), `users.signin_info` (`0` or `1`, default `0`: the eye) and `geo.source` (`cloudflare`, default, or `api`). `updated_by` is a user id kept for audit only, without a foreign key.
+
+### 4.16 Delete orders (child rows first)
+Every foreign key is `ON DELETE NO ACTION`, so each delete runs in one transaction, children before parents:
+
+| Operation | Order |
+|---|---|
+| Delete a user | `user_banks`, then the push rows of the user (outbox of their subscriptions, the subscriptions, `saved_sessions`), `sessions`, `devices`, the study rows (`attempt_items`, `attempts`), `user_stats`, `user_settings`, and the user |
+| Sign a device out | the device's `sessions`, its push subscription (outbox first), then `signed_out_at` is set |
+| Sign out every device of a user | the user's `sessions`, then for every device its push subscription (outbox first) and `signed_out_at` |
+| Delete a device (30 days unused, no session) | its push subscription (outbox first), its `saved_sessions`, the `devices` row |
+| Delete a push subscription | its `push_outbox` rows, then the subscription |
+| Delete a category | its banks become uncategorised and appended to the uncategorised group, the groups are renumbered, then the `bank_categories` row |
+| Delete a bank | unchanged (section 4.2); `push_outbox` has no foreign key to `banks`: a queued bank message for a deleted bank is dropped when it would be sent |
+
+### 4.17 Who sees which bank (v0.7)
+- **Administrators** see and manage every bank.
+- **Plain users** see exactly the banks listed for them in `user_banks` (the existing banks an administrator ticked). `users.new_banks = 1` (**Include banks imported later**) only adds rows: whenever a bank is created (an import as a new bank, by anyone, or the command-line `import` creating the legacy bank), every user with the flag gets a row for it in the same transaction. It never adds an existing bank, and unticking a bank removes only that row. A new user starts with no row and the flag off. Every user that existed at the v4 migration got a row for every existing bank and the flag, so nobody lost a bank at the upgrade.
+- **Bank managers** (`users.can_manage_banks = 1`) also see the banks they own (`banks.owner_id`) while they have the permission, and may update and delete only those. A bank imported as a new bank belongs to the user who imported it; banks from before v0.7, and banks created without a signed-in user (the command-line `import`), belong to the first administrator.
+- Deleting a user deletes their sessions, devices (with their push subscriptions and saved-session markers), study records (with their detail), statistics, settings and `user_banks` rows; the banks they own move to the administrator who deletes them. Their AI chats and memories are in the AI database: the AI service removes them at its next reconcile (section 8.3).
 
 ## 5. Backup and restore
 
@@ -487,6 +759,34 @@ Tested in `backend/tests/v26_display_name.rs` (the rule, case-insensitive unique
 
 A v2.5 backend opens a schema-12 file as it is: it treats a newer schema as current, never reads `users.display_name` and leaves the new index alone (its own inserts leave the column `NULL`). So going back needs **no restore**: change the image tags and start. Accounts created under v2.5 meanwhile have no username and are asked for one when v2.6 runs again. Restoring `backups/xexam-schema11-….db` also works and gives back the exact state from before the upgrade, but it throws away everything written since (records, accounts, usernames).
 
+### 6.21 Schema v13 (v3.1)
+
+The main database moves from schema 12 to **schema 13** once, on the first start of the v3.1 backend, after one backup copy `backups/xexam-schema12-<date-time>.db` (a file with no data gets no backup; from an older schema the upgrade goes straight to 13 with the one backup of that older schema, and the earlier steps run first in the same transaction). The step is additive and runs in this order inside the one transaction:
+
+1. the table `bank_categories`;
+2. the columns `banks.category_id` (a foreign key to `bank_categories(id)`, NULL = uncategorised) and `banks.sort` (default 0 = not placed yet), and the index `idx_banks_category (category_id, sort)`;
+3. the table `devices` (unique `(user_id, cookie_hash)`), the column `sessions.device_id` (a foreign key to `devices(id)`, NULL) and the index `idx_sessions_device`;
+4. the tables `push_subscriptions`, `saved_sessions` and `push_outbox` with their indexes (`idx_saved_sessions_device`, `idx_push_outbox_sub`, and the partial `idx_push_outbox_due ON push_outbox(next_at) WHERE state IN ('queued', 'leased')`);
+5. the index `idx_questions_sheet` is dropped: no query filters on `sheet` without `bank_id`, and `idx_questions_layout (bank_id, sheet, active, seq)` serves every sheet filter;
+6. `meta.schema` becomes `13`.
+
+No row is changed: every bank gets `category_id` NULL and `sort` 0, every session `device_id` NULL. On every later open of a schema-13 file the start-up check drops `idx_questions_sheet` again if a v1.9 binary re-created it; an up-to-date file stays byte-identical (tested). The log row is `system.migrate` with `{"from": 12, "to": 13}` (one row, written with the time of the store's clock, only when the file held data; `"to": 13` also when upgrading from an older schema), and the log says `Upgraded the database to schema 13. A copy of the previous version was saved first: <path> …`. Like every upgrade it runs in one transaction; any surprise leaves the file at schema 12 with the backup written. The new settings keys `push` and `tz` and the `meta` marks need no migration (sections 4.14 and 4.15).
+
+Tested in `backend/tests/v31_migrate.rs` (a fresh schema-13 file equals an upgraded schema-12 file down to the stored SQL; the backup and the log row; a second open is byte-identical; a newer schema number opens unchanged; the dropped index is dropped again; the plan of the sheet query; the delete orders of 4.16), `backend/tests/db_golden.rs` (the list of 56 schema objects), `backend/tests/v20_db.rs` (every older schema now ends at 13, 17 foreign keys) and `tests/integration/migrate_check.py` (the upgrade from every older shape, in CI).
+
+### 6.22 Going back to v3.0
+
+A v3.0 backend opens a schema-13 file as it is: it treats a newer schema as current, ignores the new tables and columns (its inserts leave them at their defaults, and the sessions it creates have `device_id` NULL), creates banks without a category and ignores the settings keys `push` and `tz`. So going back needs **no restore**: change the image tags and start.
+
+What fails afterwards is deleting a user who has rows in `devices`, `push_subscriptions` or `saved_sessions`: v3.0 does not know those tables, so it does not delete them first and the foreign key refuses (`FOREIGN KEY constraint failed`; the transaction rolls back and nothing is lost). Run this once (with the backend stopped, or with `sqlite3` while it runs), then delete again:
+
+```sql
+DELETE FROM push_outbox; DELETE FROM push_subscriptions; DELETE FROM saved_sessions;
+UPDATE sessions SET device_id = NULL; DELETE FROM devices;
+```
+
+Restoring `backups/xexam-schema12-….db` also works and gives back the exact state from before the upgrade, but it throws away everything written since. Upgrading to v3.1 again is a normal open (the file is already schema 13): devices register again at their next request and phones subscribe again at their next app open. The AI database is not touched by any of this.
+
 ## 7. The old `progress.json`
 
 Earlier versions kept scores in `progress.json`. As in the old Python version, **on every startup** the app checks whether the data directory contains it: if it does, and the database has no study records yet and has not been migrated before, it is migrated into the database (into the records of the first administrator). The `legacy_migrated` flag in `meta` guarantees it is migrated only once, and existing study records are never overwritten.
@@ -518,33 +818,14 @@ ai-service keeps everything of AI in its **own** SQLite database, which only it 
 
 Like the main database: `busy_timeout` 5000 ms, `foreign_keys=ON` (here the schema does use foreign keys, see below), `synchronous=FULL`, WAL mode (`XEXAM_AI_SQLITE_JOURNAL=delete` keeps the rollback journal, with the same rules as 2.1), and in addition **`secure_delete=ON`**. One connection behind a mutex, every write in `BEGIN IMMEDIATE … COMMIT`, the lock never held across an `.await`. The start-up log says `AI database: /data/xexam-ai.db (journal: wal)`.
 
-### 8.2 Core tables (the v0.8 set; the full schema 11 map is in section 9.2)
+### 8.2 Tables of the AI database (schema 11)
+
+Nineteen tables in three diagrams, every column as stored (the same rules as in section 3: `PK`, `FK`, `UK`; solid lines are foreign keys, dotted lines soft links without a foreign key). The foreign keys of the AI database use `CASCADE` and `SET NULL` as listed in 9.2. The relations of the whole AI database on one page are in 9.2.
+
+**Chats & study** (identity, conversations, memories, the latest study assessment, shared answers)
 
 ```mermaid
 erDiagram
-    settings {
-        INTEGER id PK "always 1"
-        INTEGER enabled "the AI+ feature switch"
-        INTEGER retention_days "1-3650, default 90"
-        INTEGER updated_at "unix seconds"
-        TEXT updated_by "username of the administrator"
-        INTEGER features_off "global feature switch bits"
-    }
-    limits {
-        INTEGER id PK "always 1"
-        INTEGER per_user_running "1-4, default 1"
-        INTEGER global_running "1-64, default 16"
-        INTEGER chats_per_user "10-100000, default 1000"
-        INTEGER messages_per_chat "20-5000, default 400"
-        INTEGER memories_per_user "1-1000, default 50"
-        INTEGER memory_tokens "50-250000, default 1000 (v1.1; a value still at 200 became 1000, any other value was multiplied by 1.5 once, at the upgrade to schema 6)"
-        INTEGER calls_per_minute "1-100, default 5 (v1.0)"
-        INTEGER calls_per_hour "1-2000, default 20 (v1.0)"
-        INTEGER calls_per_day "1-20000, default 100 (v1.0)"
-        INTEGER reply_max_tokens "1-250000, default 3000: the answer length in tokens (v1.1)"
-        INTEGER updated_at "unix seconds"
-        TEXT updated_by "username"
-    }
     users {
         INTEGER id PK "users.id of the main database"
         TEXT stamp "users.uid of the main database"
@@ -553,6 +834,7 @@ erDiagram
         INTEGER last_seen_at "unix seconds"
         INTEGER function_enabled "1 = active, 0 = paused (v2)"
         INTEGER free_mode "1 = the administrator's free mode is on (v2)"
+        INTEGER features_off
     }
     chats {
         INTEGER id PK "auto-increment"
@@ -563,6 +845,10 @@ erDiagram
         TEXT kind "chat · practice · exam · summary (v3)"
         TEXT ref "the session key, or rID@time for a record (NULL for chat) (v3)"
         INTEGER record_id "the main-app record, display only (v3)"
+        INTEGER leaf_id
+        INTEGER pick_conn
+        TEXT pick_model
+        TEXT pick_effort
     }
     messages {
         INTEGER id PK "auto-increment"
@@ -584,6 +870,8 @@ erDiagram
         INTEGER sample_used "summary: wrong answers sent (v3)"
         INTEGER sample_usable "summary: wrong answers still available (v3)"
         INTEGER sample_wrong "summary: wrong answers in the record (v3)"
+        INTEGER parent_id
+        TEXT connection
         TEXT reasoning "AI Chat answers: the model's thinking, trimmed, at most 32 KiB, NULL = none (v7)"
         INTEGER reasoning_ms "ms from the first reasoning to the first answer text, NULL = none (v7)"
         INTEGER reasoning_truncated "1 = cut at the cap (v7)"
@@ -596,11 +884,232 @@ erDiagram
         INTEGER created_at "unix seconds"
         INTEGER updated_at "unix seconds"
     }
+    assess_latest {
+        INTEGER user_id PK,FK
+        TEXT content
+        TEXT lang
+        TEXT model
+        TEXT latest_at
+        INTEGER records
+        INTEGER answered
+        TEXT day
+        INTEGER created_at
+        INTEGER runs
+    }
+    study_shared {
+        INTEGER id PK
+        TEXT question_id
+        TEXT content_hash
+        TEXT kind
+        TEXT lang
+        TEXT content
+        TEXT model
+        TEXT connection
+        INTEGER tokens_in
+        INTEGER tokens_out
+        INTEGER gen
+        INTEGER hits
+        INTEGER created_at
+        INTEGER updated_at
+        INTEGER last_hit_at
+    }
+    users ||--o{ chats : "user_id"
+    users ||--o| assess_latest : "user_id"
+    users ||--o{ memories : "user_id"
+    chats ||--o{ messages : "chat_id"
+    messages |o..o{ messages : "parent_id (soft, no foreign key)"
+    chats |o..o| messages : "leaf_id (soft, no foreign key)"
+    connections |o..o{ chats : "pick_conn (soft, no foreign key)"
+```
+
+**Connections & models** (connections, sealed keys, the model pool and its slots, and the single-row settings, limits and location lookup)
+
+```mermaid
+erDiagram
+    connections {
+        INTEGER id PK
+        TEXT name UK
+        TEXT provider
+        TEXT base_url
+        TEXT format
+        TEXT gateway_auth
+        TEXT status
+        TEXT error_code
+        INTEGER lists_models
+        INTEGER tested_at
+        INTEGER rev
+        INTEGER sort
+        INTEGER created_at
+        INTEGER updated_at
+        TEXT updated_by
+        INTEGER responses
+        INTEGER enabled
+        TEXT effort_family
+    }
+    connection_secrets {
+        INTEGER connection_id PK,FK
+        TEXT name PK
+        TEXT key_id
+        BLOB nonce
+        BLOB ciphertext
+        TEXT hint
+        INTEGER rev
+        INTEGER aad_ver
+        INTEGER updated_at
+    }
+    models {
+        INTEGER id PK
+        INTEGER connection_id FK
+        TEXT model
+        INTEGER manual
+        TEXT status
+        TEXT error_code
+        INTEGER usage_option
+        INTEGER max_tokens
+        INTEGER context
+        INTEGER latency_ms
+        INTEGER tested_at
+    }
+    model_slots {
+        TEXT slot PK
+        INTEGER model_id FK
+        INTEGER updated_at
+        TEXT updated_by
+        TEXT effort
+    }
+    settings {
+        INTEGER id PK "always 1"
+        INTEGER enabled "the AI+ feature switch"
+        INTEGER retention_days "1-3650, default 90"
+        INTEGER updated_at "unix seconds"
+        TEXT updated_by "username of the administrator"
+        INTEGER features_off "global feature switch bits"
+    }
+    limits {
+        INTEGER id PK "always 1"
+        INTEGER per_user_running "1-4, default 1"
+        INTEGER global_running "1-64, default 16"
+        INTEGER chats_per_user "10-100000, default 1000"
+        INTEGER messages_per_chat "20-5000, default 400"
+        INTEGER memories_per_user "1-1000, default 50"
+        INTEGER updated_at "unix seconds"
+        TEXT updated_by "username"
+        INTEGER calls_per_minute "1-100, default 5 (v1.0)"
+        INTEGER calls_per_hour "1-2000, default 20 (v1.0)"
+        INTEGER calls_per_day "1-20000, default 100 (v1.0)"
+        INTEGER gen_per_day
+        INTEGER gen_admins_exempt
+        INTEGER gen_min_source
+        INTEGER gen_min_wrong
+        INTEGER gen_bank_single
+        INTEGER gen_bank_multi
+        INTEGER gen_wrong_single
+        INTEGER gen_wrong_multi
+        INTEGER gen_max_calls
+        INTEGER import_max_calls
+        INTEGER recognize_max_calls
+        INTEGER gen_unlimited
+        INTEGER import_unlimited
+        INTEGER gen_running
+        INTEGER import_max_mb
+        INTEGER reply_max_tokens "1-250000, default 3000: the answer length in tokens (v1.1)"
+        INTEGER gen_call_tokens
+        INTEGER memory_tokens "50-250000, default 1000 (v1.1; a value still at 200 became 1000, any other value was multiplied by 1.5 once, at the upgrade to schema 6)"
+        INTEGER calls_admins_exempt
+        INTEGER study_share
+        INTEGER study_share_days
+        INTEGER gen_max_chunks
+        INTEGER summary_max_items
+        INTEGER import_file_questions
+        INTEGER daily_token_budget
+        INTEGER pace_on
+        INTEGER pace_rpm
+        INTEGER pace_tpm
+        INTEGER assess_per_day
+        INTEGER assess_admins_exempt
+    }
+    geo_settings {
+        INTEGER id PK
+        TEXT preset
+        TEXT url_template
+        TEXT key_header_name
+        TEXT key_header_value
+        TEXT map_country
+        TEXT map_country_code
+        TEXT map_region
+        TEXT map_city
+        TEXT ok_path
+        TEXT ok_value
+        TEXT error_path
+        TEXT message_path
+        TEXT key_id
+        BLOB key_nonce
+        BLOB key_ciphertext
+        TEXT key_hint
+        INTEGER tested_at
+        INTEGER updated_at
+        INTEGER updated_by
+    }
+    connections ||--o{ connection_secrets : "connection_id"
+    connections ||--o{ models : "connection_id"
+    models |o--o{ model_slots : "model_id"
+```
+
+**Jobs & metering** (generation and import jobs, model-call usage, the audit queue and the database marks)
+
+```mermaid
+erDiagram
     tasks {
-        INTEGER id PK "structure only in v0.8"
+        INTEGER id PK "Auto-increment"
         INTEGER user_id FK "users.id, ON DELETE CASCADE; NULL = instance"
         TEXT kind
         TEXT state "queued · running · done · failed · cancelled"
+        TEXT payload
+        TEXT result
+        TEXT error_code
+        INTEGER attempts
+        INTEGER run_after
+        INTEGER created_at
+        INTEGER updated_at
+        TEXT job_key UK
+        INTEGER goal
+        INTEGER made
+        TEXT phase
+        INTEGER charged
+        INTEGER seen
+        INTEGER started_at
+        INTEGER finished_at
+        INTEGER charged_at
+    }
+    gen_items {
+        INTEGER task_id PK,FK
+        INTEGER no PK
+        INTEGER slot
+        TEXT data
+        INTEGER at
+    }
+    gen_calls {
+        INTEGER id PK
+        INTEGER task_id FK
+        INTEGER user_id FK
+        TEXT purpose
+        INTEGER at
+        TEXT day
+        TEXT provider
+        TEXT model
+        INTEGER tokens_in
+        INTEGER tokens_out
+        INTEGER tokens_cached
+        INTEGER latency_ms
+        INTEGER first_byte_ms
+        TEXT status
+        TEXT error_code
+        INTEGER asked
+        INTEGER accepted
+        INTEGER truncated
+        INTEGER tokens_cache_write
+        INTEGER connection_id
+        TEXT connection
     }
     usage {
         INTEGER id PK "auto-increment"
@@ -612,12 +1121,16 @@ erDiagram
         TEXT model "'' for model lists"
         INTEGER tokens_in "NULL = not reported"
         INTEGER tokens_out "NULL = not reported"
-        TEXT purpose "hint · explain · summary, NULL = AI Chat or a call without a chat (v3)"
-        INTEGER tokens_cached "input tokens served from the prompt cache, NULL = not reported (v2)"
         INTEGER latency_ms "request to last byte"
         INTEGER first_byte_ms "request to first text (chat)"
         TEXT status "ok · stopped · error"
         TEXT error_code "ai.up.* code without the prefix"
+        INTEGER tokens_cached "input tokens served from the prompt cache, NULL = not reported (v2)"
+        TEXT purpose "hint · explain · summary, NULL = AI Chat or a call without a chat (v3)"
+        INTEGER tokens_cache_write
+        INTEGER connection_id
+        TEXT connection
+        INTEGER assess
     }
     audit_outbox {
         INTEGER id PK "auto-increment"
@@ -625,14 +1138,16 @@ erDiagram
         TEXT message "an audit line, no content"
     }
     meta {
-        TEXT key PK "schema = 3"
+        TEXT key PK "schema = 11, plus one-time flags"
         TEXT value
     }
-    users ||--o{ chats : "chats.user_id"
-    chats ||--o{ messages : "messages.chat_id"
-    users ||--o{ memories : "memories.user_id"
-    users |o--o{ tasks : "tasks.user_id"
-    users |o--o{ usage : "usage.user_id"
+    users |o--o{ tasks : "user_id"
+    tasks ||--o{ gen_items : "task_id"
+    tasks |o--o{ gen_calls : "task_id"
+    users |o--o{ gen_calls : "user_id"
+    users |o--o{ usage : "user_id"
+    connections |o..o{ usage : "connection_id (soft, no foreign key)"
+    connections |o..o{ gen_calls : "connection_id (soft, no foreign key)"
 ```
 
 - **`settings`** (one row) holds the AI+ feature switch `enabled`, `retention_days`, `features_off` (the global feature switch bits) and who changed it when. It never holds a secret or a connection: those live in `connections` and `connection_secrets` (section 11 of [security.md](security.md)); `key_id` of a sealed key tells which encryption key sealed it. **`limits`** (one row) holds the safety limits of AI settings, each with a `CHECK` of its range; changing them never switches AI off.
@@ -769,7 +1284,7 @@ The AI database stays at **schema 11**; v2.6 only adds, on every start, with `IF
 
 ### 8.3 What the service does with it
 
-- **Opening**: the tables are created (`IF NOT EXISTS`), the `settings` and `limits` rows are added with their defaults, and `meta.schema` is set to `4` on a new database. A database with `meta.schema` `1`, `2` or `3` is upgraded (see Migrations below). A database written by a newer ai-service (`meta.schema` above `4`) is refused: the service logs one line and does not start, so an older image never opens a newer file. Answers left `streaming` by a crash or a kill are marked `error` with the code `ai.interrupted` (only when there are any; `idx_messages_streaming` finds them).
+- **Opening**: the tables are created (`IF NOT EXISTS`), the `settings` and `limits` rows are added with their defaults, and `meta.schema` is set to `11` on a new database. A database with `meta.schema` from `1` to `10` is upgraded (see Migrations below and 8.2a–8.2h). A database written by a newer ai-service (`meta.schema` above `11`) is refused: the service logs one line and does not start, so an older image never opens a newer file. Answers left `streaming` by a crash or a kill are marked `error` with the code `ai.interrupted` (only when there are any; `idx_messages_streaming` finds them).
 - **Retention**: 60 seconds after the start and then every hour, chats whose last message is older than the retention days are deleted (not one whose answer is being written), with their messages, study chats like any other. The sweep deletes **20 chats per transaction** with a 20 ms pause after every full batch, on a blocking thread, so a large clean-up (the retention lowered, or the service stopped for a long time) never holds the database locked for long and the answers being written keep saving; one log line gives the total. A user's delete of all their chats, an administrator's clear and the removal of a deleted user's data still delete in one transaction. Memories are not subject to retention.
 - **Reconcile** with the main app: at start (retried every 30 seconds until it works), every 10 minutes and when an administrator opens **Users with AI+**, the service asks the backend which of its user ids still exist, with which stamp and whether they hold the AI+ grant. The data of an id that is gone, or that now has another stamp (a user id reused after the main database was restored), is deleted after any answer of that user was stopped. The same happens at once when a request arrives with such an identity.
 - **Deleted content**: with `secure_delete=ON` freed pages are overwritten, and after every delete of user content the service runs `PRAGMA wal_checkpoint(TRUNCATE)` (at most once every 10 seconds) so that the old pages do not remain in `xexam-ai.db-wal`. Backups and volume snapshots still have what was deleted.
@@ -796,184 +1311,66 @@ Restore it like the main volume: stop, remove `xexam-ai.db-wal` and `xexam-ai.db
 - A restored AI volume and a main volume from another point in time fit together: users that no longer exist lose their AI data at the next reconcile, and a user id that now belongs to another account is recognised by its stamp.
 - `xexam_ai_auth` needs no backup: it holds only `internal.token`, which the backend creates again when it is missing (the AI service picks up the new token by itself).
 
-## 9. Schema map of both databases (v2.1)
+## 9. Schema map of both databases (v3.1)
 
-A reading guide: which tables exist, what each is for, and how they relate. It describes the main database at schema 11 and the AI database at schema 11; table and column names are exactly as stored. Nothing here changes a table.
+A reading guide: which tables exist, what each is for, and how they relate. It describes the main database at schema 13 and the AI database at schema 11; table and column names are exactly as stored. Section 3 and section 8.2 draw every column; this section draws only the relations of each database on one page. Nothing here changes a table.
 
 ### 9.1 Main database `xexam.db` (backend)
 
 | Area | Tables | Note |
 |---|---|---|
-| Question banks | `banks`, `questions`, `imports` | A bank is one imported workbook; a question that leaves a workbook is retired (`active = 0`), not deleted |
-| Study records and the wrong-answer notebook | `attempts`, `attempt_items`, `user_stats` | `attempts` is what the app calls a study record (exam or practice) |
-| Users and access | `users`, `sessions`, `user_banks`, `user_settings` | |
+| Question banks | `bank_categories` (v3.1), `banks`, `questions`, `imports` | A bank is one imported workbook; a question that leaves a workbook is retired (`active = 0`), not deleted; a bank belongs to at most one category |
+| Study records and the wrong-answer notebook | `attempts`, `attempt_items`, `user_stats`, `saved_sessions` (v3.1) | `attempts` is what the app calls a study record (exam or practice); `saved_sessions` marks an unfinished one |
+| Users and access | `users`, `sessions`, `devices` (v3.1), `user_banks`, `user_settings` | A session belongs to a device, a device to a user |
+| Notifications | `push_subscriptions`, `push_outbox` (v3.1) | users → devices → subscriptions → outbox |
 | System | `meta`, `system_settings`, `activity_log` | |
 
-Since schema 11 the main database declares foreign keys, all `ON DELETE NO ACTION`, shown as solid lines (a delete that would leave a child row behind fails; the code deletes child rows first, as before). Dotted lines are relations kept without a foreign key on purpose (see the notes of `attempt_items`, `user_stats`, `system_settings` and `activity_log`).
+Since schema 11 the main database declares foreign keys, all `ON DELETE NO ACTION`, shown as solid lines (a delete that would leave a child row behind fails; the code deletes child rows first, as before: section 4.16). Dotted lines are relations kept without a foreign key on purpose (see the notes of `attempt_items`, `user_stats`, `system_settings`, `activity_log` and `saved_sessions`). Every column of every table is in section 3.
 
 ```mermaid
 erDiagram
   users ||--o{ sessions : "user_id"
-  users |o--o{ attempts : "user_id (NULL = unclaimed old record)"
+  users ||--o{ devices : "user_id"
+  devices |o--o{ sessions : "device_id"
+  devices ||--o| push_subscriptions : "device_id"
+  push_subscriptions ||--o{ push_outbox : "subscription_id"
+  users |o--o{ attempts : "user_id"
   users ||--o{ user_stats : "user_id"
   users ||--o{ user_settings : "user_id"
   users ||--o{ user_banks : "user_id"
+  users ||--o{ saved_sessions : "user_id"
+  devices |o--o{ saved_sessions : "device_id"
   users |o--o{ banks : "owner_id"
-  users |o..o{ system_settings : "updated_by (no FK)"
-  users |o..o{ activity_log : "user_id (snapshot, not linked)"
+  bank_categories |o--o{ banks : "category_id"
   banks ||--o{ user_banks : "bank_id"
   banks |o--o{ questions : "bank_id"
   banks |o--o{ imports : "bank_id"
   attempts ||--o{ attempt_items : "attempt_id"
-  questions |o..o{ attempt_items : "question_id (soft)"
-  questions |o..o{ user_stats : "question_id (soft)"
-
-  users {
-    int id PK
-    text username UK
-    text password_hash
-    text role
-    int disabled
-    int must_change_password
-    int new_banks
-    int can_manage_banks
-    int can_download_banks
-    int ai_enabled
-    text uid
-    text display_name
-    text created_at
-    text last_login_at
-    text last_active_at
-  }
-  sessions {
-    text token_hash PK
-    int user_id
-    int started_at
-    int last_seen_at
-    int expires_at
-    int remember
-    text ip
-    text ua
-  }
-  banks {
-    int id PK
-    text name
-    text filename
-    int legacy_ids
-    int owner_id
-    text ai_job UK
-    text ai_meta
-    text created_at
-    text updated_at
-  }
-  questions {
-    text id PK
-    int bank_id
-    text sheet
-    int row_no
-    int seq
-    text data
-    int active
-    text added_at
-    text updated_at
-  }
-  imports {
-    int id PK
-    int bank_id
-    text at
-    text filename
-    int added
-    int updated
-    int removed
-    int restored
-    int skipped
-    int total
-  }
-  attempts {
-    int id PK
-    int user_id
-    text kind
-    text mode
-    text at
-    text sheets
-    text banks
-    int total
-    int correct
-    int percent
-    int seconds
-    text session_key
-    int started_at
-    int time_limit
-    text ended
-  }
-  attempt_items {
-    int attempt_id PK
-    int seq PK
-    text question_id
-    text answer
-    int correct
-  }
-  user_stats {
-    int user_id PK
-    text question_id PK
-    int attempts
-    int correct
-    int wrong
-    int streak
-    int last
-    text at
-  }
-  user_settings {
-    int user_id PK
-    text key PK
-    text value
-  }
-  user_banks {
-    int user_id PK
-    int bank_id PK
-  }
-  system_settings {
-    text key PK
-    text value
-    text updated_at
-    int updated_by
-  }
-  activity_log {
-    int id PK
-    int ts
-    int last_ts
-    int count
-    text actor
-    int user_id
-    text username
-    text role
-    text action
-    text object
-    text detail
-    text result
-    text reason
-    text source
-    text src_id UK
-  }
-  meta {
-    text key PK
-    text value
-  }
+  attempts |o..o{ saved_sessions : "session_key (soft, no foreign key)"
+  questions |o..o{ attempt_items : "question_id (soft, no foreign key)"
+  questions |o..o{ user_stats : "question_id (soft, no foreign key)"
+  users |o..o{ system_settings : "updated_by (soft, no foreign key)"
+  users |o..o{ activity_log : "user_id (soft, no foreign key)"
 ```
 
 | Table | Purpose | Key and links | Notes |
 |---|---|---|---|
 | `meta` | Database-level key/value: `schema`, `banks_known`, `users_known`, `legacy_migrated` | PK `key` | |
-| `banks` | Question banks, including the job key and facts of AI-generated banks | PK `id`; `owner_id` to `users` (nullable) | `ai_job` is a partial unique index; `idx_banks_owner` |
-| `questions` | One row per question; the whole question (all languages) is JSON in `data` | PK `id` (text); `bank_id` to `banks` (nullable) | Indexes by sheet, bank and layout (`idx_questions_sheet` is kept as it was) |
+| `bank_categories` | Question bank categories, one level (v3.1) | PK `id`; `name` unique, case-insensitive | Edited by administrators only; `sort` is the order among the categories |
+| `banks` | Question banks, including the job key and facts of AI-generated banks and, since v3.1, the category and the position in it | PK `id`; `owner_id` to `users` (nullable); `category_id` to `bank_categories` (nullable) | `ai_job` is a partial unique index; `idx_banks_owner`, `idx_banks_category (category_id, sort)`; `sort` 0 = not placed yet |
+| `questions` | One row per question; the whole question (all languages) is JSON in `data` | PK `id` (text); `bank_id` to `banks` (nullable) | Indexes by bank and by layout (bank, sheet, active, seq); `idx_questions_sheet` was dropped in schema 13 |
 | `imports` | Result counts of each Excel import | PK `id`; `bank_id` to `banks` (nullable) | `idx_imports_bank` since schema 11 |
 | `attempts` | Study records: one row per exam or practice session | PK `id`; `user_id` to `users` (NULL = unclaimed old record) | `sheets` and `banks` are JSON snapshots on purpose; `mode` has no `CHECK` (old records may hold any JSON) |
 | `attempt_items` | The answer to each question of a record | PK `(attempt_id, seq)`; `attempt_id` to `attempts`; `question_id` to `questions` (soft, **no foreign key**) | A record may outlive its question, and legacy banks use unscoped ids |
 | `user_stats` | Per user and question: attempts, correct, wrong, streak (wrong-answer notebook) | PK `(user_id, question_id)`; `user_id` to `users`; `question_id` soft, **no foreign key** | `idx_user_stats_question` since schema 11 (deleting a bank looks rows up by question) |
-| `users` | Accounts, role, permissions, AI+ switch, identity stamp `uid`, last sign-in and last activity (IP, place, user agent) | PK `id`; `username` unique, case-insensitive | Mixes account data with sign-in telemetry; `uid` is unique among non-empty values (`idx_users_uid`) |
-| `sessions` | Sign-in sessions | PK `token_hash`; `user_id` to `users` | Times are unix seconds |
+| `saved_sessions` | The marker of an unfinished practice or exam of a browser, and its reminder schedule (v3.1) | PK `(user_id, session_key)`; `user_id` to `users`; `device_id` to `devices` (nullable) | `session_key` is the key that `attempts.session_key` gets later: a soft link, no foreign key |
+| `users` | Accounts, role, permissions, AI+ switch, identity stamp `uid`, display name, last sign-in and last activity (IP, place, user agent) | PK `id`; `username` unique, case-insensitive | Mixes account data with sign-in telemetry; `uid` is unique among non-empty values (`idx_users_uid`), `display_name` among set names (`idx_users_display_name`) |
+| `sessions` | Sign-in sessions | PK `token_hash`; `user_id` to `users`; `device_id` to `devices` (nullable, v3.1) | Times are unix seconds; NULL `device_id` = made before v3.1, linked at its next request |
+| `devices` | One row per browser per user: its random cookie as a hash, sign-in and last-activity facts, app flag, time zone, sign-out time (v3.1) | PK `id`; unique `(user_id, cookie_hash)`; `user_id` to `users` | IP and place follow the sign-in info eye; sessions and push subscriptions hang on a device |
 | `user_banks` | Which banks a plain user sees | PK `(user_id, bank_id)` | |
 | `user_settings` | Per-user interface settings (JSON values) | PK `(user_id, key)` | |
+| `push_subscriptions` | The web-push subscription of a device: address, browser keys, the server key it was made for, health counters (v3.1) | PK `id`; `device_id` unique, to `devices`; `endpoint` unique | At most one per device; the endpoint moves to the device that confirms it last |
+| `push_outbox` | The push queue and 7-day delivery log (v3.1) | PK `id`; `subscription_id` to `push_subscriptions` | `idx_push_outbox_due` is partial (`queued` and `leased` rows); the payload is language-neutral JSON |
 | `system_settings` | Site-wide switches (activity retention, visits, sign-in info, location source) | PK `key`; `updated_by` is a user id, **no foreign key** | A write-only audit field; a link would block deleting an administrator who once changed a site switch |
 | `activity_log` | Activity history, including the rows ai-service forwards | PK `id`; `src_id` partial unique (de-duplication) | `username` and `role` are snapshots, so the log stays readable after a user is deleted |
 
@@ -1000,232 +1397,16 @@ erDiagram
   users |o--o{ usage : "SET NULL"
   users |o--o{ gen_calls : "SET NULL"
   chats ||--o{ messages : "CASCADE"
-  messages |o..o{ messages : "parent_id (no FK)"
-  chats |o..o| messages : "leaf_id (no FK)"
-  connections |o..o{ chats : "pick_conn (no FK)"
+  messages |o..o{ messages : "parent_id (soft, no foreign key)"
+  chats |o..o| messages : "leaf_id (soft, no foreign key)"
+  connections |o..o{ chats : "pick_conn (soft, no foreign key)"
   tasks ||--o{ gen_items : "CASCADE"
   tasks |o--o{ gen_calls : "SET NULL"
   connections ||--o{ connection_secrets : "CASCADE"
   connections ||--o{ models : "CASCADE"
   models |o--o{ model_slots : "SET NULL"
-  connections |o..o{ usage : "connection_id (no FK)"
-  connections |o..o{ gen_calls : "connection_id (no FK)"
-
-  users {
-    int id PK
-    text stamp
-    text username
-    int function_enabled
-    int free_mode
-    int features_off
-    int first_seen_at
-    int last_seen_at
-  }
-  chats {
-    int id PK
-    int user_id FK
-    text kind
-    text ref UK
-    int record_id
-    text title
-    int leaf_id
-    int pick_conn
-    text pick_model
-    int created_at
-    int updated_at
-  }
-  messages {
-    int id PK
-    int chat_id FK
-    int parent_id
-    text role
-    text kind
-    text content
-    text status
-    text error_code
-    int truncated
-    int free
-    text model
-    text connection
-    text question_id
-    int question_no
-    text source
-    text lang
-    text reasoning
-    int reasoning_ms
-    int reasoning_truncated
-    int created_at
-    int finished_at
-  }
-  memories {
-    int id PK
-    int user_id FK
-    text content
-    text source
-    int created_at
-    int updated_at
-  }
-  tasks {
-    int id PK
-    int user_id FK
-    text kind
-    text state
-    text payload
-    text result
-    text error_code
-    int attempts
-    int run_after
-    text job_key UK
-    int goal
-    int made
-    text phase
-    int charged
-    int seen
-    int created_at
-    int updated_at
-  }
-  gen_items {
-    int task_id PK
-    int no PK
-    int slot
-    text data
-    int at
-  }
-  gen_calls {
-    int id PK
-    int task_id FK
-    int user_id FK
-    text purpose
-    int at
-    text day
-    text provider
-    text model
-    int connection_id
-    text connection
-    int tokens_in
-    int tokens_out
-    int latency_ms
-    text status
-    text error_code
-    int asked
-    int accepted
-    int truncated
-  }
-  usage {
-    int id PK
-    int user_id FK
-    int at
-    text day
-    text kind
-    text purpose
-    text provider
-    text model
-    int connection_id
-    text connection
-    int tokens_in
-    int tokens_out
-    int latency_ms
-    text status
-    text error_code
-  }
-  connections {
-    int id PK
-    text name UK
-    text provider
-    text base_url
-    text format
-    int responses
-    int enabled
-    text gateway_auth
-    text status
-    text error_code
-    int lists_models
-    int tested_at
-    int rev
-    int sort
-  }
-  connection_secrets {
-    int connection_id PK
-    text name PK
-    text key_id
-    blob nonce
-    blob ciphertext
-    text hint
-    int rev
-    int aad_ver
-  }
-  models {
-    int id PK
-    int connection_id FK
-    text model
-    int manual
-    text status
-    text error_code
-    int usage_option
-    int max_tokens
-    int context
-    int latency_ms
-    int tested_at
-  }
-  model_slots {
-    text slot PK
-    int model_id FK
-    text effort
-    int updated_at
-    text updated_by
-  }
-  assess_latest {
-    int user_id PK
-    text content
-    text lang
-    text model
-    text latest_at
-    int records
-    int answered
-    text day
-    int created_at
-    int runs
-  }
-  study_shared {
-    int id PK
-    text question_id
-    text content_hash
-    text kind
-    text lang
-    text content
-    text model
-    int gen
-    int hits
-    int last_hit_at
-  }
-  settings {
-    int id PK
-    int enabled
-    int retention_days
-    int features_off
-  }
-  limits {
-    int id PK
-    int pace_on
-    int pace_rpm
-    int pace_tpm
-  }
-  geo_settings {
-    int id PK
-    text preset
-    text url_template
-    blob key_ciphertext
-    int updated_by
-  }
-  meta {
-    text key PK
-    text value
-  }
-  audit_outbox {
-    int id PK
-    int at
-    text message
-  }
+  connections |o..o{ usage : "connection_id (soft, no foreign key)"
+  connections |o..o{ gen_calls : "connection_id (soft, no foreign key)"
 ```
 
 | Table | Purpose | Key and links | Notes |
@@ -1258,6 +1439,8 @@ A foreign key cannot cross two files, so these links are kept by identity and by
 |---|---|---|
 | `users.id` + `users.stamp` | `users.id` + `users.uid` | A different stamp means a different person: the AI data is deleted |
 | `chats.ref` | `attempts.session_key` (or `r<recordId>@<at>`) | A lookup key only |
+| — (no AI table) | `push_outbox` | ai-service pulls the queued, already encrypted jobs through `/internal/ai/push/next` and reports each result; it stores nothing and sees no key |
+| `chats.ref` | `saved_sessions.session_key` | The same 32-hex session key names the chat of a practice or exam and marks the unfinished session (lookup keys only) |
 | `chats.record_id` | `attempts.id` | Shown only, never looked up (ids can be reused after a restore) |
 | `messages.question_id`, `study_shared.question_id` | `questions.id` | Soft links; `study_shared.content_hash` guards against a question that changed |
 | `tasks.job_key` | `banks.ai_job` | A partial unique index in the main database gives one bank per job |
@@ -1271,3 +1454,4 @@ A foreign key cannot cross two files, so these links are kept by identity and by
 - Foreign keys of the main database are `ON DELETE NO ACTION`, written out: a parent is deleted only after its children (no `CASCADE`, no `SET NULL`). The AI database uses `CASCADE` and `SET NULL` as listed in 9.2.
 - Existing names and the older text time columns of the main database are kept as they are.
 - **Mismatches kept on purpose** (documented, not changed in v2.0): the main database stores times as text (`YYYY-MM-DD HH:MM:SS`) and the AI database as unix seconds; `updated_by` is a user id in `system_settings` and a username (TEXT) in the AI database; `study_shared.lang` uses `zh` while `messages.lang` uses `zh-CN`; some names are historical (`attempts` is what the app calls a study record, `legacy_ids`, `banks.filename`).
+- New tables of schema 13 follow the same rules: every time column is `INTEGER` unix seconds, every boolean has a `CHECK (… IN (0, 1))`, every enumeration a `CHECK`, and every foreign key is `ON DELETE NO ACTION`, written out.

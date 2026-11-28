@@ -26,6 +26,8 @@ flowchart TB
     B -->|"writes"| L[("volume xexam_ai_auth<br/>/link/internal.token")]
     L -->|"read only"| A
     A -->|"HTTPS, network egress only"| P["AI provider or<br/>Cloudflare AI Gateway"]
+    A -->|"HTTPS (v3.1): the backend's encrypted web-push messages, delivered as they are"| W["Push services of the browser makers<br/>(FCM, Mozilla, Apple, Windows)"]
+    W -.->|"notification"| U
     CF["Cloudflare Tunnel + Access<br/>(set up by the owner)"] -.-> N
 ```
 
@@ -35,6 +37,7 @@ flowchart TB
 - **Limits, from the outside in**: Nginx limits each client address and each AI session (section 9 of [security.md](security.md)); ai-service then limits the running answers per user and the model calls at once for the whole instance, and since v1.0 the per-user request caps (5 a minute, 20 an hour, 100 a day; administrators are exempt by default since v1.3, `callsAdminsExempt`, but still counted in usage; section 5). These limits protect the server and the provider bill; they are not access control.
 - The browser talks to the backend only through REST (see [api.md](api.md)). Every route except `/api/info`, `/api/auth/state` and signing in needs a session. The frontend has no database access and makes no decisions such as "can this import be done" or "may this user see this bank": the backend decides, the frontend only shows.
 - Everything the main app keeps lives in the backend's data directory (`/data` in Docker): the database `xexam.db` (users, questions, study records, settings), while the backend runs its `xexam.db-wal` and `xexam.db-shm` files, and, after an upgrade, the folder `backups/` with the copy written before the schema migration. Everything of AI lives in ai-service's own data directory (`/data` in its container, the volume `xexam_ai_data`): `xexam-ai.db` with its `-wal` / `-shm` files and the key file `secret.key`.
+- **Notifications (v3.1)**: the backend decides *what* to send and *to whom* (the queue, the triggers, the quiet hours, the texts), encrypts every message (RFC 8291) and signs the request (RFC 8292, VAPID); ai-service, the only container with internet access, **pulls** the ready jobs through `/internal/ai/push/next`, posts them to the push service of the browser maker and reports the result. It never sees the keys or the text, and the backend keeps no internet access. Section 5 and section 7 describe it.
 
 ## 2. Directory layout
 
@@ -76,7 +79,7 @@ backend/        Rust (Axum 0.8 + Tokio + rusqlite), toolchain pinned to 1.99.1
   src/services/   per-user pending imports (PendingStore) with a shared memory budget, parser engine interface, import flow
   src/parser/     .xlsx parsing: ZIP protection, XML, question recognition (the six-column layout; the 3- and 4-column layouts
                   only to tell them apart and refuse them), question id
-  src/database/   schema (v1 verbatim + v2 to v12 additions), journal mode (journal.rs), Store, legacy progress.json, timestamps
+  src/database/   schema (v1 verbatim + v2 to v13 additions), journal mode (journal.rs), Store, legacy progress.json, timestamps
     store/          banks (viewers, owners), records, settings, users (accounts, sessions, AI+), study (v0.9: what the AI service may
                     read of one question or record), migrate (v1 → v6, backups, fix-ups)
   src/models/     shared types: questions, import targets, Viewer and BankScope
@@ -116,6 +119,23 @@ tests/          baseline/ (golden responses and fixtures of the old version) · 
                 ai_stub.py: a made-up AI provider for the checks and the screenshots)
 docs/           en/ (English, the source) · ja/ · zh-CN/ (with history/: older documents, Chinese only); each with its own
                 screenshots/ and changelog.md; en/openapi.yaml
+```
+
+v3.1 added these files and folders (the listing above stays as it is):
+
+```
+frontend/public/  sw.js (the service worker: push only, no fetch listener, no cache), manifest.webmanifest, icon-maskable-*.png, badge-96.png
+frontend/src/api/        devices, push, saved, categories
+frontend/src/domain/     categories (grouping and order), devices (names and states), push-env (browser, installed or not, the guide's steps),
+                         time-zones, sw-contract tests
+frontend/src/state/      push (the only module that talks to the service worker, PushManager and Notification), saved-marker (reports an
+                         unfinished practice or exam)
+frontend/src/components/ guide, guide-art (the phone setup card and its drawings), device-list
+backend/src/push/        vapid (the key file, the JWT), ece (RFC 8291 encryption), allow (the push-service allow-list), texts (notification
+                         texts in en / zh / ja), quiet (quiet hours with time zones), scheduler (triggers and housekeeping)
+backend/src/api/         devices, push, saved, categories
+backend/src/database/store/  devices, push (subscriptions, outbox, saved sessions), categories
+ai-service/src/push/     allow, client (the HTTPS client with the DNS guard), worker (the courier loop)
 ```
 
 ## 3. Data model (v0.9)
@@ -185,6 +205,21 @@ A plain user's `user_banks` rows are the existing banks an administrator ticked 
 - Whether the menu is open is not stored: it lives in memory only, and the menu closes on every page change.
 - AI keys typed into AI settings stay only in the page's memory until they are saved, and are cleared after saving, on a page change and at sign-out. Chats and memories are never stored in the browser; the AI+ panel and the summary window keep the answers they showed in memory only, forgotten at sign-out and on a reload.
 
+### Devices and sessions (v3.1)
+
+- A **device** is one browser of one user, recognised by the random cookie `xexam_did` (stored only as a hash). A session belongs to a device; the device keeps the facts that must outlive the session: the last sign-in and activity (with IP and place while the sign-in info eye is open), the app flag and the time zone the browser reported. Signing out (by the user, by an administrator, by a password change) deletes the sessions of the device **and** its push subscription; an expired session does not, so a phone keeps its notifications until it was unused for 30 days. Section 4.10 of [database.md](database.md).
+- Everything that is per device (the subscription, the marker of an unfinished practice, the sign-in facts) hangs on the device row; everything that is per person (settings, study records) stays on the user.
+
+### Question bank categories (v3.1)
+
+- One level: `bank_categories` (name, order) and two columns of `banks` (`category_id`, `sort`). Only administrators edit them; moving banks never changes `banks.updated_at`. The order inside a group is `((sort = 0), sort, id)`, so a bank created by any path, including an older binary, simply lands at the end. The clients group and order with one pure function (`domain/categories.ts`). Section 4.11 of [database.md](database.md).
+- The stamps: `GET /api/banks` has its own ETag that includes the categories; `GET /api/auth/state` carries a stamp `categories` next to `library`, so open pages re-read the bank list when only the order changed.
+
+### Notifications and the saved-session marker (v3.1)
+
+- Tables: `push_subscriptions` (one per device), `push_outbox` (the queue and a 7-day log) and `saved_sessions` (the marker of an unfinished practice or exam of a browser, which the reminders aim at). Section 4.12 and 4.13 of [database.md](database.md).
+- Two settings per user in `user_settings`: `push` (the account switch, on when missing) and `tz` (the time zone for the quiet hours 00:00–08:00).
+
 ## 4. Backend
 
 ```mermaid
@@ -241,6 +276,14 @@ xexam-backend reset-password <username> [--data DIR]  new random password (print
 
 Every command that opens the database (`serve`, `import`, `migrate-progress`, `reset-password`) runs the schema upgrade first, asks for the journal mode of `XEXAM_SQLITE_JOURNAL` and retires the questions of the old layouts. They can run while the server runs (in Docker: `docker compose exec backend xexam-backend …`). Only `serve` loads or creates the internal token (`XEXAM_INTERNAL_TOKEN`, else `<link dir>/internal.token`; the link dir is `XEXAM_LINK_DIR`, else `link` inside the data directory, `/link` in the image); the other commands never touch it.
 
+### Devices, categories and web push (v3.1)
+
+- `api/devices.rs`, `api/push.rs`, `api/saved.rs` and `api/categories.rs` hold the new routes (section 4 of [api.md](api.md)); the matching store modules are `store/devices.rs`, `store/push.rs` and `store/categories.rs`. Every route still needs a row in the route table and every POST a row in the activity table, as before.
+- **The device** is linked to a session in the session lookup: a session made before v3.1 is linked at the first request that can carry the device cookie safely (sign-in, or a `POST` with an `Origin`). Sign-out, password change and the admin actions run in one transaction, child rows first (section 4.16 of [database.md](database.md)).
+- **`push/`** is the whole push engine except the delivery: `vapid.rs` (the key file `push-vapid.key`, the key id, the ES256 JWT), `ece.rs` (RFC 8291 `aes128gcm` with ring, tested against the RFC's vector), `allow.rs` (which push services an endpoint may point at), `texts.rs` (the notification texts in three languages), `quiet.rs` (the quiet hours 00:00–08:00 in the user's zone) and `scheduler.rs` (a tick every minute that queues bank news and reminders, the version announcement at start, and the hourly clean-up). The handle `Push` in `AppState` wakes the long-polling `push/next` handler.
+- **At lease time** (when ai-service asks for jobs) the backend re-checks that the message is still wanted, renders it in the user's language, encrypts it for that subscription and signs the header, so the queue itself holds only language-neutral JSON and no secret. The push key is not in the database, so backups of `xexam.db` never contain it.
+- **Versions**: a new `CODE_VERSION` is announced once by a push to every eligible device at the first start (the highest announced version is kept in `meta`).
+
 ## 5. The AI service (v0.8, study features v0.9)
 
 AI Chat, AI Memory and the AI settings are answered by a third container, `xexam-ai-service` (image `xexam-ai-service`): a separate Rust program (`ai-service/`, Axum + Tokio + rusqlite, like the backend) with its own SQLite database. The backend gained no HTTP client, no TLS and no AI code; it keeps its "no internet" guarantee and only answers a few small internal routes for ai-service: the auth step for Nginx and seven token routes (four since v0.8, and since v0.9 three that give the study features the questions and records they need).
@@ -252,7 +295,7 @@ The owner's rule, which the code and the compose files follow:
 - **No SQLite file is ever opened by both containers.** `xexam_backend_data` (with `xexam.db`) is mounted only by the backend, `xexam_ai_data` (with `xexam-ai.db` and the key file `secret.key`) only by `xexam-ai-service`. The frontend mounts no volume.
 - **ai-service reaches main-app data only through the backend's API**: the token routes `/internal/ai/introspect`, `/internal/ai/users`, `/internal/ai/log` and `/internal/ai/heartbeat` (who a session belongs to, which users exist and who has the AI+ feature, its lines for the System log, its own state) and, since v0.9, `/internal/ai/question`, `/internal/ai/record` and `/internal/ai/record-info`. Those three hand over **one question the caller may see, or the caller's own record, only when asked with the caller's live session**: the backend binds the session to the user and answers nothing for another user's session, a question of a bank the user may not see, or a record that is not the caller's (one identical "not found" answer for all of them). It still never reads question banks, records or settings by itself, and it never gets more than the three projections (section "AI+ study help" below).
 - **The backend reaches AI data only through ai-service's API**, and in v0.8 it never does: it does not call ai-service at all. The heartbeat goes the other way (ai-service tells the backend, see below); what the backend knows about AI is the last report it received, kept in memory only.
-- **Each database is migrated only by its own service**: the backend migrates `xexam.db` (schema 12 since v2.6), ai-service creates and opens `xexam-ai.db` (schema 11 since v2.1, see section 8 of [database.md](database.md)).
+- **Each database is migrated only by its own service**: the backend migrates `xexam.db` (schema 13 since v3.1), ai-service creates and opens `xexam-ai.db` (schema 11 since v2.1, see section 8 of [database.md](database.md)).
 - **The only shared volume, `xexam_ai_auth`, holds one file, `internal.token`**, never a database. The backend writes it; ai-service mounts it read only.
 
 So a backup of `xexam_backend_data` holds no AI secrets and no chats, and a backup of `xexam_ai_data` holds no question banks, passwords or study records.
@@ -379,6 +422,17 @@ Both flows keep the two databases apart. The **backend** owns the main database 
 - **Location lookup (v1.4).** An optional external IP-location lookup for deployments without Cloudflare (section 14.2 of [usage.md](usage.md)). The backend keeps the source (`system_settings` `geo.source`), the 24-hour per-IP memory, the queue and the reserved-address filter (`backend/src/geo.rs`), because activity rows are written at once and read the place from that memory. ai-service keeps the provider settings and the sealed key (AI database, schema 8) and makes the call, being the only container with internet access. The backend still never calls ai-service: ai-service **pulls** over the internal token link with three more routes, `POST /internal/ai/geo/next` (a long poll that returns the addresses that need a place), `/geo/result` (the places, or a failure code) and `/geo/source` (enable / disable the source), and the browser reaches the settings through `/api/ai/admin/geo*` (section 5.9 of [api.md](api.md)). It runs with AI+ off and does not touch the AI request caps.
 - **Sessions and the real address.** `session_deadline` computes the lifetime from the account's current role; the touch (session and `last_active_at`) happens at most once a minute. Nginx derives `X-Real-IP` and the `X-Geo-*` headers (`nginx/snippets/api-proxy.conf`, `ai-proxy.conf`; since v1.6 the latter passes `X-Geo-*` to ai-service too, from trusted proxies only; the trusted proxy list is rendered at start by `docker-entrypoint.d/15-xexam-realip.sh`), always overwritten, so the services trust them. The backend trusts them only when `XEXAM_BEHIND_PROXY=1` (set in the image) or the peer is a loopback address; otherwise it ignores them and records the connecting address (`activity::apply_peer_rule`).
 
+### The web-push courier (v3.1)
+
+ai-service has one more background task next to the geo worker: the **courier** (`src/push/`). It long-polls `POST /internal/ai/push/next` with the internal token, receives up to 20 ready jobs (endpoint, headers, an encrypted body, never a key or the plain text), posts each to the push service of the browser maker over HTTPS (at most 4 in parallel and 2 per host, 15 seconds each, no redirects, no proxy, no User-Agent) and reports the outcome with `POST /internal/ai/push/result`. A push service that rate-limits (429) pauses that host and the other jobs of it are reported as deferred.
+
+- **It runs whether AI+ is on or off** and never touches usage rows, quotas or the AI database.
+- **It can neither read nor forge a notification**: it has no subscription key, no VAPID key and no text; the backend encrypted and signed everything.
+- **Allow-list**: only `fcm.googleapis.com`, `updates.push.services.mozilla.com`, `web.push.apple.com`, `*.push.apple.com` and `*.notify.windows.com` over `https` on port 443 (no variable changes this); the host is resolved by a resolver that drops private, loopback, link-local and other reserved addresses, so a forged endpoint cannot reach the internal network. The backend checks the same rule when a subscription is stored.
+- **Secrets never reach a log**: the endpoint path, the `Authorization` value, the body and the error text of the HTTP client are never logged; a job is identified by its id and host only.
+- **The heartbeat is unchanged** (still exactly `version`, `enabled`, `suspended`, `stopping`), so a v3.0 backend keeps working with a v3.1 ai-service and the other way round. The backend knows a courier is present from its polls (`GET /api/push/config` → `courier`), and Settings tells administrators when none is. A v3.1 ai-service that gets 404 from an older backend pauses for 60 seconds.
+- **On split hosts** (section 12 of [deployment.md](deployment.md)) the jobs cross the existing backend–AI link, which already carries the internal token: they hold encrypted bodies and signed headers, no keys.
+
 ## 6. Frontend
 
 No framework; plain DOM. Shared state is one typed object (`src/state/store.ts`). Every render rebuilds the current page from the state; the quiz page also has small "refreshers" that update the answer sheet and progress without a full redraw.
@@ -451,6 +505,15 @@ flowchart LR
 - Auto-advance (a setting, off by default, exams only): after a single-choice pick, or when the last open item of a hotspot question gets a choice, the quiz moves to the next question after about 350 ms. Never for multiple choice, never past the last question, never on deselect, never in a practice.
 - No inline styles in the HTML: the CSP has `style-src 'self'`. The few computed sizes (progress bar, score bars) are set through the CSSOM, which the CSP allows.
 - Build targets are `es2020` / `safari15`; iPhone needs iOS 15.4 or later.
+
+### Platform layer, setup guide, devices and categories (v3.1)
+
+- **Service worker and manifest**: `public/sw.js` is plain JavaScript with no build step and handles only `push`, `notificationclick`, `pushsubscriptionchange` and the install and activate events: it shows the notification it is given and opens the right page. It has no `fetch` listener and no cache, so it can never serve stale code or data. `manifest.webmanifest` makes Xexam installable. Both are served by Nginx with their own headers (section 4 of [deployment.md](deployment.md)).
+- **One module talks to the browser's push APIs**: `state/push.ts` registers the worker, says hello to the server at every start (`POST /api/devices/hello`: time zone, installed or not, permission), subscribes on the user's tap, re-confirms the subscription quietly and compares the server's key id, so a rotated key makes the phones subscribe again. `domain/push-env.ts` is pure (platform, browser, iOS version, installed, secure context) and decides the state of the device and the step of the guide, so it is unit tested for every combination.
+- **The guide** (`components/guide.ts`) is the three-step card on Home for phones and tablets (install, allow notifications, test); Settings has the same states in its **Notifications** and **Install as an app** sections, with the reason and a disabled button when a step is impossible (plain `http` addresses, iOS before 16.4, not installed on iOS, a blocked permission, the server without a key). On iOS the installed Home Screen app has its own storage and cookies, so signing in there once more creates a second device.
+- **Saved-session marker** (`state/saved-marker.ts`): reports an unfinished practice or exam to the server (at most once a minute and when the page is hidden) and discards it when the user does.
+- **Devices and time zone**: `components/device-list.ts` renders the devices in Settings and in the User management dialog; Profile has the time zone select (`domain/time-zones.ts`).
+- **Categories**: `domain/categories.ts` groups and orders the banks for the Banks page, the Exam & practice picker, the bank-access dialog and the bank filter of Study records; the Banks page has the category manager for administrators.
 
 ## 7. Request flow
 
@@ -546,6 +609,33 @@ If the browser goes away (tab closed, phone locked, a dropped connection), only 
 ### Errors
 
 The backend answers an error with `{"error": "<Chinese message>"}`. `api/client.ts` turns it into an `ApiError`; `errorText()` passes the message to the server-message table, which returns it in the current UI language (or unchanged if unknown). The AI service adds a stable `code` (and for some errors `field` or `limit`), by which the frontend translates.
+
+### A notification (v3.1)
+
+```mermaid
+sequenceDiagram
+    participant S as Scheduler / routes (backend)
+    participant Q as push_outbox
+    participant C as Courier (ai-service)
+    participant P as Push service
+    participant D as Device
+    S->>Q: queue a row (language-neutral JSON, quiet hours, time to live)
+    C->>S: POST /internal/ai/push/next (long poll)
+    S->>Q: lease due rows, re-check them
+    S-->>C: jobs (endpoint, headers, encrypted body)
+    C->>P: POST endpoint (TTL, Urgency, Topic, Authorization)
+    P-->>C: 201 / 404 / 410 / 429 / 5xx
+    C->>S: POST /internal/ai/push/result
+    S->>Q: sent / failed / retry
+    P-->>D: the notification (service worker shows it)
+    D->>D: a tap opens the page named in the message
+```
+
+1. **Triggers** (the scheduler's tick every minute, and the routes for a grant and the test button): an unfinished practice or exam (a reminder 3 hours after the last save, then every 3 hours, at most 3), a new or updated bank (to everyone who can see it), banks granted to a user, a new version (once, at the first start), and the test button.
+2. **Queue**: one row per message and subscription, with a topic so a newer message of the same kind replaces a queued older one, a time to live, and `next_at` (held until 08:00 for quiet hours).
+3. **Lease**: the courier's poll hands out due rows. Before it does, the backend re-checks that the subscription is still eligible and the message still makes sense (the bank still exists, the practice is still saved on that device), renders the text in the user's language, encrypts it (RFC 8291) and signs the header (RFC 8292).
+4. **Delivery and result**: the courier posts the bytes, and reports the status. 404 / 410 delete the subscription, 5xx and timeouts retry after 30 s, 2 min, 10 min and 1 h, a 429 waits for `Retry-After`.
+5. **On the device** the service worker shows the notification (the tag of its kind replaces the older one) and a tap opens the page; if the app is open, it navigates there.
 
 ## 8. Build and images
 

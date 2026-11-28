@@ -369,3 +369,23 @@ html[data-hand] :is(.home-go-exam, .home-go-practice) { display: inline-flex; al
 .hand-ico .dash-doodle-line.dash-s2 { stroke-width: 1.2; opacity: .8; }
 .hand-ico .dash-doodle-tick { stroke-width: 1.4; }
 .hand-ico .dash-doodle-shade { stroke-width: 1.2; }
+
+/* ---------- v3.1: bank categories in the exam & practice picker ---------- */
+.home-cat + .home-cat { margin-top: 12px; }
+/* The box sits on the column of the bank boxes (card border 1 + row padding 12), the fold button on the column of their
+   expand buttons (card border 1 + head padding 6) */
+.home-cathead { display: flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 7px 0 13px; }
+.home-catfold {
+  position: relative; flex: none; width: 44px; height: 44px; display: grid; place-items: center; padding: 0;
+  border: 0; border-radius: 6px; background: transparent; color: var(--ink2); cursor: pointer;
+}
+@media (hover: hover) { .home-catfold:hover { background-color: var(--hover); color: var(--ink); } }
+.home-catfold:focus-visible { outline: 2px solid var(--print); outline-offset: -2px; }
+.home-catfold .ico { width: 18px; height: 18px; transition: transform .15s ease; }
+.home-catfold[aria-expanded="false"] .ico { transform: rotate(-90deg); }
+.home-catbox { accent-color: var(--print); flex: none; margin: 0; width: 20px; height: 20px; cursor: pointer; }
+.home-catlabel { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; min-height: 44px; cursor: pointer; }
+.home-catname { flex: 1; min-width: 0; font-weight: 700; font-size: 15px; overflow-wrap: anywhere; }
+.home-catcount { flex: none; font-size: 12.5px; color: var(--ink3); white-space: nowrap; }
+.home-catbody[hidden] { display: none; }
+@media (prefers-reduced-motion: reduce) { .home-catfold .ico { transition: none; } }

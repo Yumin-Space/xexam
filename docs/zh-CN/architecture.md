@@ -26,6 +26,8 @@ flowchart TB
     B -->|"写入"| L[("卷 xexam_ai_auth<br/>/link/internal.token")]
     L -->|"只读"| A
     A -->|"HTTPS，只经过 egress 网络"| P["AI 服务商或<br/>Cloudflare AI Gateway"]
+    A -->|"HTTPS（v3.1）：把后端加密好的 Web 推送消息原样投递"| W["浏览器厂商的推送服务<br/>（FCM、Mozilla、Apple、Windows）"]
+    W -.->|"通知"| U
     CF["Cloudflare Tunnel + Access<br/>（所有者自己配置）"] -.-> N
 ```
 
@@ -35,6 +37,7 @@ flowchart TB
 - **限制，从外到内**：Nginx 限制每个客户端地址和每个 AI 会话（见 [security.md](security.md) 第 9 节）；ai-service 再限制每个用户同时生成的回答数，以及整个实例同时进行的模型调用数；从 v1.0 起还有每个用户的请求上限（每分钟 5 次、每小时 20 次、每天 100 次；从 v1.3 起管理员默认不受限制，即 `callsAdminsExempt`，但仍计入用量；第 5 节）。这些限制用来保护服务器和服务商账单，它们不是访问控制。
 - 浏览器只通过 REST 和后端通信（见 [api.md](api.md)）。除了 `/api/info`、`/api/auth/state` 和登录本身，每个路由都需要会话。前端不访问数据库，也不做「这次导入能不能做」「这个用户能不能看这个题库」这样的判断：由后端决定，前端只负责显示。
 - 主程序保存的一切都在后端的数据目录里（Docker 里是 `/data`）：数据库 `xexam.db`（用户、题目、学习记录、设置），后端运行时还有它的 `xexam.db-wal` 和 `xexam.db-shm` 文件，升级后还有 `backups/` 文件夹，里面是 schema 迁移前写的副本。AI 的一切都在 ai-service 自己的数据目录里（它的容器里是 `/data`，即卷 `xexam_ai_data`）：`xexam-ai.db` 和它的 `-wal` / `-shm` 文件，以及密钥文件 `secret.key`。
+- **通知（v3.1）**：*发什么*、*发给谁*（队列、触发器、夜间免打扰、文字）由后端决定，它加密每条消息（RFC 8291）并给请求签名（RFC 8292，VAPID）；ai-service 是唯一能访问互联网的容器，它通过 `/internal/ai/push/next` **来取**做好的任务，发给浏览器厂商的推送服务并报告结果。它看不到密钥和文字，后端依然不能访问互联网。第 5 节和第 7 节会详细说明。
 
 ## 2. 目录结构
 
@@ -76,9 +79,9 @@ backend/        Rust（Axum 0.8 + Tokio + rusqlite），工具链固定为 1.99.
   src/services/   每个用户各自的待确认导入（PendingStore）及共用的内存额度、解析引擎接口、导入流程
   src/parser/     .xlsx 解析：ZIP 防护、XML、题目识别（六列格式；三列和四列格式只用来把它们认出来并拒绝）、
                   题目 id
-  src/database/   schema（v1 原文 + v2 到 v12 的新增）、日志模式（journal.rs）、Store、旧的 progress.json、时间戳
+  src/database/   schema（v1 原文 + v2 到 v13 的新增）、日志模式（journal.rs）、Store、旧的 progress.json、时间戳
     store/          题库（谁能看、所有者）、记录、设置、用户（账户、会话、AI+）、study（v0.9：AI 服务能读到的
-                    一道题或一条记录的内容）、migrate（v1 → v12、备份、修正）
+                    一道题或一条记录的内容）、migrate（v1 → v13、备份、修正）
   src/models/     共用类型：题目、导入目标、Viewer 和 BankScope
   src/logs.rs     系统日志：环形缓冲区、tracing 层、BurstLog
   src/security/   Host / Origin 判断、限长读取请求体、令牌
@@ -115,6 +118,22 @@ tests/          baseline/（旧版的黄金响应和夹具）· integration/（n
                 ai_stub.py：供检查和截图用的虚构 AI 服务商）
 docs/           en/（英语，原文）· ja/ · zh-CN/（带 history/：以前的文档，只有中文）；每个文件夹都有自己的
                 screenshots/ 和 changelog.md；en/openapi.yaml
+```
+
+v3.1 新增了这些文件和目录（上面的清单不变）：
+
+```
+frontend/public/  sw.js（service worker：只做推送，没有 fetch 监听，也不缓存）、manifest.webmanifest、icon-maskable-*.png、badge-96.png
+frontend/src/api/        devices、push、saved、categories
+frontend/src/domain/     categories（分组和顺序）、devices（名称和状态）、push-env（浏览器、是否已安装、引导的各步）、
+                         time-zones，以及 sw-contract 测试
+frontend/src/state/      push（唯一和 service worker、PushManager、Notification 打交道的模块）、saved-marker（上报没做完的练习或考试）
+frontend/src/components/ guide、guide-art（手机上的设置引导卡片和它的插图）、device-list
+backend/src/push/        vapid（密钥文件和 JWT）、ece（RFC 8291 加密）、allow（推送服务白名单）、texts（en / zh / ja 的通知文字）、
+                         quiet（带时区的夜间免打扰）、scheduler（触发器和定期清理）
+backend/src/api/         devices、push、saved、categories
+backend/src/database/store/  devices、push（订阅、发件箱、暂存会话）、categories
+ai-service/src/push/     allow、client（带 DNS 检查的 HTTPS 客户端）、worker（投递员循环）
 ```
 
 ## 3. 数据模型（v0.9）
@@ -184,6 +203,21 @@ docs/           en/（英语，原文）· ja/ · zh-CN/（带 history/：以前
 - 菜单是否打开不保存：它只在内存里，每次切换页面菜单都会关上。
 - 在 AI 设置里输入的 AI 密钥在保存之前只留在页面的内存里，保存后、切换页面时和退出登录时都会清掉。对话和记忆从不保存在浏览器里；AI+ 面板和总结窗口只在内存里保留它们显示过的回答，退出登录和刷新页面时忘掉。
 
+### 设备和会话（v3.1）
+
+- **设备**就是某个用户的某个浏览器，靠随机 cookie `xexam_did` 认出（库里只存它的哈希）。会话属于设备；设备保存那些必须比会话活得更久的信息：最近一次登录和活动（在登录信息的眼睛打开时带 IP 和所在地）、应用标记，以及浏览器上报的时区。退出登录（用户自己、管理员、修改密码）会删除这台设备的会话**和**它的推送订阅；会话到期则不会，所以手机在 30 天没用之前一直能收到通知。见 [database.md](database.md) 第 4.10 节。
+- 凡是“每台设备一份”的东西（订阅、没做完的练习的标记、登录信息）都挂在设备行上；凡是“每个人一份”的东西（设置、学习记录）仍留在用户上。
+
+### 题库分类（v3.1）
+
+- 只有一层：`bank_categories`（名称和顺序）加 `banks` 的两列（`category_id`、`sort`）。只有管理员能编辑；移动题库从不改变 `banks.updated_at`。分组里的顺序是 `((sort = 0), sort, id)`，所以任何途径（包括旧版程序）创建的题库都会落在最后。客户端用一个纯函数（`domain/categories.ts`）分组和排序。见 [database.md](database.md) 第 4.11 节。
+- 戳：`GET /api/banks` 有自己的 ETag，里面包含分类；`GET /api/auth/state` 在 `library` 旁边带一个 `categories` 戳，所以只改了顺序时已打开的页面也会重新读取题库列表。
+
+### 通知和暂存会话的标记（v3.1）
+
+- 表：`push_subscriptions`（每台设备一个）、`push_outbox`（队列和保留 7 天的日志）和 `saved_sessions`（浏览器里没做完的练习或考试的标记，提醒就对准它）。见 [database.md](database.md) 第 4.12、4.13 节。
+- `user_settings` 里每个用户两个设置：`push`（账号开关，没有这一行表示开启）和 `tz`（夜间免打扰 00:00–08:00 所用的时区）。
+
 ## 4. 后端
 
 ```mermaid
@@ -240,6 +274,14 @@ xexam-backend reset-password <用户名> [--data DIR]  新的随机密码（只�
 
 每个打开数据库的命令（`serve`、`import`、`migrate-progress`、`reset-password`）都会先执行 schema 升级，按 `XEXAM_SQLITE_JOURNAL` 请求日志模式，并下架旧格式的题。它们可以在服务器运行时运行（Docker 里：`docker compose exec backend xexam-backend …`）。只有 `serve` 加载或创建内部令牌（`XEXAM_INTERNAL_TOKEN`，否则是 `<链接目录>/internal.token`；链接目录是 `XEXAM_LINK_DIR`，否则是数据目录里的 `link`，镜像里是 `/link`）；其他命令从不碰它。
 
+### 设备、分类和 Web 推送（v3.1）
+
+- `api/devices.rs`、`api/push.rs`、`api/saved.rs` 和 `api/categories.rs` 放新的路由（见 [api.md](api.md) 第 4 节）；对应的存储模块是 `store/devices.rs`、`store/push.rs` 和 `store/categories.rs`。每个路由仍然需要路由表里的一行，每个 POST 仍然需要活动表里的一行。
+- **设备**在会话查询时关联到会话：v3.1 之前创建的会话，会在第一个能安全携带设备 cookie 的请求（登录，或带 `Origin` 的 `POST`）上关联。退出登录、修改密码和管理员的操作都在一个事务里执行，先删子行（见 [database.md](database.md) 第 4.16 节）。
+- **`push/`** 是除投递之外的整个推送引擎：`vapid.rs`（密钥文件 `push-vapid.key`、密钥 id、ES256 的 JWT）、`ece.rs`（用 ring 实现的 RFC 8291 `aes128gcm`，用 RFC 的测试向量验证）、`allow.rs`（endpoint 可以指向哪些推送服务）、`texts.rs`（三种语言的通知文字）、`quiet.rs`（用户时区的夜间免打扰 00:00–08:00）和 `scheduler.rs`（每分钟一次的节拍：把题库动态和提醒排进队列，启动时发版本通知，以及每小时的清理）。`AppState` 里的 `Push` 句柄会唤醒正在长轮询的 `push/next` 处理器。
+- **领取任务时**（ai-service 来要任务时），后端再检查一次这条消息是否仍然需要，用用户的语言生成文字，针对那个订阅加密并给请求头签名，所以队列本身只放与语言无关的 JSON，没有任何秘密。推送密钥不在数据库里，所以 `xexam.db` 的备份里没有它。
+- **版本**：新的 `CODE_VERSION` 会在第一次启动时用一次推送通知给每台有效的设备（已经通知过的最高版本记在 `meta` 里）。
+
 ## 5. AI 服务（v0.8，学习功能 v0.9，手机与请求上限 v1.0）
 
 AI 对话、AI 记忆和 AI 设置由第三个容器 `xexam-ai-service`（镜像 `xexam-ai-service`）响应：一个单独的 Rust 程序（`ai-service/`，和后端一样是 Axum + Tokio + rusqlite），有自己的 SQLite 数据库。后端没有加入 HTTP 客户端、TLS 或 AI 代码；它保持「不能上网」的保证，只为 ai-service 响应几个小的内部路由：Nginx 用的认证步骤和七个带令牌的路由（v0.8 起四个，v0.9 起又加了三个，把学习功能需要的题目和记录交给它）。
@@ -251,7 +293,7 @@ AI 对话、AI 记忆和 AI 设置由第三个容器 `xexam-ai-service`（镜像
 - **没有任何 SQLite 文件会被两个容器同时打开。** `xexam_backend_data`（里面是 `xexam.db`）只挂载到后端，`xexam_ai_data`（里面是 `xexam-ai.db` 和密钥文件 `secret.key`）只挂载到 `xexam-ai-service`。前端不挂载任何卷。
 - **ai-service 只通过后端的 API 访问主程序的数据**：带令牌的路由 `/internal/ai/introspect`、`/internal/ai/users`、`/internal/ai/log` 和 `/internal/ai/heartbeat`（某个会话属于谁、有哪些用户、谁有 AI+ 功能，它要写进系统日志的行，以及它自己的状态），从 v0.9 起还有 `/internal/ai/question`、`/internal/ai/record` 和 `/internal/ai/record-info`。这三个路由交出的是**调用者能看到的一道题，或者调用者自己的一条记录，而且只在带着调用者的有效会话来问时才交**：后端把会话绑定到用户，对另一个用户的会话、用户看不到的题库里的题、或不是调用者自己的记录，一律不回答（这几种情况都是同一个「未找到」）。它仍然不会自己去读题库、记录或设置，也不会拿到这三种投影之外的东西（见下面的「AI+ 学习帮助」一节）。
 - **后端只通过 ai-service 的 API 访问 AI 数据**，而在 v0.8 里它从不这样做：它根本不调用 ai-service。心跳是反方向的（ai-service 告诉后端，见下文）；后端对 AI 所知的，只是它收到的最后一次报告，而且只保存在内存里。
-- **每个数据库只由它自己的服务迁移**：后端迁移 `xexam.db`（v2.6 起是 schema 12），ai-service 创建并打开 `xexam-ai.db`（v2.1 起是 schema 11，见 [database.md](database.md) 第 8 节）。
+- **每个数据库只由它自己的服务迁移**：后端迁移 `xexam.db`（v3.1 起是 schema 13），ai-service 创建并打开 `xexam-ai.db`（v2.1 起是 schema 11，见 [database.md](database.md) 第 8 节）。
 - **唯一共用的卷 `xexam_ai_auth` 里只有一个文件 `internal.token`**，从不放数据库。后端写入它；ai-service 以只读方式挂载它。
 
 所以 `xexam_backend_data` 的备份里没有 AI 机密，也没有对话；`xexam_ai_data` 的备份里没有题库、密码或学习记录。
@@ -378,6 +420,17 @@ sequenceDiagram
 - **所在地查询（v1.4）。** 给没有 Cloudflare 的部署用的可选外部 IP 所在地查询（见 [usage.md](usage.md) 的 14.2 节）。后端保存来源（`system_settings` 的 `geo.source`）、每个 IP 24 小时的记忆、队列和保留地址过滤（`backend/src/geo.rs`），因为活动记录是立即写入的，要从这份记忆里读取所在地。ai-service 保存服务商设置和加密后的密钥（AI 数据库，schema 8），并作为唯一能访问互联网的容器发出调用。后端仍然从不调用 ai-service：由 ai-service 通过内部令牌链路用三个路由**来取**——`POST /internal/ai/geo/next`（长轮询，返回需要所在地的地址）、`/geo/result`（所在地或失败代码）和 `/geo/source`（启用 / 停用来源）；浏览器通过 `/api/ai/admin/geo*` 操作设置（见 [api.md](api.md) 的 5.9 节）。AI+ 关闭时也能用，不涉及 AI 请求额度。
 - **会话和真实地址。** `session_deadline` 按账号当前的角色计算有效期；更新（会话和 `last_active_at`）最多每分钟一次。Nginx 生成 `X-Real-IP` 和 `X-Geo-*` 头（`nginx/snippets/api-proxy.conf`、`ai-proxy.conf`；可信代理列表由 `docker-entrypoint.d/15-xexam-realip.sh` 在启动时生成），并总是覆盖，所以服务可以信任它们。后端只在 `XEXAM_BEHIND_PROXY=1`（镜像里已设）或对端是回环地址时才信任它们；否则忽略这些头，记录连接地址（`activity::apply_peer_rule`）。
 
+### Web 推送的投递员（v3.1）
+
+ai-service 在位置查询的工作线程旁边多了一个后台任务：**投递员**（`src/push/`）。它带着内部令牌长轮询 `POST /internal/ai/push/next`，一次拿到最多 20 个做好的任务（endpoint、请求头、加密后的正文，没有密钥也没有明文），用 HTTPS 把每个任务发给浏览器厂商的推送服务（最多 4 个并行、每个主机最多 2 个，每个 15 秒，不跟随重定向，不走代理，不带 User-Agent），再用 `POST /internal/ai/push/result` 报告结果。某个推送服务在限流（429）时，这个主机先停一停，同一主机的其他任务按“延后”报告。
+
+- **不论 AI+ 开着还是关着它都在运行**，并且从不碰用量行、额度和 AI 数据库。
+- **它既读不了通知，也伪造不了通知**：它没有订阅密钥、没有 VAPID 密钥、没有文字；所有的加密和签名都是后端做的。
+- **白名单**：只有 `https`、443 端口上的 `fcm.googleapis.com`、`updates.push.services.mozilla.com`、`web.push.apple.com`、`*.push.apple.com` 和 `*.notify.windows.com`（没有任何变量能改它）；主机名由一个会丢弃内网、回环、链路本地等保留地址的解析器来解析，所以伪造的 endpoint 到不了内部网络。后端在保存订阅时检查同样的规则。
+- **秘密不会进日志**：endpoint 的路径、`Authorization` 的值、正文和 HTTP 客户端的错误文字都从不写进日志；一个任务只用它的 id 和主机来标识。
+- **心跳不变**（仍然正好是 `version`、`enabled`、`suspended`、`stopping` 四个键），所以 v3.0 的后端和 v3.1 的 ai-service 无论哪种组合都能工作。后端从它的轮询得知投递员在线（`GET /api/push/config` 的 `courier`），没有投递员时设置页会告诉管理员。v3.1 的 ai-service 从旧后端得到 404 时，会停 60 秒。
+- **主机分开部署时**（见 [deployment.md](deployment.md) 第 12 节），任务走已有的、带内部令牌的后端与 AI 之间的链路：里面是加密后的正文和签名后的请求头，没有密钥。
+
 ## 6. 前端
 
 不用框架；原生 DOM。共享状态是一个带类型的对象（`src/state/store.ts`）。每次渲染都根据状态重建当前页面；答题页还有几个小的「刷新器」，不用整页重画就能更新答题卡和进度。
@@ -450,6 +503,15 @@ flowchart LR
 - 答完自动跳到下一题（一个设置，默认关闭，只用于考试）：单选题选好之后，或者热点题最后一个没答的小项选好之后，大约 350 ms 后跳到下一题。多选题从不跳，最后一题之后不跳，取消选择时不跳，练习里也不跳。
 - HTML 里不用内联样式：CSP 是 `style-src 'self'`。少数需要计算的尺寸（进度条、成绩柱）通过 CSSOM 设置，CSP 允许这样做。
 - 构建目标是 `es2020` / `safari15`；iPhone 需要 iOS 15.4 或更新。
+
+### 平台层、设置引导、设备和分类（v3.1）
+
+- **Service worker 和清单**：`public/sw.js` 是不需要构建的纯 JavaScript，只处理 `push`、`notificationclick`、`pushsubscriptionchange` 和安装、激活事件：它显示收到的通知并打开正确的页面。它没有 `fetch` 监听也没有缓存，所以永远不会提供过期的代码或数据。`manifest.webmanifest` 让 Xexam 可以安装。两者都由 Nginx 用各自的响应头提供（见 [deployment.md](deployment.md) 第 4 节）。
+- **只有一个模块和浏览器的推送接口打交道**：`state/push.ts` 注册 worker，在每次启动时向服务器打招呼（`POST /api/devices/hello`：时区、是否已安装、权限），在用户点击时订阅，悄悄地重新确认订阅并比较服务器的密钥 id，所以密钥更换后手机会重新订阅。`domain/push-env.ts` 是纯函数（平台、浏览器、iOS 版本、是否已安装、是否安全上下文），决定设备的状态和引导的步骤，所以每种组合都有单元测试。
+- **引导**（`components/guide.ts`）是手机和平板主页上的三步卡片（安装、允许通知、测试）；设置里的 **通知** 和 **安装为应用** 两节有同样的状态，某一步做不到时（普通 `http` 地址、16.4 之前的 iOS、iOS 上没安装、权限被阻止、服务器没有密钥）会显示原因并让按钮变灰。在 iOS 上，装好的主屏幕应用有自己的存储和 cookie，所以在那里再登录一次会产生第二台设备。
+- **暂存会话的标记**（`state/saved-marker.ts`）：把没做完的练习或考试上报给服务器（每分钟最多一次，页面被隐藏时也报），用户放弃时也一并放弃。
+- **设备和时区**：`components/device-list.ts` 在设置和用户管理的对话框里渲染设备；个人资料里有时区选择（`domain/time-zones.ts`）。
+- **分类**：`domain/categories.ts` 为题库页、考试&练习的选择区、题库权限对话框和学习记录的题库筛选做分组和排序；题库页上有给管理员用的分类管理。
 
 ## 7. 请求流程
 
@@ -545,6 +607,33 @@ sequenceDiagram
 ### 错误
 
 后端用 `{"error": "<中文提示>"}` 回答错误。`api/client.ts` 把它变成一个 `ApiError`；`errorText()` 把提示交给服务器提示表，表按当前界面语言返回它（不认识就原样返回）。AI 服务还会加上一个固定的 `code`（有些错误还有 `field` 或 `limit`），前端按它翻译。
+
+### 一条通知（v3.1）
+
+```mermaid
+sequenceDiagram
+    participant S as 调度器 / 路由（后端）
+    participant Q as push_outbox
+    participant C as 投递员（ai-service）
+    participant P as 推送服务
+    participant D as 设备
+    S->>Q: 排入一行（与语言无关的 JSON、夜间免打扰、有效期）
+    C->>S: POST /internal/ai/push/next（长轮询）
+    S->>Q: 领取到期的行并重新检查
+    S-->>C: 任务（endpoint、请求头、加密后的正文）
+    C->>P: POST endpoint（TTL、Urgency、Topic、Authorization）
+    P-->>C: 201 / 404 / 410 / 429 / 5xx
+    C->>S: POST /internal/ai/push/result
+    S->>Q: sent / failed / retry
+    P-->>D: 通知（由 service worker 显示）
+    D->>D: 点一下，打开消息指向的页面
+```
+
+1. **触发**（调度器每分钟一次的节拍，以及授权和测试按钮对应的路由）：没做完的练习或考试（最后一次保存 3 小时后提醒，之后每 3 小时一次，最多 3 次）、新的或更新的题库（发给所有能看到它的人）、授权给用户的题库、新版本（第一次启动时一次），以及测试按钮。
+2. **排队**：每条消息、每个订阅一行，带一个 topic，让同类的新消息可以替换排队中的旧消息，还有有效期和 `next_at`（夜间免打扰时留到 08:00）。
+3. **领取**：投递员的轮询取走到期的行。在此之前后端会再检查订阅是否仍然有效、消息是否仍然有意义（题库还在、练习仍保存在那台设备上），用用户的语言生成文字，加密（RFC 8291）并给请求头签名（RFC 8292）。
+4. **投递和结果**：投递员发出这些字节并报告状态。404 / 410 删除订阅，5xx 和超时在 30 秒、2 分钟、10 分钟、1 小时后重试，429 等待 `Retry-After`。
+5. **在设备上**，service worker 显示通知（同类的标签替换旧的），点一下就打开页面；应用已经打开时就跳转过去。
 
 ## 8. 构建和镜像
 

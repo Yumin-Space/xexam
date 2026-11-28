@@ -100,6 +100,7 @@ fn app_with_throttle(
         ai_link: Default::default(),
         activity: Default::default(),
         gates: Default::default(),
+        push: Default::default(),
     }));
     App {
         router: build_router(state.clone()),
@@ -840,7 +841,8 @@ async fn a_plain_user_gets_403_on_every_admin_route() {
     // v0.6.5: the five bank management routes moved to `Access::BankManager` (403 `MSG_NO_BANK_PERMISSION` for this user,
     // see tests/v065_bank_access_and_practice.rs); v0.7 adds `GET /api/logs`; v1.3 `POST /api/users/signin-info/clear`; v1.4 `POST /api/users/geo-source`
     // v2.7 adds GET /api/users/records and GET /api/users/record
-    assert_eq!(admin_routes.len(), 16);
+    // v3.1 adds GET /api/users/devices, POST /api/users/devices/signout, POST /api/banks/categories, POST /api/banks/category
+    assert_eq!(admin_routes.len(), 20);
     for r in admin_routes {
         let resp = if r.method == "GET" {
             get(&a, r.path, Some(&uc)).await
@@ -1042,7 +1044,9 @@ async fn users_crud_and_validation() {
             "lastActiveLocation",
             "lastActiveUa",
             "lock",
-            "aiSuspended"
+            "aiSuspended",
+            // v3.1 (tests/v31_devices.rs)
+            "devices"
         ]
     );
     assert_eq!(u["lock"], Value::Null);

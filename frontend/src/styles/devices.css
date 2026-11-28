@@ -1,0 +1,36 @@
+/* Signed-in devices (v3.1): the list in Settings and in the User management dialog. Colour tokens only (see main.css).
+   Phones: the text wraps, the sign-out icon keeps its 44 x 44 hit area at the top right of the row, nothing scrolls sideways. */
+.dv-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.dv-row {
+  display: flex; align-items: flex-start; gap: 8px; min-width: 0; padding: 10px 12px;
+  border: 1px solid var(--line-soft); border-radius: 10px; background: var(--card, transparent);
+}
+.dv-row.off { opacity: .72; }
+.dv-main { flex: 1 1 auto; min-width: 0; }
+.dv-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; }
+.dv-name { font-weight: 600; color: var(--ink); overflow-wrap: anywhere; min-width: 0; }
+.dv-tags { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.dv-meta { margin: 4px 0 0; font-size: 13px; line-height: 1.5; color: var(--ink2); overflow-wrap: anywhere; }
+.dv-ip { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.dv-act { flex: none; display: flex; align-items: flex-start; }
+.dv-out { flex: none; }
+.dv-empty { margin: 0; }
+
+.dv-ua-btn {
+  display: inline-flex; align-items: center; min-height: 32px; margin: 4px 0 0 -4px; padding: 0 4px; border: 0; background: transparent;
+  color: var(--print); font: inherit; font-size: 13px; text-decoration: underline; cursor: pointer; border-radius: 4px;
+}
+.dv-ua-btn:focus-visible { outline: 2px solid var(--print); outline-offset: 1px; }
+.dv-ua { margin: 4px 0 0; font-size: 12.5px; color: var(--ink3); }
+.dv-ua[hidden] { display: none; }
+.dv-ua dt { font-weight: 600; }
+.dv-ua dd { margin: 0; overflow-wrap: anywhere; word-break: break-word; }
+
+@media (pointer: coarse) {
+  .dv-ua-btn { min-height: 44px; }
+  .dv-out { min-width: 44px; min-height: 44px; }
+}
+@media (max-width: 600px) {
+  .dv-row { padding: 10px; }
+  .dv-act { margin: -4px -4px 0 0; }
+}

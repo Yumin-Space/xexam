@@ -18,6 +18,15 @@
 }
 @media (pointer: coarse) { .pf-name-save { min-height: 44px; } }
 
+/* ---------- v3.1 Time zone: one select (full width up to a comfortable length) and the "Saved" note ---------- */
+.pf-tz-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.pf-tz { flex: 1 1 18em; min-width: 0; max-width: 28em; min-height: 40px; }
+@media (max-width: 480px) { .pf-tz { flex-basis: 100%; max-width: none; min-height: 44px; } }
+@media (pointer: coarse) { .pf-tz { min-height: 44px; } }
+/* The empty "Saved" note stays in place for screen readers but takes no line of its own under a full-width select */
+.pf-tz-row:has(> .saved-note:empty) { row-gap: 0; }
+.pf-tz-row > .saved-note:empty { min-height: 0; }
+
 /* ---------- Account: username and role, then "Change password" under a hairline ---------- */
 .set-props { margin-bottom: 20px; }
 /* The role and, for a bank manager, the "Bank manager" tag with a line on what it allows (v0.7) */
