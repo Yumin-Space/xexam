@@ -110,7 +110,9 @@ USER_ROW_KEYS = ['id', 'username',
                  'canDownloadBanks', 'ai', 'ownedBanks', 'lastActiveAt', 'lastLoginIp', 'lastLoginLocation',
                  # v1.4: the last activity's IP, place and user agent
                  'lastActiveIp', 'lastActiveLocation', 'lastActiveUa',
-                 'lock', 'aiSuspended']
+                 'lock', 'aiSuspended',
+                 # v3.1: the number of signed-in devices (the device icon of User management)
+                 'devices']
 AI_SERVICE_KEYS = ['connected', 'stopped', 'lastSeen', 'version', 'enabled', 'link']
 STATUS_KEYS = ['enabled', 'allowed', 'suspended', 'hasData', 'running', 'retentionDays', 'memoryLimit', 'memoryMaxTokens',
                'maxMessageChars', 'messageChars', 'memoryTokens', 'keyProblem', 'configured', 'freeMode']
@@ -716,8 +718,8 @@ try:
 
     state = until(lambda: svc_when(lambda a: a.get('connected')), 30) or admin_state()
     svc = state.get('aiService') or {}
-    ok(list(state.keys()) == ['user', 'library', 'aiAvailable', 'session', 'logVisits', 'aiService'] and list(svc.keys()) == AI_SERVICE_KEYS,
-       'GET /api/auth/state (administrator): keys user, library, aiAvailable, session, logVisits, aiService; aiService keys in order. Actual %r' % state)
+    ok(list(state.keys()) == ['user', 'library', 'categories', 'aiAvailable', 'session', 'logVisits', 'aiService'] and list(svc.keys()) == AI_SERVICE_KEYS,
+       'GET /api/auth/state (administrator): keys user, library, categories, aiAvailable, session, logVisits, aiService; aiService keys in order. Actual %r' % state)
     ok(state['session'].get('rule') == 'admin' and state['session'].get('idleSecs') == 86400 and state['session'].get('hardEndsAt'),
        'v1.3: the administrator session follows the admin rule (24 h idle, a hard end). Actual %r' % state.get('session'))
     ok(svc.get('connected') is True and svc.get('stopped') is False and svc.get('enabled') is False and svc.get('link') is True
@@ -968,7 +970,7 @@ try:
     ok(st == 200 and e['user']['displayName'] == 'Sam', 'v2.6: sam takes the name Sam back. Actual %d %r' % (st, e))
     st, _, j = jreq('GET', '/api/auth/state', headers={'Cookie': SAM})
     ok(st == 200 and j['user']['aiAllowed'] is True and j.get('aiAvailable') is True
-       and list(j.keys()) == ['user', 'library', 'aiAvailable', 'session', 'logVisits']
+       and list(j.keys()) == ['user', 'library', 'categories', 'aiAvailable', 'session', 'logVisits']
        and j['session'] == {'rule': 'remember', 'idleSecs': 2592000, 'hardEndsAt': None} and j['logVisits'] is False,
        'sam: aiAllowed and aiAvailable in the sign-in state, the remember session rule (30 days, no hard end), no aiService '
        '(administrators only). Actual %d %r' % (st, j))
